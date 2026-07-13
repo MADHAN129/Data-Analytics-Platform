@@ -1,0 +1,5412 @@
+openapi: 3.1.0
+info:
+  title: Agentic Analytics Platform - Full API Contract
+  description: |
+    Complete API contract for the Agentic Analytics Platform.
+    Covers Phase 1 (Foundation) through Phase 8 (API Integration).
+
+    ## Authentication
+    - JWT Bearer token authentication
+    - OAuth2/OIDC support (Azure AD, Google)
+    - API Key authentication for programmatic access
+    - Token refresh mechanism
+
+    ## Authorization
+    - Role-Based Access Control (RBAC)
+    - Permission-based resource access
+    - Predefined roles: SuperAdmin, Admin, Analyst, Viewer, DataManager
+
+    ## Real-time Features
+    - WebSocket endpoints for voice, queries, notifications, and live dashboards
+
+    ## Rate Limiting
+    - Per-user and per-API-key rate limiting
+    - Configurable limits per endpoint group
+  version: 2.0.0
+  contact:
+    name: API Support
+    email: support@agentic-analytics.com
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+  - url: https://api.agentic-analytics.com/api/v1
+    description: Production server
+
+tags:
+  - name: Health
+    description: System health checks
+  - name: Authentication
+    description: User authentication and token management
+  - name: Users
+    description: User profile and management operations
+  - name: Roles
+    description: Role management for RBAC
+  - name: Permissions
+    description: Permission management and assignment
+  - name: Audit
+    description: Audit logging and history
+  - name: Databases
+    description: Database connection management via MCP
+  - name: Queries
+    description: Natural language and SQL query execution
+  - name: Conversations
+    description: Conversational context and follow-ups
+  - name: Dashboards
+    description: Dashboard management and auto-generation
+  - name: Voice
+    description: Speech-to-text and text-to-speech
+  - name: Anomaly
+    description: Anomaly detection and alerting
+  - name: Predictions
+    description: Predictive analytics and forecasting
+  - name: CSV Import
+    description: CSV file upload and import
+  - name: Exports
+    description: Report and data export (PDF, Excel, PNG)
+  - name: Integrations
+    description: Third-party integration management
+  - name: API Keys
+    description: API key management for programmatic access
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/login or /auth/register
+
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/common/oauth2/v2.0/token
+          scopes:
+            openid: OpenID Connect
+            profile: User profile
+            email: User email
+
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for programmatic access
+
+  schemas:
+    # ============================================
+    # COMMON SCHEMAS
+    # ============================================
+
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Error message
+          example: "Invalid credentials"
+        error_code:
+          type: string
+          description: Machine-readable error code
+          example: "AUTH_INVALID_CREDENTIALS"
+        metadata:
+          type: object
+          nullable: true
+          description: Additional error context
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+          example: "Validation failed"
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+              code:
+                type: string
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Operation completed successfully"
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        services:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [connected, disconnected]
+            redis:
+              type: string
+              enum: [connected, disconnected]
+            llm:
+              type: string
+              enum: [ready, loading, error]
+
+    PaginationParams:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+        per_page:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+
+    # ============================================
+    # PHASE 1: AUTH SCHEMAS
+    # ============================================
+
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "john.doe@company.com"
+        password:
+          type: string
+          minLength: 8
+          example: "SecurePass123!"
+        full_name:
+          type: string
+          minLength: 2
+          example: "John Doe"
+        phone:
+          type: string
+          example: "+1-555-123-4567"
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        remember_me:
+          type: boolean
+          default: false
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+          example: 3600
+        user:
+          $ref: '#/components/schemas/UserResponse'
+
+    RefreshTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    ResetPasswordRequest:
+      type: object
+      required: [token, new_password]
+      properties:
+        token:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+
+    OAuthCallbackRequest:
+      type: object
+      required: [code, state]
+      properties:
+        code:
+          type: string
+        state:
+          type: string
+
+    # ============================================
+    # PHASE 1: USER SCHEMAS
+    # ============================================
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        auth_provider:
+          type: string
+          enum: [local, azure_ad, google]
+        is_active:
+          type: boolean
+        mfa_enabled:
+          type: boolean
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleResponse'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+          minLength: 2
+        phone:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+
+    CreateUserRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        full_name:
+          type: string
+        phone:
+          type: string
+        role_ids:
+          type: array
+          items:
+            type: integer
+
+    UserListResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+        pages:
+          type: integer
+
+    # ============================================
+    # PHASE 1: ROLE SCHEMAS
+    # ============================================
+
+    RoleResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        is_system:
+          type: boolean
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionResponse'
+        user_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+        description:
+          type: string
+          maxLength: 200
+        permission_ids:
+          type: array
+          items:
+            type: integer
+
+    UpdateRoleRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+        description:
+          type: string
+          maxLength: 200
+        permission_ids:
+          type: array
+          items:
+            type: integer
+
+    RoleListResponse:
+      type: object
+      properties:
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleResponse'
+        total:
+          type: integer
+
+    # ============================================
+    # PHASE 1: PERMISSION SCHEMAS
+    # ============================================
+
+    PermissionResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        resource:
+          type: string
+        action:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    PermissionListResponse:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionResponse'
+        total:
+          type: integer
+
+    # ============================================
+    # PHASE 1: AUDIT SCHEMAS
+    # ============================================
+
+    AuditLogResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        user_email:
+          type: string
+          format: email
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+          nullable: true
+        details:
+          type: object
+          nullable: true
+        status:
+          type: string
+          enum: [success, failure]
+        created_at:
+          type: string
+          format: date-time
+
+    AuditLogListResponse:
+      type: object
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    # ============================================
+    # PHASE 2: DATABASE SCHEMAS
+    # ============================================
+
+    DatabaseConnectionRequest:
+      type: object
+      required: [name, type, host, port, database_name]
+      properties:
+        name:
+          type: string
+          example: "Production PostgreSQL"
+        type:
+          type: string
+          enum: [postgresql, mysql, sqlserver, mongodb, oracle, snowflake, bigquery, sqlite]
+        host:
+          type: string
+          example: "db.company.com"
+        port:
+          type: integer
+          example: 5432
+        database_name:
+          type: string
+          example: "erp_production"
+        schema_name:
+          type: string
+          default: "public"
+        username:
+          type: string
+        password:
+          type: string
+        ssl:
+          type: boolean
+          default: false
+        pool_size:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        timeout_seconds:
+          type: integer
+          minimum: 5
+          maximum: 300
+          default: 30
+
+    DatabaseResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [postgresql, mysql, sqlserver, mongodb, oracle, snowflake, bigquery, sqlite]
+        host:
+          type: string
+        port:
+          type: integer
+        database_name:
+          type: string
+        schema_name:
+          type: string
+        status:
+          type: string
+          enum: [connected, disconnected, error, syncing]
+        is_active:
+          type: boolean
+        schema_summary:
+          type: object
+          nullable: true
+          properties:
+            tables:
+              type: integer
+            views:
+              type: integer
+            columns:
+              type: integer
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DatabaseListResponse:
+      type: object
+      properties:
+        databases:
+          type: array
+          items:
+            $ref: '#/components/schemas/DatabaseResponse'
+        total:
+          type: integer
+
+    DatabaseTestResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        latency_ms:
+          type: integer
+        server_version:
+          type: string
+          nullable: true
+        details:
+          type: object
+          nullable: true
+          properties:
+            tables_count:
+              type: integer
+            schema_name:
+              type: string
+
+    SchemaResponse:
+      type: object
+      properties:
+        database_id:
+          type: integer
+        schema_name:
+          type: string
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableSchema'
+        views:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableSchema'
+        last_synced_at:
+          type: string
+          format: date-time
+
+    TableSchema:
+      type: object
+      properties:
+        name:
+          type: string
+        schema:
+          type: string
+        type:
+          type: string
+          enum: [table, view, materialized_view]
+        row_count:
+          type: integer
+          nullable: true
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/ColumnInfo'
+        indexes:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              columns:
+                type: array
+                items:
+                  type: string
+              unique:
+                type: boolean
+        primary_key:
+          type: array
+          items:
+            type: string
+
+    ColumnInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        data_type:
+          type: string
+        nullable:
+          type: boolean
+        is_primary_key:
+          type: boolean
+        is_foreign_key:
+          type: boolean
+        foreign_key_reference:
+          type: object
+          nullable: true
+          properties:
+            table:
+              type: string
+            column:
+              type: string
+        default_value:
+          type: string
+          nullable: true
+        max_length:
+          type: integer
+          nullable: true
+        description:
+          type: string
+          nullable: true
+
+    SyncResult:
+      type: object
+      properties:
+        database_id:
+          type: integer
+        status:
+          type: string
+          enum: [completed, failed, partial]
+        tables_synced:
+          type: integer
+        columns_synced:
+          type: integer
+        duration_ms:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+        synced_at:
+          type: string
+          format: date-time
+
+    # ============================================
+    # PHASE 3: QUERY SCHEMAS
+    # ============================================
+
+    QueryRequest:
+      type: object
+      required: [database_id, natural_language]
+      properties:
+        database_id:
+          type: integer
+        natural_language:
+          type: string
+          example: "Show me the top 10 customers by revenue in the last quarter"
+        conversation_id:
+          type: integer
+          nullable: true
+        options:
+          type: object
+          properties:
+            max_rows:
+              type: integer
+              minimum: 1
+              maximum: 10000
+              default: 100
+            timeout_seconds:
+              type: integer
+              minimum: 5
+              maximum: 300
+              default: 30
+            include_metadata:
+              type: boolean
+              default: false
+
+    QueryResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [pending, executing, completed, failed, cancelled]
+        natural_language:
+          type: string
+        generated_sql:
+          type: string
+          nullable: true
+        explanation:
+          type: string
+          nullable: true
+        results:
+          type: object
+          nullable: true
+          properties:
+            columns:
+              type: array
+              items:
+                type: string
+            rows:
+              type: array
+              items:
+                type: array
+            row_count:
+              type: integer
+            execution_time_ms:
+              type: integer
+        suggested_visualizations:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationSuggestion'
+        tokens_used:
+          type: integer
+        conversation_id:
+          type: integer
+        parent_query_id:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    QueryListResponse:
+      type: object
+      properties:
+        queries:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+        pages:
+          type: integer
+
+    SQLExecutionRequest:
+      type: object
+      required: [database_id, sql]
+      properties:
+        database_id:
+          type: integer
+        sql:
+          type: string
+          example: "SELECT COUNT(*) FROM customers WHERE created_at > '2026-01-01'"
+        timeout_seconds:
+          type: integer
+          default: 30
+
+    FollowUpRequest:
+      type: object
+      required: [natural_language]
+      properties:
+        natural_language:
+          type: string
+          example: "What about last month?"
+
+    VisualizationSuggestion:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [bar_chart, line_chart, pie_chart, table, kpi, scatter_plot, area_chart, heatmap, histogram]
+        title:
+          type: string
+        config:
+          type: object
+
+    # ============================================
+    # PHASE 3: CONVERSATION SCHEMAS
+    # ============================================
+
+    ConversationResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        database_id:
+          type: integer
+          nullable: true
+        context:
+          type: object
+        message_count:
+          type: integer
+        total_tokens:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ConversationListResponse:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationResponse'
+        total:
+          type: integer
+
+    ConversationMessageResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        conversation_id:
+          type: integer
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        tool_calls:
+          type: array
+          nullable: true
+          items:
+            type: object
+        tokens_used:
+          type: integer
+          nullable: true
+        model_used:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    SendMessageRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          example: "Show me total sales by region"
+
+    # ============================================
+    # PHASE 4: DASHBOARD SCHEMAS
+    # ============================================
+
+    DashboardRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          example: "Sales Performance Dashboard"
+        description:
+          type: string
+        layout_config:
+          type: object
+          default: {"columns": 12, "rowHeight": 50}
+        theme:
+          type: string
+          enum: [default, dark, light, custom]
+          default: default
+        is_template:
+          type: boolean
+          default: false
+        is_public:
+          type: boolean
+          default: false
+        tags:
+          type: array
+          items:
+            type: string
+
+    DashboardResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        layout_config:
+          type: object
+        theme:
+          type: string
+        is_template:
+          type: boolean
+        is_public:
+          type: boolean
+        auto_generated:
+          type: boolean
+        refresh_interval:
+          type: integer
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        widgets:
+          type: array
+          items:
+            $ref: '#/components/schemas/WidgetResponse'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DashboardListResponse:
+      type: object
+      properties:
+        dashboards:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    AutoGenerateRequest:
+      type: object
+      required: [description]
+      properties:
+        description:
+          type: string
+          example: "Sales performance dashboard with revenue trends and top products"
+        database_id:
+          type: integer
+          nullable: true
+        theme:
+          type: string
+          enum: [default, dark, light]
+          default: default
+
+    WidgetRequest:
+      type: object
+      required: [widget_type, title, query_id]
+      properties:
+        widget_type:
+          type: string
+          enum: [bar_chart, line_chart, pie_chart, table, kpi, scatter_plot, area_chart, heatmap, histogram]
+        title:
+          type: string
+        query_id:
+          type: integer
+          nullable: true
+        position_x:
+          type: integer
+          default: 0
+        position_y:
+          type: integer
+          default: 0
+        width:
+          type: integer
+          minimum: 1
+          maximum: 12
+          default: 6
+        height:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 4
+        config:
+          type: object
+          default: {}
+        refresh_interval:
+          type: integer
+          nullable: true
+
+    WidgetResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        dashboard_id:
+          type: integer
+        query_id:
+          type: integer
+          nullable: true
+        widget_type:
+          type: string
+        title:
+          type: string
+        position_x:
+          type: integer
+        position_y:
+          type: integer
+        width:
+          type: integer
+        height:
+          type: integer
+        config:
+          type: object
+        refresh_interval:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DashboardTemplateResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        preview_image:
+          type: string
+          nullable: true
+        widget_count:
+          type: integer
+        usage_count:
+          type: integer
+
+    ShareRequest:
+      type: object
+      properties:
+        is_public:
+          type: boolean
+        shared_with_user_ids:
+          type: array
+          items:
+            type: integer
+        share_link_enabled:
+          type: boolean
+
+    # ============================================
+    # PHASE 5: VOICE SCHEMAS
+    # ============================================
+
+    TranscriptionRequest:
+      type: object
+      properties:
+        language:
+          type: string
+          default: "en"
+        model:
+          type: string
+          enum: [whisper-1, whisper-large-v3]
+          default: whisper-1
+
+    TranscriptionResponse:
+      type: object
+      properties:
+        text:
+          type: string
+          example: "Show me total sales by region"
+        language:
+          type: string
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        duration_ms:
+          type: integer
+        segments:
+          type: array
+          items:
+            type: object
+            properties:
+              start:
+                type: number
+              end:
+                type: number
+              text:
+                type: string
+              confidence:
+                type: number
+
+    SynthesisRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+        voice_profile:
+          type: string
+          enum: [default, professional, friendly]
+          default: default
+        speed:
+          type: number
+          minimum: 0.5
+          maximum: 2.0
+          default: 1.0
+        format:
+          type: string
+          enum: [mp3, wav, opus]
+          default: mp3
+
+    VoiceProfileResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        display_name:
+          type: string
+        language:
+          type: string
+        sample_rate:
+          type: integer
+
+    # ============================================
+    # PHASE 6: ANOMALY SCHEMAS
+    # ============================================
+
+    AnomalyDetectRequest:
+      type: object
+      required: [database_id, table_name, column_name]
+      properties:
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        method:
+          type: string
+          enum: [isolation_forest, z_score, iqr, auto]
+          default: auto
+        sensitivity:
+          type: number
+          minimum: 0.1
+          maximum: 5.0
+          default: 3.0
+        time_range:
+          type: object
+          properties:
+            start_date:
+              type: string
+              format: date
+            end_date:
+              type: string
+              format: date
+        group_by:
+          type: string
+          nullable: true
+
+    AnomalyResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        anomaly_type:
+          type: string
+          enum: [statistical, contextual, collective]
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        detected_value:
+          type: number
+        expected_min:
+          type: number
+        expected_max:
+          type: number
+        z_score:
+          type: number
+          nullable: true
+        context_data:
+          type: object
+          nullable: true
+        root_cause_analysis:
+          type: string
+          nullable: true
+        is_resolved:
+          type: boolean
+        resolved_by:
+          type: integer
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AnomalyAlertResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        anomaly_id:
+          type: integer
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        title:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+          enum: [active, acknowledged, resolved]
+        acknowledged_by:
+          type: integer
+          nullable: true
+        acknowledged_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AnomalyRuleRequest:
+      type: object
+      required: [name, database_id, table_name, column_name]
+      properties:
+        name:
+          type: string
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        method:
+          type: string
+          enum: [isolation_forest, z_score, iqr]
+        threshold:
+          type: number
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        notification_channels:
+          type: array
+          items:
+            type: string
+            enum: [email, webhook, in_app]
+        is_active:
+          type: boolean
+          default: true
+
+    AnomalyRuleResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        method:
+          type: string
+        threshold:
+          type: number
+        severity:
+          type: string
+        notification_channels:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        triggered_count:
+          type: integer
+        last_triggered_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AnomalyListResponse:
+      type: object
+      properties:
+        anomalies:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnomalyResponse'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    AnomalyStatsResponse:
+      type: object
+      properties:
+        total_anomalies:
+          type: integer
+        active_anomalies:
+          type: integer
+        resolved_anomalies:
+          type: integer
+        by_severity:
+          type: object
+          properties:
+            low:
+              type: integer
+            medium:
+              type: integer
+            high:
+              type: integer
+            critical:
+              type: integer
+        by_type:
+          type: object
+          properties:
+            statistical:
+              type: integer
+            contextual:
+              type: integer
+            collective:
+              type: integer
+        trend:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              count:
+                type: integer
+
+    # ============================================
+    # PHASE 6: PREDICTION SCHEMAS
+    # ============================================
+
+    ForecastRequest:
+      type: object
+      required: [database_id, table_name, column_name, forecast_horizon]
+      properties:
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        forecast_horizon:
+          type: string
+          example: "30d"
+        model_type:
+          type: string
+          enum: [prophet, arima, lstm, auto]
+          default: auto
+        confidence_level:
+          type: number
+          minimum: 0.8
+          maximum: 0.99
+          default: 0.95
+        include_seasonality:
+          type: boolean
+          default: true
+        date_column:
+          type: string
+          nullable: true
+
+    ForecastResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        model_type:
+          type: string
+        forecast_horizon:
+          type: string
+        forecast_data:
+          type: object
+          properties:
+            dates:
+              type: array
+              items:
+                type: string
+                format: date
+            predicted:
+              type: array
+              items:
+                type: number
+            lower_bound:
+              type: array
+              items:
+                type: number
+            upper_bound:
+              type: array
+              items:
+                type: number
+        confidence_level:
+          type: number
+        accuracy_score:
+          type: number
+          nullable: true
+        mae:
+          type: number
+          nullable: true
+        rmse:
+          type: number
+          nullable: true
+        mape:
+          type: number
+          nullable: true
+        trained_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    PredictionListResponse:
+      type: object
+      properties:
+        predictions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForecastResponse'
+        total:
+          type: integer
+
+    PredictionModelResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+        supports_seasonality:
+          type: boolean
+        min_data_points:
+          type: integer
+        default_params:
+          type: object
+
+    ModelAccuracyResponse:
+      type: object
+      properties:
+        prediction_id:
+          type: integer
+        mae:
+          type: number
+        rmse:
+          type: number
+        mape:
+          type: number
+        r_squared:
+          type: number
+        accuracy_score:
+          type: number
+        actual_values:
+          type: array
+          items:
+            type: number
+        predicted_values:
+          type: array
+          items:
+            type: number
+
+    TrainingRequest:
+      type: object
+      required: [database_id, table_name, column_name]
+      properties:
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        model_type:
+          type: string
+          enum: [prophet, arima, lstm]
+        hyperparameters:
+          type: object
+          nullable: true
+        training_data_ratio:
+          type: number
+          minimum: 0.5
+          maximum: 0.9
+          default: 0.8
+
+    CompareRequest:
+      type: object
+      required: [database_id, table_name, column_name]
+      properties:
+        database_id:
+          type: integer
+        table_name:
+          type: string
+        column_name:
+          type: string
+        model_types:
+          type: array
+          items:
+            type: string
+            enum: [prophet, arima, lstm]
+          minItems: 2
+        forecast_horizon:
+          type: string
+          default: "30d"
+
+    ModelComparisonResponse:
+      type: object
+      properties:
+        models:
+          type: array
+          items:
+            type: object
+            properties:
+              model_type:
+                type: string
+              accuracy_score:
+                type: number
+              mae:
+                type: number
+              rmse:
+                type: number
+              mape:
+                type: number
+              training_time_ms:
+                type: integer
+        recommended_model:
+          type: string
+
+    # ============================================
+    # PHASE 7: CSV IMPORT SCHEMAS
+    # ============================================
+
+    CSVUploadResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        file_name:
+          type: string
+        file_size:
+          type: integer
+        mime_type:
+          type: string
+        row_count:
+          type: integer
+          nullable: true
+        column_count:
+          type: integer
+          nullable: true
+        detected_schema:
+          type: object
+          nullable: true
+          properties:
+            columns:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  detected_type:
+                    type: string
+                  sample_values:
+                    type: array
+                    items:
+                      type: string
+                  nullable:
+                    type: boolean
+        status:
+          type: string
+          enum: [uploaded, validating, validated, importing, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    CSVValidationResult:
+      type: object
+      properties:
+        import_id:
+          type: integer
+        is_valid:
+          type: boolean
+        total_rows:
+          type: integer
+        valid_rows:
+          type: integer
+        error_rows:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              row:
+                type: integer
+              column:
+                type: string
+              error:
+                type: string
+              value:
+                type: string
+        warnings:
+          type: array
+          items:
+            type: object
+            properties:
+              row:
+                type: integer
+              column:
+                type: string
+              warning:
+                type: string
+
+    ImportExecuteRequest:
+      type: object
+      properties:
+        target_table:
+          type: string
+        import_mode:
+          type: string
+          enum: [append, replace, upsert]
+          default: append
+        database_id:
+          type: integer
+          nullable: true
+        truncate:
+          type: boolean
+          default: false
+
+    ImportStatusResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [uploaded, validating, validated, importing, completed, failed, cancelled]
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+        rows_processed:
+          type: integer
+        total_rows:
+          type: integer
+        imported_to_table:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+
+    ImportHistoryResponse:
+      type: object
+      properties:
+        imports:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              file_name:
+                type: string
+              status:
+                type: string
+              row_count:
+                type: integer
+              imported_to_table:
+                type: string
+                nullable: true
+              created_at:
+                type: string
+                format: date-time
+              completed_at:
+                type: string
+                format: date-time
+                nullable: true
+        total:
+          type: integer
+
+    # ============================================
+    # PHASE 7: EXPORT SCHEMAS
+    # ============================================
+
+    ExportRequest:
+      type: object
+      required: [export_type]
+      properties:
+        export_type:
+          type: string
+          enum: [pdf, excel, png]
+        dashboard_id:
+          type: integer
+          nullable: true
+        query_id:
+          type: integer
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        format_options:
+          type: object
+          nullable: true
+          properties:
+            orientation:
+              type: string
+              enum: [portrait, landscape]
+              default: portrait
+            include_timestamp:
+              type: boolean
+              default: true
+            brand_logo:
+              type: string
+              nullable: true
+
+    ExportResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        export_type:
+          type: string
+          enum: [pdf, excel, png]
+        status:
+          type: string
+          enum: [pending, generating, completed, failed]
+        file_path:
+          type: string
+          nullable: true
+        file_size:
+          type: integer
+          nullable: true
+        download_url:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        requested_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ExportListResponse:
+      type: object
+      properties:
+        exports:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExportResponse'
+        total:
+          type: integer
+
+    ScheduledExportRequest:
+      type: object
+      required: [export_type, schedule_cron]
+      properties:
+        export_type:
+          type: string
+          enum: [pdf, excel, png]
+        dashboard_id:
+          type: integer
+          nullable: true
+        query_id:
+          type: integer
+          nullable: true
+        schedule_cron:
+          type: string
+          example: "0 9 * * 1"
+        recipients:
+          type: array
+          items:
+            type: string
+        format_options:
+          type: object
+          nullable: true
+
+    ScheduledExportResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        export_type:
+          type: string
+        schedule_cron:
+          type: string
+        recipients:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        last_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # ============================================
+    # PHASE 8: INTEGRATION SCHEMAS
+    # ============================================
+
+    IntegrationRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          example: "Salesforce CRM"
+        type:
+          type: string
+          enum: [rest_api, oauth2, webhook, graphql, custom]
+        config:
+          type: object
+          properties:
+            base_url:
+              type: string
+            auth_type:
+              type: string
+              enum: [bearer, basic, api_key, oauth2]
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+        auth_config:
+          type: object
+          nullable: true
+        sync_frequency:
+          type: string
+          enum: [realtime, hourly, daily, weekly, manual]
+          default: manual
+        is_active:
+          type: boolean
+          default: true
+
+    IntegrationResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, error, syncing]
+        config:
+          type: object
+        sync_frequency:
+          type: string
+        is_active:
+          type: boolean
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_sync_status:
+          type: string
+          enum: [success, failed]
+          nullable: true
+        created_by:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    IntegrationListResponse:
+      type: object
+      properties:
+        integrations:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntegrationResponse'
+        total:
+          type: integer
+
+    IntegrationLogResponse:
+      type: object
+      properties:
+        logs:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              integration_id:
+                type: integer
+              action:
+                type: string
+              status:
+                type: string
+                enum: [success, failed]
+              duration_ms:
+                type: integer
+              records_synced:
+                type: integer
+                nullable: true
+              error_message:
+                type: string
+                nullable: true
+              created_at:
+                type: string
+                format: date-time
+        total:
+          type: integer
+
+    # ============================================
+    # PHASE 8: API KEY SCHEMAS
+    # ============================================
+
+    APIKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: "Data Pipeline Key"
+        permissions:
+          type: array
+          items:
+            type: string
+          example: ["query:execute", "dashboard:read"]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    APIKeyResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        key_prefix:
+          type: string
+          example: "sk-abc12345"
+        permissions:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    APIKeyCreateResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        key:
+          type: string
+          description: Full API key (only shown once)
+        key_prefix:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    APIKeyListResponse:
+      type: object
+      properties:
+        api_keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKeyResponse'
+        total:
+          type: integer
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: Page number
+
+    PerPageParam:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Items per page
+
+    SortByParam:
+      name: sort_by
+      in: query
+      schema:
+        type: string
+      description: Field to sort by
+
+    SortOrderParam:
+      name: sort_order
+      in: query
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
+      description: Sort direction
+
+    SearchParam:
+      name: search
+      in: query
+      schema:
+        type: string
+      description: Search term
+
+    DatabaseIdPath:
+      name: database_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Database ID
+
+    QueryIdPath:
+      name: query_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Query ID
+
+    DashboardIdPath:
+      name: dashboard_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Dashboard ID
+
+    WidgetIdPath:
+      name: widget_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Widget ID
+
+    ConversationIdPath:
+      name: conversation_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Conversation ID
+
+    RoleIdPath:
+      name: role_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Role ID
+
+    UserIdPath:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: User ID
+
+    LogIdPath:
+      name: log_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Audit log ID
+
+    PermissionIdPath:
+      name: permission_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Permission ID
+
+    IntegrationIdPath:
+      name: integration_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Integration ID
+
+    ApiKeyIdPath:
+      name: key_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: API key ID
+
+    AnomalyIdPath:
+      name: anomaly_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Anomaly ID
+
+    PredictionIdPath:
+      name: prediction_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Prediction ID
+
+    ImportIdPath:
+      name: import_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: CSV import ID
+
+    ExportIdPath:
+      name: export_id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Export ID
+
+    TablePath:
+      name: table_name
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Table name
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not authenticated"
+            error_code: "AUTH_REQUIRED"
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not enough permissions"
+            error_code: "INSUFFICIENT_PERMISSIONS"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Resource not found"
+            error_code: "NOT_FOUND"
+
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Internal server error"
+            error_code: "INTERNAL_ERROR"
+
+# ============================================
+# PATHS
+# ============================================
+
+paths:
+  # ============================================
+  # HEALTH
+  # ============================================
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Check system health and service status
+      operationId: healthCheck
+      security: []
+      responses:
+        200:
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        503:
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  # ============================================
+  # AUTHENTICATION
+  # ============================================
+
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register new user
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        201:
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        409:
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login user
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        200:
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Logout user
+      operationId: logoutUser
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        200:
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/oauth/{provider}:
+    get:
+      tags: [Authentication]
+      summary: Initiate OAuth login
+      operationId: oauthLogin
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [azure_ad, google]
+      responses:
+        302:
+          description: Redirect to OAuth provider
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+
+  /auth/oauth/{provider}/callback:
+    post:
+      tags: [Authentication]
+      summary: OAuth callback
+      operationId: oauthCallback
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [azure_ad, google]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthCallbackRequest'
+      responses:
+        200:
+          description: OAuth authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: OAuth authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/forgot-password:
+    post:
+      tags: [Authentication]
+      summary: Request password reset
+      operationId: forgotPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        200:
+          description: Reset email sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /auth/reset-password:
+    post:
+      tags: [Authentication]
+      summary: Reset password
+      operationId: resetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        200:
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        400:
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/change-password:
+    post:
+      tags: [Authentication]
+      summary: Change password
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        200:
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================
+  # USERS
+  # ============================================
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [Users]
+      summary: Update current user profile
+      operationId: updateCurrentUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        200:
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - name: role_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        200:
+          description: Users list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Users]
+      summary: Create user
+      operationId: createUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        201:
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{user_id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      operationId: getUserById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        200:
+          description: User retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Users]
+      summary: Update user
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        200:
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Users]
+      summary: Delete user
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        200:
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /users/{user_id}/activate:
+    post:
+      tags: [Users]
+      summary: Activate user
+      operationId: activateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        200:
+          description: User activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{user_id}/deactivate:
+    post:
+      tags: [Users]
+      summary: Deactivate user
+      operationId: deactivateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        200:
+          description: User deactivated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{user_id}/roles:
+    get:
+      tags: [Users]
+      summary: Get user roles
+      operationId: getUserRoles
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        200:
+          description: User roles retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Users]
+      summary: Assign role to user
+      operationId: assignRoleToUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id:
+                  type: integer
+      responses:
+        200:
+          description: Role assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{user_id}/roles/{role_id}:
+    delete:
+      tags: [Users]
+      summary: Remove role from user
+      operationId: removeRoleFromUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+        - $ref: '#/components/parameters/RoleIdPath'
+      responses:
+        200:
+          description: Role removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  # ============================================
+  # ROLES
+  # ============================================
+
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List all roles
+      operationId: listRoles
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: include_permissions
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        200:
+          description: Roles list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Roles]
+      summary: Create new role
+      operationId: createRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        201:
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /roles/{role_id}:
+    get:
+      tags: [Roles]
+      summary: Get role by ID
+      operationId: getRoleById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleIdPath'
+      responses:
+        200:
+          description: Role retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Roles]
+      summary: Update role
+      operationId: updateRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+      responses:
+        200:
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Roles]
+      summary: Delete role
+      operationId: deleteRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleIdPath'
+      responses:
+        200:
+          description: Role deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /roles/{role_id}/permissions:
+    get:
+      tags: [Roles]
+      summary: Get role permissions
+      operationId: getRolePermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleIdPath'
+      responses:
+        200:
+          description: Role permissions retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Roles]
+      summary: Add permission to role
+      operationId: addPermissionToRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permission_id]
+              properties:
+                permission_id:
+                  type: integer
+      responses:
+        200:
+          description: Permission added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /roles/{role_id}/permissions/{permission_id}:
+    delete:
+      tags: [Roles]
+      summary: Remove permission from role
+      operationId: removePermissionFromRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleIdPath'
+        - $ref: '#/components/parameters/PermissionIdPath'
+      responses:
+        200:
+          description: Permission removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  # ============================================
+  # PERMISSIONS
+  # ============================================
+
+  /permissions:
+    get:
+      tags: [Permissions]
+      summary: List all permissions
+      operationId: listPermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: resource
+          in: query
+          schema:
+            type: string
+      responses:
+        200:
+          description: Permissions list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /permissions/{permission_id}:
+    get:
+      tags: [Permissions]
+      summary: Get permission by ID
+      operationId: getPermissionById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PermissionIdPath'
+      responses:
+        200:
+          description: Permission retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================
+  # AUDIT
+  # ============================================
+
+  /audit/logs:
+    get:
+      tags: [Audit]
+      summary: List audit logs
+      operationId: listAuditLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: user_id
+          in: query
+          schema:
+            type: integer
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [success, failure]
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        200:
+          description: Audit logs retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /audit/logs/{log_id}:
+    get:
+      tags: [Audit]
+      summary: Get audit log by ID
+      operationId: getAuditLogById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/LogIdPath'
+      responses:
+        200:
+          description: Audit log retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /audit/stats:
+    get:
+      tags: [Audit]
+      summary: Get audit statistics
+      operationId: getAuditStats
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        200:
+          description: Audit statistics retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_events:
+                    type: integer
+                  successful_events:
+                    type: integer
+                  failed_events:
+                    type: integer
+                  unique_users:
+                    type: integer
+                  top_actions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        action:
+                          type: string
+                        count:
+                          type: integer
+                  top_users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id:
+                          type: integer
+                        email:
+                          type: string
+                        action_count:
+                          type: integer
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  # ============================================
+  # DATABASES (Phase 2)
+  # ============================================
+
+  /databases:
+    get:
+      tags: [Databases]
+      summary: List connected databases
+      operationId: listDatabases
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [postgresql, mysql, sqlserver, mongodb, oracle, snowflake, bigquery, sqlite]
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        200:
+          description: Databases list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Databases]
+      summary: Add database connection
+      operationId: createDatabase
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatabaseConnectionRequest'
+      responses:
+        201:
+          description: Database connected successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /databases/{database_id}:
+    get:
+      tags: [Databases]
+      summary: Get database details
+      operationId: getDatabase
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+      responses:
+        200:
+          description: Database retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Databases]
+      summary: Update database connection
+      operationId: updateDatabase
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatabaseConnectionRequest'
+      responses:
+        200:
+          description: Database updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Databases]
+      summary: Remove database
+      operationId: deleteDatabase
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+      responses:
+        200:
+          description: Database removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /databases/{database_id}/test:
+    post:
+      tags: [Databases]
+      summary: Test connection
+      operationId: testDatabaseConnection
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+      responses:
+        200:
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseTestResult'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /databases/{database_id}/sync:
+    post:
+      tags: [Databases]
+      summary: Sync schema
+      operationId: syncDatabaseSchema
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+      responses:
+        200:
+          description: Schema sync result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResult'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /databases/{database_id}/schema:
+    get:
+      tags: [Databases]
+      summary: Get schema info
+      operationId: getDatabaseSchema
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+      responses:
+        200:
+          description: Schema retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /databases/{database_id}/tables:
+    get:
+      tags: [Databases]
+      summary: List tables
+      operationId: listTables
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+      responses:
+        200:
+          description: Tables list retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tables:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TableSchema'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /databases/{database_id}/tables/{table_name}:
+    get:
+      tags: [Databases]
+      summary: Get table schema
+      operationId: getTableSchema
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DatabaseIdPath'
+        - $ref: '#/components/parameters/TablePath'
+      responses:
+        200:
+          description: Table schema retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableSchema'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================
+  # QUERIES (Phase 3)
+  # ============================================
+
+  /queries:
+    get:
+      tags: [Queries]
+      summary: List query history
+      operationId: listQueries
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: database_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, executing, completed, failed, cancelled]
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        200:
+          description: Query history retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Queries]
+      summary: Execute natural language query
+      operationId: executeQuery
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        200:
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /queries/{query_id}:
+    get:
+      tags: [Queries]
+      summary: Get query details
+      operationId: getQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/QueryIdPath'
+      responses:
+        200:
+          description: Query details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /queries/sql:
+    post:
+      tags: [Queries]
+      summary: Execute raw SQL
+      operationId: executeSQL
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SQLExecutionRequest'
+      responses:
+        200:
+          description: SQL executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /queries/{query_id}/cancel:
+    post:
+      tags: [Queries]
+      summary: Cancel running query
+      operationId: cancelQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/QueryIdPath'
+      responses:
+        200:
+          description: Query cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /queries/{query_id}/follow-up:
+    post:
+      tags: [Queries]
+      summary: Follow-up question
+      operationId: queryFollowUp
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/QueryIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowUpRequest'
+      responses:
+        200:
+          description: Follow-up executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /queries/{query_id}/explain:
+    get:
+      tags: [Queries]
+      summary: Get query explanation
+      operationId: explainQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/QueryIdPath'
+      responses:
+        200:
+          description: Query explanation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  explanation:
+                    type: string
+                  generated_sql:
+                    type: string
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /queries/{query_id}/optimize:
+    post:
+      tags: [Queries]
+      summary: Get optimization suggestions
+      operationId: optimizeQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/QueryIdPath'
+      responses:
+        200:
+          description: Optimization suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        description:
+                          type: string
+                        impact:
+                          type: string
+                          enum: [low, medium, high]
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /queries/{query_id}/visualize:
+    post:
+      tags: [Queries]
+      summary: Auto-generate visualization
+      operationId: visualizeQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/QueryIdPath'
+      responses:
+        200:
+          description: Visualization suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  visualizations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VisualizationSuggestion'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # CONVERSATIONS (Phase 3)
+  # ============================================
+
+  /conversations:
+    get:
+      tags: [Conversations]
+      summary: List conversations
+      operationId: listConversations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: Conversations list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Conversations]
+      summary: Start conversation
+      operationId: createConversation
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                database_id:
+                  type: integer
+      responses:
+        201:
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /conversations/{conversation_id}:
+    get:
+      tags: [Conversations]
+      summary: Get conversation
+      operationId: getConversation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ConversationIdPath'
+      responses:
+        200:
+          description: Conversation retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Conversations]
+      summary: Delete conversation
+      operationId: deleteConversation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ConversationIdPath'
+      responses:
+        200:
+          description: Conversation deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /conversations/{conversation_id}/messages:
+    get:
+      tags: [Conversations]
+      summary: Get messages
+      operationId: getConversationMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ConversationIdPath'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: Messages retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConversationMessageResponse'
+                  total:
+                    type: integer
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Conversations]
+      summary: Send message
+      operationId: sendMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ConversationIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        200:
+          description: Message sent and response received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationMessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # DASHBOARDS (Phase 4)
+  # ============================================
+
+  /dashboards:
+    get:
+      tags: [Dashboards]
+      summary: List dashboards
+      operationId: listDashboards
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - name: is_template
+          in: query
+          schema:
+            type: boolean
+        - name: is_public
+          in: query
+          schema:
+            type: boolean
+        - name: tags
+          in: query
+          schema:
+            type: string
+          description: Comma-separated tags
+      responses:
+        200:
+          description: Dashboards list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Dashboards]
+      summary: Create dashboard
+      operationId: createDashboard
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardRequest'
+      responses:
+        201:
+          description: Dashboard created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboards/{dashboard_id}:
+    get:
+      tags: [Dashboards]
+      summary: Get dashboard
+      operationId: getDashboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+      responses:
+        200:
+          description: Dashboard retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Dashboards]
+      summary: Update dashboard
+      operationId: updateDashboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardRequest'
+      responses:
+        200:
+          description: Dashboard updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Dashboards]
+      summary: Delete dashboard
+      operationId: deleteDashboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+      responses:
+        200:
+          description: Dashboard deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /dashboards/auto-generate:
+    post:
+      tags: [Dashboards]
+      summary: AI auto-generate dashboard
+      operationId: autoGenerateDashboard
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoGenerateRequest'
+      responses:
+        201:
+          description: Dashboard auto-generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboards/{dashboard_id}/clone:
+    post:
+      tags: [Dashboards]
+      summary: Clone dashboard
+      operationId: cloneDashboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+      responses:
+        201:
+          description: Dashboard cloned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboards/{dashboard_id}/share:
+    put:
+      tags: [Dashboards]
+      summary: Share dashboard
+      operationId: shareDashboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+      responses:
+        200:
+          description: Dashboard sharing updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /dashboards/templates:
+    get:
+      tags: [Dashboards]
+      summary: List templates
+      operationId: listDashboardTemplates
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: Templates retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DashboardTemplateResponse'
+                  total:
+                    type: integer
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboards/{dashboard_id}/widgets:
+    post:
+      tags: [Dashboards]
+      summary: Add widget
+      operationId: addWidget
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WidgetRequest'
+      responses:
+        201:
+          description: Widget added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboards/{dashboard_id}/widgets/{widget_id}:
+    put:
+      tags: [Dashboards]
+      summary: Update widget
+      operationId: updateWidget
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+        - $ref: '#/components/parameters/WidgetIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WidgetRequest'
+      responses:
+        200:
+          description: Widget updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Dashboards]
+      summary: Remove widget
+      operationId: deleteWidget
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardIdPath'
+        - $ref: '#/components/parameters/WidgetIdPath'
+      responses:
+        200:
+          description: Widget removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================
+  # VOICE (Phase 5)
+  # ============================================
+
+  /voice/transcribe:
+    post:
+      tags: [Voice]
+      summary: Transcribe audio
+      operationId: transcribeAudio
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Audio file (mp3, wav, m4a, webm)
+                language:
+                  type: string
+                  default: "en"
+                model:
+                  type: string
+                  enum: [whisper-1, whisper-large-v3]
+                  default: whisper-1
+      responses:
+        200:
+          description: Transcription result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /voice/synthesize:
+    post:
+      tags: [Voice]
+      summary: Text to speech
+      operationId: synthesizeSpeech
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SynthesisRequest'
+      responses:
+        200:
+          description: Audio file generated
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /voice/profiles:
+    get:
+      tags: [Voice]
+      summary: List voice profiles
+      operationId: listVoiceProfiles
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Voice profiles retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VoiceProfileResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # ANOMALY (Phase 6)
+  # ============================================
+
+  /anomaly/detect:
+    post:
+      tags: [Anomaly]
+      summary: Run anomaly detection
+      operationId: detectAnomalies
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnomalyDetectRequest'
+      responses:
+        200:
+          description: Anomalies detected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  anomalies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AnomalyResponse'
+                  total:
+                    type: integer
+                  execution_time_ms:
+                    type: integer
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /anomaly/alerts:
+    get:
+      tags: [Anomaly]
+      summary: Get active alerts
+      operationId: listAnomalyAlerts
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, acknowledged, resolved]
+      responses:
+        200:
+          description: Alerts retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alerts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AnomalyAlertResponse'
+                  total:
+                    type: integer
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /anomaly/alerts/{alert_id}/acknowledge:
+    put:
+      tags: [Anomaly]
+      summary: Acknowledge alert
+      operationId: acknowledgeAlert
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: alert_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          description: Alert acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /anomaly/alerts/{alert_id}/resolve:
+    put:
+      tags: [Anomaly]
+      summary: Resolve alert
+      operationId: resolveAlert
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: alert_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resolution_notes:
+                  type: string
+      responses:
+        200:
+          description: Alert resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /anomaly/rules:
+    get:
+      tags: [Anomaly]
+      summary: List detection rules
+      operationId: listAnomalyRules
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: Rules retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AnomalyRuleResponse'
+                  total:
+                    type: integer
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Anomaly]
+      summary: Create detection rule
+      operationId: createAnomalyRule
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnomalyRuleRequest'
+      responses:
+        201:
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnomalyRuleResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /anomaly/history:
+    get:
+      tags: [Anomaly]
+      summary: Historical anomalies
+      operationId: getAnomalyHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: database_id
+          in: query
+          schema:
+            type: integer
+        - name: table_name
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        200:
+          description: Anomaly history retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnomalyListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /anomaly/stats:
+    get:
+      tags: [Anomaly]
+      summary: Anomaly statistics
+      operationId: getAnomalyStats
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        200:
+          description: Anomaly statistics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnomalyStatsResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # PREDICTIONS (Phase 6)
+  # ============================================
+
+  /predictions/forecast:
+    post:
+      tags: [Predictions]
+      summary: Generate forecast
+      operationId: generateForecast
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForecastRequest'
+      responses:
+        200:
+          description: Forecast generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /predictions:
+    get:
+      tags: [Predictions]
+      summary: List predictions
+      operationId: listPredictions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: database_id
+          in: query
+          schema:
+            type: integer
+        - name: model_type
+          in: query
+          schema:
+            type: string
+            enum: [prophet, arima, lstm]
+      responses:
+        200:
+          description: Predictions list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /predictions/{prediction_id}:
+    get:
+      tags: [Predictions]
+      summary: Get prediction
+      operationId: getPrediction
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PredictionIdPath'
+      responses:
+        200:
+          description: Prediction retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Predictions]
+      summary: Delete prediction
+      operationId: deletePrediction
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PredictionIdPath'
+      responses:
+        200:
+          description: Prediction deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /predictions/{prediction_id}/train:
+    post:
+      tags: [Predictions]
+      summary: Train custom model
+      operationId: trainModel
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PredictionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrainingRequest'
+      responses:
+        200:
+          description: Model trained
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /predictions/{prediction_id}/accuracy:
+    get:
+      tags: [Predictions]
+      summary: Get accuracy metrics
+      operationId: getPredictionAccuracy
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PredictionIdPath'
+      responses:
+        200:
+          description: Accuracy metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelAccuracyResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /predictions/{prediction_id}/compare:
+    post:
+      tags: [Predictions]
+      summary: Compare models
+      operationId: compareModels
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PredictionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompareRequest'
+      responses:
+        200:
+          description: Model comparison
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelComparisonResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /predictions/models:
+    get:
+      tags: [Predictions]
+      summary: List available models
+      operationId: listPredictionModels
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Models retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PredictionModelResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # CSV IMPORT (Phase 7)
+  # ============================================
+
+  /import/csv/upload:
+    post:
+      tags: [CSV Import]
+      summary: Upload CSV file
+      operationId: uploadCSV
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file
+                database_id:
+                  type: integer
+                  nullable: true
+                  description: Target database (optional)
+      responses:
+        201:
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CSVUploadResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /import/csv/{import_id}/validate:
+    post:
+      tags: [CSV Import]
+      summary: Validate CSV data
+      operationId: validateCSV
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ImportIdPath'
+      responses:
+        200:
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CSVValidationResult'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /import/csv/{import_id}/import:
+    post:
+      tags: [CSV Import]
+      summary: Execute import
+      operationId: executeImport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ImportIdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportExecuteRequest'
+      responses:
+        200:
+          description: Import started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportStatusResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /import/csv/{import_id}/status:
+    get:
+      tags: [CSV Import]
+      summary: Import status
+      operationId: getImportStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ImportIdPath'
+      responses:
+        200:
+          description: Import status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportStatusResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /import/csv/{import_id}/cancel:
+    post:
+      tags: [CSV Import]
+      summary: Cancel import
+      operationId: cancelImport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ImportIdPath'
+      responses:
+        200:
+          description: Import cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /import/history:
+    get:
+      tags: [CSV Import]
+      summary: Import history
+      operationId: getImportHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: Import history retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportHistoryResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # EXPORTS (Phase 7)
+  # ============================================
+
+  /exports:
+    get:
+      tags: [Exports]
+      summary: List exports
+      operationId: listExports
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: export_type
+          in: query
+          schema:
+            type: string
+            enum: [pdf, excel, png]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, generating, completed, failed]
+      responses:
+        200:
+          description: Exports list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /exports/pdf:
+    post:
+      tags: [Exports]
+      summary: Export to PDF
+      operationId: exportPDF
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        201:
+          description: PDF export started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /exports/excel:
+    post:
+      tags: [Exports]
+      summary: Export to Excel
+      operationId: exportExcel
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        201:
+          description: Excel export started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /exports/png:
+    post:
+      tags: [Exports]
+      summary: Export to PNG
+      operationId: exportPNG
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        201:
+          description: PNG export started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /exports/{export_id}:
+    get:
+      tags: [Exports]
+      summary: Get export details
+      operationId: getExport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ExportIdPath'
+      responses:
+        200:
+          description: Export details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Exports]
+      summary: Delete export
+      operationId: deleteExport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ExportIdPath'
+      responses:
+        200:
+          description: Export deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /exports/{export_id}/download:
+    get:
+      tags: [Exports]
+      summary: Download file
+      operationId: downloadExport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ExportIdPath'
+      responses:
+        200:
+          description: File downloaded
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /exports/schedule:
+    get:
+      tags: [Exports]
+      summary: List scheduled exports
+      operationId: listScheduledExports
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: Scheduled exports retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schedules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScheduledExportResponse'
+                  total:
+                    type: integer
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Exports]
+      summary: Schedule export
+      operationId: scheduleExport
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduledExportRequest'
+      responses:
+        201:
+          description: Export scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledExportResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # INTEGRATIONS (Phase 8)
+  # ============================================
+
+  /integrations:
+    get:
+      tags: [Integrations]
+      summary: List integrations
+      operationId: listIntegrations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [rest_api, oauth2, webhook, graphql, custom]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive, error, syncing]
+      responses:
+        200:
+          description: Integrations list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Integrations]
+      summary: Create integration
+      operationId: createIntegration
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationRequest'
+      responses:
+        201:
+          description: Integration created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /integrations/{integration_id}:
+    get:
+      tags: [Integrations]
+      summary: Get integration
+      operationId: getIntegration
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IntegrationIdPath'
+      responses:
+        200:
+          description: Integration retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Integrations]
+      summary: Update integration
+      operationId: updateIntegration
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IntegrationIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationRequest'
+      responses:
+        200:
+          description: Integration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Integrations]
+      summary: Delete integration
+      operationId: deleteIntegration
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IntegrationIdPath'
+      responses:
+        200:
+          description: Integration deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+  /integrations/{integration_id}/test:
+    post:
+      tags: [Integrations]
+      summary: Test connection
+      operationId: testIntegration
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IntegrationIdPath'
+      responses:
+        200:
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  latency_ms:
+                    type: integer
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /integrations/{integration_id}/sync:
+    post:
+      tags: [Integrations]
+      summary: Trigger sync
+      operationId: triggerSync
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IntegrationIdPath'
+      responses:
+        200:
+          description: Sync triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+  /integrations/{integration_id}/logs:
+    get:
+      tags: [Integrations]
+      summary: Sync logs
+      operationId: getIntegrationLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IntegrationIdPath'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: Sync logs retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationLogResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # API KEYS (Phase 8)
+  # ============================================
+
+  /api-keys:
+    get:
+      tags: [API Keys]
+      summary: List API keys
+      operationId: listAPIKeys
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        200:
+          description: API keys list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeyListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [API Keys]
+      summary: Create API key
+      operationId: createAPIKey
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/APIKeyRequest'
+      responses:
+        201:
+          description: API key created (key shown only once)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeyCreateResponse'
+        400:
+          $ref: '#/components/responses/ValidationError'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+
+  /api-keys/{key_id}:
+    put:
+      tags: [API Keys]
+      summary: Update API key
+      operationId: updateAPIKey
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                is_active:
+                  type: boolean
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        200:
+          description: API key updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeyResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [API Keys]
+      summary: Revoke API key
+      operationId: revokeAPIKey
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyIdPath'
+      responses:
+        200:
+          description: API key revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'

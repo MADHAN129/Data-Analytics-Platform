@@ -1,0 +1,107 @@
+from typing import Optional
+
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
+from app.models.user import User, UserRole
+from app.models.role import Role
+from app.schemas.user import UserResponse, RoleInUser, UpdateProfileRequest
+from app.services.audit_service import create_audit_log
+
+
+def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
+    return db.query(User).filter(User.id == user_id).first()
+
+
+def get_user_response(db: Session, user: User) -> UserResponse:
+    user_roles = (
+        db.query(Role)
+        .join(UserRole, Role.id == UserRole.role_id)
+        .filter(UserRole.user_id == user.id)
+        .all()
+    )
+    roles = [
+        RoleInUser(
+            id=r.id, name=r.name, description=r.description,
+            is_system=r.is_system, created_at=r.created_at, updated_at=r.updated_at,
+        )
+        for r in user_roles
+    ]
+    return UserResponse(
+        id=user.id, email=user.email, full_name=user.full_name,
+        phone=user.phone, avatar_url=user.avatar_url,
+        auth_provider=user.auth_provider, is_active=user.is_active,
+        mfa_enabled=user.mfa_enabled, roles=roles,
+        created_at=user.created_at, updated_at=user.updated_at,
+    )
+
+
+def list_users(
+    db: Session,
+    page: int = 1,
+    per_page: int = 20,
+    search: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    role_id: Optional[int] = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+):
+    query = db.query(User)
+
+    if search:
+        query = query.filter(
+            User.full_name.ilike(f"%{search}%") | User.email.ilike(f"%{search}%")
+        )
+    if is_active is not None:
+        query = query.filter(User.is_active == is_active)
+
+    if role_id:
+        query = query.join(UserRole).filter(UserRole.role_id == role_id)
+
+    total = query.count()
+
+    sort_column = getattr(User, sort_by, User.created_at)
+    if sort_order == "desc":
+        query = query.order_by(desc(sort_column))
+    else:
+        query = query.order_by(sort_column)
+
+    users = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    return [get_user_response(db, u) for u in users], total
+
+
+def update_profile(db: Session, user_id: int, data: UpdateProfileRequest, current_user_id: int) -> UserResponse:
+    user = get_user_by_id(db, user_id)
+    if not user:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if data.full_name is not None:
+        user.full_name = data.full_name
+    if data.phone is not None:
+        user.phone = data.phone
+    if data.avatar_url is not None:
+        user.avatar_url = data.avatar_url
+
+    db.commit()
+    db.refresh(user)
+
+    create_audit_log(
+        db, current_user_id, "user.update", "user", str(user_id),
+        {"fields": [k for k, v in data.model_dump().items() if v is not None]},
+    )
+
+    return get_user_response(db, user)
+
+
+def delete_user(db: Session, user_id: int, current_user_id: int):
+    user = get_user_by_id(db, user_id)
+    if not user:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.is_active = False
+    db.commit()
+
+    create_audit_log(db, current_user_id, "user.delete", "user", str(user_id))

@@ -1,0 +1,92 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentic-postgres
+    environment:
+      POSTGRES_DB: agentic
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d agentic"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentic-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: agentic-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://user:pass@postgres:5432/agentic
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: super-secret-key-change-in-production-abc123
+      CORS_ORIGINS: '["http://localhost:3000", "http://localhost:3001"]'
+      VLLM_API_URL: http://ollama:11434/v1
+      VLLM_API_KEY: ""
+      LLM_USE_MOCK: "false"
+      LLM_MODEL: "qwen3:8b"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "python seed.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: agentic-ollama
+    runtime: nvidia
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+    ports:
+      - "8001:11434"
+    volumes:
+      - ollama_cache:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+  frontend:
+    build: ./frontend
+    container_name: agentic-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    command: npm run dev
+
+volumes:
+  postgres_data:
+  ollama_cache:
