@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, users, roles, permissions, audit, connections, queries, conversations, templates
+from app.api import auth, users, roles, permissions, audit, connections, queries, conversations, templates, dashboards
 from app.schemas.common import HealthResponse
 
 app = FastAPI(
@@ -61,3 +61,4 @@ app.include_router(connections.router, prefix="/api/v1")
 app.include_router(queries.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(templates.router, prefix="/api/v1")
+app.include_router(dashboards.router, prefix="/api/v1")

@@ -485,3 +485,94 @@ export interface TemplateListResponse {
   templates: TemplateResponse[]
   total: number
 }
+
+// ============================================
+// PHASE 4: DASHBOARD TYPES
+// ============================================
+
+export interface WidgetConfig {
+  widget_type: string
+  title: string
+  position_x: number
+  position_y: number
+  width: number
+  height: number
+  config?: Record<string, unknown>
+  query_id?: number
+}
+
+export interface WidgetResponse {
+  id: number
+  dashboard_id: number
+  query_id?: number
+  widget_type: string
+  title: string
+  position_x: number
+  position_y: number
+  width: number
+  height: number
+  config?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface DashboardCreateRequest {
+  title: string
+  description?: string
+  is_template?: boolean
+}
+
+export interface DashboardUpdateRequest {
+  title?: string
+  description?: string
+  is_template?: boolean
+  is_public?: boolean
+}
+
+export interface DashboardResponse {
+  id: number
+  title: string
+  description?: string
+  layout_config?: Record<string, unknown>
+  is_template: boolean
+  is_public: boolean
+  auto_generated: boolean
+  widget_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DashboardDetailResponse {
+  id: number
+  title: string
+  description?: string
+  layout_config?: Record<string, unknown>
+  is_template: boolean
+  is_public: boolean
+  auto_generated: boolean
+  widgets: WidgetResponse[]
+  created_at: string
+  updated_at: string
+}
+
+export interface DashboardListResponse {
+  dashboards: DashboardResponse[]
+  total: number
+}
+
+export interface LayoutUpdateItem {
+  id: number
+  position_x: number
+  position_y: number
+  width: number
+  height: number
+}
+
+export interface LayoutUpdateRequest {
+  widgets: LayoutUpdateItem[]
+}
+
+export interface AutoGenerateRequest {
+  database_id: number
+  query_text?: string
+}

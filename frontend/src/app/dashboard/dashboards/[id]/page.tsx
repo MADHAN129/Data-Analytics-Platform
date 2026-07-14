@@ -1,0 +1,683 @@
+"use client"
+
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { useParams, useRouter } from "next/navigation"
+import GridLayout, { type Layout, verticalCompactor } from "react-grid-layout"
+import "react-grid-layout/css/styles.css"
+import { api } from "@/lib/api-client"
+import { useToast } from "@/components/ui/use-toast"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
+import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
+import { formatDate } from "@/lib/utils"
+import type {
+  WidgetResponse, DashboardDetailResponse, QueryResponse,
+  VisualizationSuggestion, QueryResult,
+} from "@/types/api"
+import {
+  ArrowLeft, Plus, Trash2, Loader2, Settings, GripVertical, Pencil,
+  BarChart3, PieChart, LineChart, AreaChart, Table2, LayoutDashboard,
+} from "lucide-react"
+
+const WIDGET_TYPES = [
+  { value: "kpi", label: "KPI", icon: LayoutDashboard },
+  { value: "bar_chart", label: "Bar Chart", icon: BarChart3 },
+  { value: "pie_chart", label: "Pie Chart", icon: PieChart },
+  { value: "line_chart", label: "Line Chart", icon: LineChart },
+  { value: "area_chart", label: "Area Chart", icon: AreaChart },
+  { value: "table", label: "Table", icon: Table2 },
+] as const
+
+export default function DashboardDetailPage() {
+  const params = useParams<{ id: string }>()
+  const router = useRouter()
+  const { toast } = useToast()
+  const dashboardId = Number(params.id)
+
+  const [dash, setDash] = useState<DashboardDetailResponse | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState("")
+  const [description, setDescription] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [addWidgetOpen, setAddWidgetOpen] = useState(false)
+  const [editingWidget, setEditingWidget] = useState<WidgetResponse | null>(null)
+  const [editWidgetOpen, setEditWidgetOpen] = useState(false)
+  const [deleteWidgetId, setDeleteWidgetId] = useState<number | null>(null)
+  const [layoutUpdating, setLayoutUpdating] = useState(false)
+
+  const fetchDashboard = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const data = await api.getDashboardById(dashboardId)
+      setDash(data)
+      setTitle(data.title)
+      setDescription(data.description || "")
+    } catch {
+      toast({ title: "Error", description: "Failed to load dashboard", variant: "destructive" })
+    } finally {
+      setIsLoading(false)
+    }
+  }, [dashboardId, toast])
+
+  useEffect(() => { fetchDashboard() }, [fetchDashboard])
+
+  const layout = useMemo(() => {
+    if (!dash) return []
+    return dash.widgets.map((w) => ({
+      i: String(w.id),
+      x: w.position_x,
+      y: w.position_y,
+      w: w.width,
+      h: w.height,
+    }))
+  }, [dash])
+
+  const handleLayoutChange = useCallback(async (newLayout: Layout) => {
+    if (!dash || layoutUpdating) return
+    const widgets = newLayout.map((item) => ({
+      id: Number(item.i),
+      position_x: item.x,
+      position_y: item.y,
+      width: item.w,
+      height: item.h,
+    }))
+    setLayoutUpdating(true)
+    try {
+      const updated = await api.updateDashboardLayout(dashboardId, { widgets })
+      setDash((prev) => prev ? { ...prev, widgets: updated } : prev)
+    } catch {
+      toast({ title: "Error", description: "Failed to save layout", variant: "destructive" })
+    } finally {
+      setLayoutUpdating(false)
+    }
+  }, [dash, dashboardId, layoutUpdating, toast])
+
+  const handleSaveDetails = async () => {
+    if (!title.trim()) return
+    setSaving(true)
+    try {
+      const updated = await api.updateDashboard(dashboardId, {
+        title: title.trim(),
+        description: description.trim() || undefined,
+      })
+      setDash(updated)
+      setEditing(false)
+      toast({ title: "Dashboard updated", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "Failed to update dashboard", variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAddWidget = async (widgetType: string, widgetTitle: string, queryId?: number) => {
+    try {
+      const widget = await api.addWidget(dashboardId, {
+        widget_type: widgetType,
+        title: widgetTitle,
+        position_x: 0,
+        position_y: 0,
+        width: 6,
+        height: 4,
+        query_id: queryId,
+      })
+      setDash((prev) => prev ? { ...prev, widgets: [...prev.widgets, widget] } : prev)
+      setAddWidgetOpen(false)
+      toast({ title: "Widget added", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "Failed to add widget", variant: "destructive" })
+    }
+  }
+
+  const handleUpdateWidget = async (widgetId: number, data: {
+    title: string
+    widget_type: string
+    query_id?: number | null
+    config?: Record<string, unknown>
+  }) => {
+    try {
+      const updated = await api.updateWidget(dashboardId, widgetId, {
+        widget_type: data.widget_type,
+        title: data.title,
+        position_x: 0,
+        position_y: 0,
+        width: 6,
+        height: 4,
+        query_id: data.query_id ?? undefined,
+        config: data.config,
+      })
+      setDash((prev) => prev ? {
+        ...prev,
+        widgets: prev.widgets.map((w) => w.id === widgetId ? updated : w),
+      } : prev)
+      setEditWidgetOpen(false)
+      setEditingWidget(null)
+      toast({ title: "Widget updated", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "Failed to update widget", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteWidget = async () => {
+    if (!deleteWidgetId) return
+    try {
+      await api.deleteWidget(dashboardId, deleteWidgetId)
+      setDash((prev) => prev ? { ...prev, widgets: prev.widgets.filter((w) => w.id !== deleteWidgetId) } : prev)
+      setDeleteWidgetId(null)
+      toast({ title: "Widget deleted", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "Failed to delete widget", variant: "destructive" })
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-4 w-96" />
+        <div className="grid grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-48 rounded-lg" />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (!dash) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <LayoutDashboard className="h-12 w-12 text-muted-foreground mb-4" />
+        <h2 className="text-xl font-semibold">Dashboard not found</h2>
+        <Button variant="outline" className="mt-4" onClick={() => router.push("/dashboard/dashboards")}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          {editing ? (
+            <div className="space-y-3 max-w-lg">
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Dashboard title" />
+              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description..." rows={2} />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={handleSaveDetails} disabled={saving || !title.trim()}>
+                  {saving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                  Save
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => { setEditing(false); setTitle(dash.title); setDescription(dash.description || "") }}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold">{dash.title}</h1>
+                {dash.auto_generated && <Badge variant="outline" className="gap-1">Auto-generated</Badge>}
+              </div>
+              {dash.description && <p className="text-muted-foreground mt-1">{dash.description}</p>}
+              <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                <span>{dash.widgets.length} widget{dash.widgets.length !== 1 ? "s" : ""}</span>
+                <span>Updated {formatDate(dash.updated_at)}</span>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+            <Settings className="mr-1 h-4 w-4" /> Edit
+          </Button>
+          <Button size="sm" onClick={() => setAddWidgetOpen(true)}>
+            <Plus className="mr-1 h-4 w-4" /> Add Widget
+          </Button>
+        </div>
+      </div>
+
+      {dash.widgets.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-20">
+            <LayoutDashboard className="h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-lg font-medium">No widgets yet</p>
+            <p className="text-muted-foreground mb-4">Add a widget to start building your dashboard</p>
+            <Button onClick={() => setAddWidgetOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Add Widget
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="relative">
+          {layoutUpdating && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+          )}
+          <GridLayout
+            className="layout"
+            layout={layout}
+            width={1200}
+            gridConfig={{ cols: 12, rowHeight: 80 }}
+            dragConfig={{ handle: ".drag-handle", enabled: true }}
+            resizeConfig={{ enabled: true }}
+            compactor={verticalCompactor}
+            onLayoutChange={handleLayoutChange}
+          >
+            {dash.widgets.map((widget) => (
+              <Card key={widget.id} className="overflow-hidden">
+                <CardHeader className="flex flex-row items-center justify-between py-2 px-4">
+                  <div className="flex items-center gap-2">
+                    <div className="drag-handle cursor-grab active:cursor-grabbing">
+                      <GripVertical className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <CardTitle className="text-sm font-medium">{widget.title}</CardTitle>
+                    <WidgetTypeBadge type={widget.widget_type} />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => { setEditingWidget(widget); setEditWidgetOpen(true) }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => setDeleteWidgetId(widget.id)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4 pt-0" style={{ height: `calc(100% - 40px)` }}>
+                  <WidgetContent widget={widget} />
+                </CardContent>
+              </Card>
+            ))}
+          </GridLayout>
+        </div>
+      )}
+
+      <AddWidgetDialog
+        open={addWidgetOpen}
+        onOpenChange={setAddWidgetOpen}
+        onAdd={handleAddWidget}
+      />
+
+      {editingWidget && (
+        <EditWidgetDialog
+          widget={editingWidget}
+          open={editWidgetOpen}
+          onOpenChange={(o) => { if (!o) { setEditWidgetOpen(false); setEditingWidget(null) } }}
+          onSave={handleUpdateWidget}
+        />
+      )}
+
+      <Dialog open={!!deleteWidgetId} onOpenChange={(o) => { if (!o) setDeleteWidgetId(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Widget</DialogTitle>
+          </DialogHeader>
+          <p className="text-muted-foreground">Are you sure you want to delete this widget?</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteWidgetId(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteWidget}><Trash2 className="mr-2 h-4 w-4" /> Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function WidgetTypeBadge({ type }: { type: string }) {
+  const info = WIDGET_TYPES.find((t) => t.value === type)
+  if (!info) return <Badge variant="secondary">{type}</Badge>
+  const Icon = info.icon
+  return (
+    <Badge variant="secondary" className="gap-1">
+      <Icon className="h-3 w-3" /> {info.label}
+    </Badge>
+  )
+}
+
+function WidgetPlaceholder({ widget }: { widget: WidgetResponse }) {
+  const info = WIDGET_TYPES.find((t) => t.value === widget.widget_type)
+  const Icon = info?.icon || LayoutDashboard
+  return (
+    <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+      <div className="text-center">
+        <Icon className="h-8 w-8 mx-auto opacity-50" />
+        <p className="mt-2 text-sm">{widget.title}</p>
+        <p className="text-xs">Connect to a query or configure data source</p>
+      </div>
+    </div>
+  )
+}
+
+function WidgetContent({ widget }: { widget: WidgetResponse }) {
+  const [query, setQuery] = useState<QueryResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!widget.query_id) {
+      setQuery(null)
+      setLoading(false)
+      setError(false)
+      return
+    }
+    setLoading(true)
+    setError(false)
+    api.getQueryById(widget.query_id)
+      .then(setQuery)
+      .catch(() => setError(true))
+      .finally(() => setLoading(false))
+  }, [widget.query_id])
+
+  if (!widget.query_id) return <WidgetPlaceholder widget={widget} />
+  if (loading) return (
+    <div className="flex h-full w-full items-center justify-center">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  )
+  if (error || !query?.results) return <WidgetPlaceholder widget={widget} />
+
+  return <WidgetChartRenderer widget={widget} results={query.results} suggestions={query.suggested_visualizations} />
+}
+
+function WidgetChartRenderer({
+  widget, results, suggestions,
+}: {
+  widget: WidgetResponse
+  results: QueryResult
+  suggestions?: VisualizationSuggestion[]
+}) {
+  const suggestion = useMemo(() => {
+    if (suggestions && suggestions.length > 0) {
+      const match = suggestions.find((s) => s.type === widget.widget_type)
+      if (match) return match
+    }
+    return {
+      type: widget.widget_type,
+      title: widget.title,
+      config: (widget.config as Record<string, unknown>) || {},
+    } as VisualizationSuggestion
+  }, [widget, suggestions])
+
+  if (widget.widget_type === suggestion.type) {
+    return <VisualizationRenderer results={results} suggestions={[suggestion]} />
+  }
+
+  return <VisualizationRenderer results={results} suggestions={suggestions || [suggestion]} />
+}
+
+function QueryPicker({
+  value, onChange, databaseId,
+}: {
+  value?: number | null
+  onChange: (queryId: number | null) => void
+  databaseId?: number
+}) {
+  const [queries, setQueries] = useState<Array<{ id: number; natural_language: string; generated_sql?: string }>>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api.listQueries({ per_page: 50, database_id: databaseId })
+      .then((data) => setQueries(data.queries))
+      .catch(() => setQueries([]))
+      .finally(() => setLoading(false))
+  }, [databaseId])
+
+  return (
+    <div className="space-y-2">
+      <Label>Linked Query</Label>
+      <Select
+        value={value ? String(value) : "none"}
+        onValueChange={(v) => onChange(v === "none" ? null : Number(v))}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder={loading ? "Loading queries..." : "Select a query"} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">No query (placeholder)</SelectItem>
+          {queries.map((q) => (
+            <SelectItem key={q.id} value={String(q.id)}>
+              <span className="line-clamp-1">{q.natural_language || `Query #${q.id}`}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+function AddWidgetDialog({
+  open, onOpenChange, onAdd,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  onAdd: (type: string, title: string, queryId?: number) => void
+}) {
+  const [widgetType, setWidgetType] = useState("kpi")
+  const [widgetTitle, setWidgetTitle] = useState("")
+  const [queryId, setQueryId] = useState<number | null>(null)
+
+  const handleAdd = () => {
+    if (!widgetTitle.trim()) return
+    onAdd(widgetType, widgetTitle.trim(), queryId ?? undefined)
+    setWidgetTitle("")
+    setWidgetType("kpi")
+    setQueryId(null)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { setQueryId(null); setWidgetTitle(""); setWidgetType("kpi") }; onOpenChange(o) }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add Widget</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Widget Type</Label>
+            <Select value={widgetType} onValueChange={setWidgetType}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {WIDGET_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    <div className="flex items-center gap-2">
+                      <t.icon className="h-4 w-4" />
+                      {t.label}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="widget-title">Title</Label>
+            <Input
+              id="widget-title"
+              value={widgetTitle}
+              onChange={(e) => setWidgetTitle(e.target.value)}
+              placeholder="Widget title"
+            />
+          </div>
+          <QueryPicker value={queryId} onChange={setQueryId} />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleAdd} disabled={!widgetTitle.trim()}>Add</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function EditWidgetDialog({
+  widget, open, onOpenChange, onSave,
+}: {
+  widget: WidgetResponse
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  onSave: (widgetId: number, data: {
+    title: string
+    widget_type: string
+    query_id?: number | null
+    config?: Record<string, unknown>
+  }) => void
+}) {
+  const [title, setTitle] = useState(widget.title)
+  const [widgetType, setWidgetType] = useState(widget.widget_type)
+  const [queryId, setQueryId] = useState<number | null>(widget.query_id ?? null)
+  const [selectedQuery, setSelectedQuery] = useState<QueryResponse | null>(null)
+  const [loadingQuery, setLoadingQuery] = useState(false)
+  const [xCol, setXCol] = useState<string>("")
+  const [yCol, setYCol] = useState<string>("")
+
+  useEffect(() => {
+    setTitle(widget.title)
+    setWidgetType(widget.widget_type)
+    setQueryId(widget.query_id ?? null)
+    setXCol("")
+    setYCol("")
+    setSelectedQuery(null)
+  }, [widget])
+
+  useEffect(() => {
+    if (!queryId) {
+      setSelectedQuery(null)
+      return
+    }
+    setLoadingQuery(true)
+    api.getQueryById(queryId)
+      .then((q) => {
+        setSelectedQuery(q)
+        const cfg = widget.config as Record<string, unknown> | undefined
+        if (cfg?.x) setXCol(String(cfg.x))
+        if (cfg?.y) setYCol(String(cfg.y))
+      })
+      .catch(() => setSelectedQuery(null))
+      .finally(() => setLoadingQuery(false))
+  }, [queryId, widget.config])
+
+  const columns = selectedQuery?.results?.columns || []
+
+  const handleSave = () => {
+    if (!title.trim()) return
+    const config: Record<string, unknown> = {}
+    if (xCol) config.x = xCol
+    if (yCol) config.y = yCol
+    if ((widgetType === "pie_chart") && xCol) config.label = xCol
+    if ((widgetType === "pie_chart") && yCol) config.value = yCol
+    onSave(widget.id, {
+      title: title.trim(),
+      widget_type: widgetType,
+      query_id: queryId,
+      config: Object.keys(config).length > 0 ? config : undefined,
+    })
+  }
+
+  const showAxisConfig = selectedQuery?.results && columns.length > 0 && !["kpi", "table"].includes(widgetType)
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit Widget</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="edit-title">Title</Label>
+            <Input id="edit-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Widget Type</Label>
+            <Select value={widgetType} onValueChange={setWidgetType}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {WIDGET_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    <div className="flex items-center gap-2">
+                      <t.icon className="h-4 w-4" />
+                      {t.label}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <QueryPicker value={queryId} onChange={setQueryId} />
+
+          {loadingQuery && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading query...
+            </div>
+          )}
+
+          {showAxisConfig && (
+            <div className="space-y-3 rounded-lg border p-3">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Axis Mapping</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">X / Label Column</Label>
+                  <Select value={xCol} onValueChange={setXCol}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Auto" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Auto-detect</SelectItem>
+                      {columns.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Y / Value Column</Label>
+                  <Select value={yCol} onValueChange={setYCol}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Auto" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Auto-detect</SelectItem>
+                      {columns.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleSave} disabled={!title.trim()}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
