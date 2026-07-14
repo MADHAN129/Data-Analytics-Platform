@@ -45,6 +45,10 @@ import type {
   CreateConversationRequest,
   UpdateConversationRequest,
   SendMessageRequest,
+  TemplateCreateRequest,
+  TemplateUpdateRequest,
+  TemplateResponse,
+  TemplateListResponse,
 } from "@/types/api"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1"
@@ -554,6 +558,50 @@ class ApiClient {
       `/conversations/${conversationId}/messages`,
       { method: "POST", body: JSON.stringify(data) },
     )
+  }
+
+  // ============================================
+  // PHASE 3: QUERY TEMPLATES
+  // ============================================
+
+  async listTemplates(params?: { page?: number; per_page?: number; search?: string }): Promise<TemplateListResponse> {
+    const query = new URLSearchParams()
+    if (params?.page) query.set("page", String(params.page))
+    if (params?.per_page) query.set("per_page", String(params.per_page))
+    if (params?.search) query.set("search", params.search)
+    return this.request<TemplateListResponse>(`/templates?${query.toString()}`)
+  }
+
+  async createTemplate(data: TemplateCreateRequest): Promise<TemplateResponse> {
+    return this.request<TemplateResponse>("/templates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async getTemplateById(templateId: number): Promise<TemplateResponse> {
+    return this.request<TemplateResponse>(`/templates/${templateId}`)
+  }
+
+  async updateTemplate(templateId: number, data: TemplateUpdateRequest): Promise<TemplateResponse> {
+    return this.request<TemplateResponse>(`/templates/${templateId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async deleteTemplate(templateId: number): Promise<MessageResponse> {
+    return this.request<MessageResponse>(`/templates/${templateId}`, {
+      method: "DELETE",
+    })
+  }
+
+  // ============================================
+  // PHASE 3: QUERY SUGGESTIONS
+  // ============================================
+
+  async querySuggestions(q: string): Promise<string[]> {
+    return this.request<string[]>(`/queries/suggestions?q=${encodeURIComponent(q)}`)
   }
 
   // ============================================

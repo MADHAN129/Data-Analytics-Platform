@@ -4,14 +4,20 @@ import { useEffect, useState, useRef, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api } from "@/lib/api-client"
 import { useToast } from "@/components/ui/use-toast"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { formatDate } from "@/lib/utils"
 import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
-import type { ConversationMessageResponse } from "@/types/api"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog"
+import type { ConversationMessageResponse, DatabaseConnectionResponse } from "@/types/api"
 import {
   MessageSquare,
   Send,
@@ -24,7 +30,14 @@ import {
   Database,
   AlertCircle,
   BarChart3,
+  BookOpen,
+  Save,
 } from "lucide-react"
+
+function extractSql(content: string): string | null {
+  const m = content.match(/```sql\n([\s\S]*?)```/)
+  return m ? m[1].trim() : null
+}
 
 export default function ConversationDetailPage() {
   const params = useParams()
@@ -40,7 +53,18 @@ export default function ConversationDetailPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [editingTitle, setEditingTitle] = useState(false)
   const [newTitle, setNewTitle] = useState("")
+  const [databases, setDatabases] = useState<DatabaseConnectionResponse[]>([])
+  const [selectingDb, setSelectingDb] = useState(false)
+  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [selectedSuggestion, setSelectedSuggestion] = useState(-1)
+  const [savingMsg, setSavingMsg] = useState<ConversationMessageResponse | null>(null)
+  const [templateTitle, setTemplateTitle] = useState("")
+  const [templateDesc, setTemplateDesc] = useState("")
+  const [saving, setSaving] = useState(false)
+  const suggestRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const suggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -48,15 +72,27 @@ export default function ConversationDetailPage() {
 
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (suggestRef.current && !suggestRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [])
+
   const fetchData = useCallback(async () => {
     try {
-      const [convData, msgData] = await Promise.all([
+      const [convData, msgData, dbs] = await Promise.all([
         api.getConversationById(conversationId),
         api.getConversationMessages(conversationId, { per_page: 100 }),
+        api.listDatabases({ per_page: 100 }).catch(() => ({ connections: [] })),
       ])
       setTitle(convData.title || "Conversation")
       setDatabaseId(convData.database_id ?? null)
       setMessages(msgData.messages)
+      setDatabases(dbs.connections || [])
     } catch {
       toast({ title: "Error", description: "Failed to load conversation", variant: "destructive" })
       router.push("/dashboard/conversations")
@@ -66,6 +102,59 @@ export default function ConversationDetailPage() {
   }, [conversationId, router, toast])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  const fetchSuggestions = useCallback(async (q: string) => {
+    if (q.length < 2) { setShowSuggestions(false); return }
+    try {
+      const res = await api.querySuggestions(q)
+      setSuggestions(res)
+      setShowSuggestions(res.length > 0)
+      setSelectedSuggestion(-1)
+    } catch {
+      setShowSuggestions(false)
+    }
+  }, [])
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value
+    setInput(val)
+    if (suggestTimeoutRef.current) clearTimeout(suggestTimeoutRef.current)
+    if (val.trim().length >= 2) {
+      suggestTimeoutRef.current = setTimeout(() => fetchSuggestions(val.trim()), 300)
+    } else {
+      setShowSuggestions(false)
+    }
+  }
+
+  const handleSuggestionPick = (suggestion: string) => {
+    setInput(suggestion)
+    setShowSuggestions(false)
+  }
+
+  const handleSuggestionKeyDown = (e: React.KeyboardEvent) => {
+    if (!showSuggestions || suggestions.length === 0) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        handleSend()
+      }
+      return
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setSelectedSuggestion((p) => Math.min(p + 1, suggestions.length - 1))
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setSelectedSuggestion((p) => Math.max(p - 1, 0))
+    } else if (e.key === "Enter" && selectedSuggestion >= 0) {
+      e.preventDefault()
+      handleSuggestionPick(suggestions[selectedSuggestion])
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false)
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
 
   const handleSend = async () => {
     if (!input.trim() || isSending) return
@@ -80,6 +169,7 @@ export default function ConversationDetailPage() {
       }
       setMessages((prev) => [...prev, tempMsg])
       setInput("")
+      setShowSuggestions(false)
 
       const result = await api.sendMessage(conversationId, { content: input })
       setMessages((prev) => [...prev, result])
@@ -115,10 +205,39 @@ export default function ConversationDetailPage() {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      handleSend()
+  const handleSetDatabase = async (dbId: string) => {
+    setSelectingDb(true)
+    try {
+      await api.updateConversation(conversationId, { database_id: Number(dbId) })
+      setDatabaseId(Number(dbId))
+      toast({ title: "Database set", description: "This conversation will now use the selected database.", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "Failed to set database", variant: "destructive" })
+    } finally {
+      setSelectingDb(false)
+    }
+  }
+
+  const handleSaveTemplate = async () => {
+    if (!savingMsg || !templateTitle.trim()) return
+    setSaving(true)
+    try {
+      const sql = extractSql(savingMsg.content) || undefined
+      await api.createTemplate({
+        title: templateTitle.trim(),
+        description: templateDesc.trim() || undefined,
+        natural_language: savingMsg.content.slice(0, 500),
+        generated_sql: sql,
+        database_id: databaseId ?? undefined,
+      })
+      toast({ title: "Template saved", variant: "success" })
+      setSavingMsg(null)
+      setTemplateTitle("")
+      setTemplateDesc("")
+    } catch {
+      toast({ title: "Error", description: "Failed to save template", variant: "destructive" })
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -164,7 +283,7 @@ export default function ConversationDetailPage() {
                 <>
                   <span>·</span>
                   <Database className="h-3 w-3" />
-                  DB #{databaseId}
+                  {databases.find((d) => d.id === databaseId)?.name || `DB #${databaseId}`}
                 </>
               )}
             </div>
@@ -174,6 +293,28 @@ export default function ConversationDetailPage() {
           <Trash2 className="h-4 w-4" />
         </Button>
       </div>
+
+      {!databaseId && (
+        <div className="mx-6 mt-4 flex items-center gap-3 rounded-lg border bg-muted/50 px-4 py-3">
+          <Database className="h-5 w-5 text-muted-foreground" />
+          <div className="flex-1">
+            <p className="text-sm font-medium">Select a database</p>
+            <p className="text-xs text-muted-foreground">Choose a database so the AI can understand your schema and generate accurate queries.</p>
+          </div>
+          <Select onValueChange={handleSetDatabase} disabled={selectingDb}>
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="Pick a database..." />
+            </SelectTrigger>
+            <SelectContent>
+              {databases.map((db) => (
+                <SelectItem key={db.id} value={String(db.id)}>
+                  {db.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {messages.length === 0 ? (
@@ -217,6 +358,19 @@ export default function ConversationDetailPage() {
                         <span>{msg.error_message}</span>
                       </div>
                     )}
+                    {msg.role === "assistant" && extractSql(msg.content) && (
+                      <div className="mt-2 flex justify-end">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-muted-foreground hover:text-primary"
+                          onClick={() => { setSavingMsg(msg); setTemplateTitle(""); setTemplateDesc("") }}
+                        >
+                          <BookOpen className="mr-1 h-3 w-3" />
+                          Save as template
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <div className={`flex items-center gap-2 px-1 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     <span className="text-xs text-muted-foreground">{formatDate(msg.created_at)}</span>
@@ -245,15 +399,35 @@ export default function ConversationDetailPage() {
       </div>
 
       <div className="border-t px-6 py-4">
-        <div className="flex gap-3">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask a follow-up question..."
-            rows={2}
-            className="resize-none min-h-[2.5rem]"
-          />
+        <div className="relative flex gap-3">
+          <div className="flex-1 relative">
+            <Textarea
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleSuggestionKeyDown}
+              placeholder="Ask a follow-up question..."
+              rows={2}
+              className="resize-none min-h-[2.5rem]"
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <div
+                ref={suggestRef}
+                className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border bg-popover shadow-lg"
+              >
+                {suggestions.map((s, i) => (
+                  <button
+                    key={i}
+                    className={`w-full px-3 py-2 text-left text-sm hover:bg-accent ${
+                      i === selectedSuggestion ? "bg-accent" : ""
+                    }`}
+                    onMouseDown={() => handleSuggestionPick(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <Button
             className="shrink-0 self-end"
             size="icon"
@@ -265,6 +439,45 @@ export default function ConversationDetailPage() {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">Press Ctrl+Enter to send</p>
       </div>
+
+      <Dialog open={savingMsg !== null} onOpenChange={(o) => { if (!o) setSavingMsg(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save as Template</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="tmpl-title">Title</Label>
+              <Input
+                id="tmpl-title"
+                value={templateTitle}
+                onChange={(e) => setTemplateTitle(e.target.value)}
+                placeholder="Give your template a name..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tmpl-desc">Description (optional)</Label>
+              <Input
+                id="tmpl-desc"
+                value={templateDesc}
+                onChange={(e) => setTemplateDesc(e.target.value)}
+                placeholder="What does this query do?"
+              />
+            </div>
+            {savingMsg && extractSql(savingMsg.content) && (
+              <div className="rounded bg-muted p-2">
+                <code className="text-xs line-clamp-3">{extractSql(savingMsg.content)}</code>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSavingMsg(null)}>Cancel</Button>
+            <Button onClick={handleSaveTemplate} disabled={saving || !templateTitle.trim()}>
+              {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Template"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

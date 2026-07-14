@@ -121,3 +121,12 @@ def visualize_query(
     db: Session = Depends(get_db),
 ):
     return query_service.visualize_query(db, query_id, current_user.id)
+
+
+@router.get("/suggestions", response_model=list[str])
+def query_suggestions(
+    q: str = Query("", min_length=1, max_length=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return query_service.get_suggestions(db, current_user.id, q)

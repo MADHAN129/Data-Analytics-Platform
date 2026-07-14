@@ -52,7 +52,8 @@ class CreateConversationRequest(BaseModel):
 
 
 class UpdateConversationRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=255)
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    database_id: Optional[int] = None
 
 
 class SendMessageRequest(BaseModel):

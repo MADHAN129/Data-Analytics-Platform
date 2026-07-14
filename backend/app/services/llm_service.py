@@ -65,18 +65,22 @@ class LLMService:
     def _build_schema_prompt(self, schema_context: str, dialect: str) -> str:
         return f"""You are a SQL generation expert. Given a database schema and a user question, generate valid {dialect} SQL.
 
-DATABASE SCHEMA:
+DATABASE SCHEMA (only these tables and columns exist):
 {schema_context}
 
-RULES:
-- Only use tables and columns that exist in the schema above
+CRITICAL RULES - YOU MUST FOLLOW:
+- ONLY use table names and column names that are listed in the schema above. NEVER guess column names.
+- If you cannot find a matching table or column, respond with EXACTLY: ERROR: No matching table found for this question
 - Return ONLY the raw SQL query — no markdown fences, no backticks, no explanations
 - Use proper {dialect} syntax
 - Add LIMIT clause (or TOP for SQL Server) if the result could have many rows
 - Use table aliases where helpful
 - For MongoDB, generate valid MongoDB aggregation pipeline JSON, not SQL
 - If the question is ambiguous, choose the most reasonable interpretation
-- If you cannot generate a valid query from the schema, respond with: ERROR: <reason>"""
+- Do NOT query information_schema. Do NOT embed schema text in your output.
+
+MULTI-STEP DECOMPOSITION:
+If the user's question requires multiple distinct pieces of information (e.g., "compare sales by region and show top products"), generate a single SQL query using UNION, subqueries, or CTEs (WITH clause) to answer all parts in one statement. Each part should have a clear label column so the results can be separated."""
 
     def _fixup_sql(self, raw: str) -> str:
         if not raw or not raw.strip():
@@ -87,6 +91,53 @@ RULES:
         raw = re.sub(r"\n+", "\n", raw).strip()
         raw = raw.rstrip(";") + ";"
         return raw
+
+    def _is_sql_hallucinated(self, sql: str, schema_context: str) -> bool:
+        if not sql or sql.strip() in (";", ""):
+            return True
+        nl = sql.lower()
+        if "information_schema.tables" in nl or "information_schema.columns" in nl or "information_schema.schemata" in nl:
+            return True
+        table_markers = ["table:", " tables ", " columns "]
+        marker_count = sum(1 for m in table_markers if m in nl)
+        ctx_markers = ["(character varying)", "(integer)", "(timestamp", "(jsonb)", "(boolean)"]
+        ctx_count = sum(1 for m in ctx_markers if m in nl)
+        if marker_count >= 2 or ctx_count >= 2:
+            return True
+        if "select table_name from" in nl or "select column_name from" in nl:
+            return True
+        return False
+
+    def fix_sql(self, natural_language: str, sql: str, error: str, schema_context: str, connection_type: str) -> tuple[str, str, int]:
+        dialect = self._get_db_dialect(connection_type)
+        if self.use_mock:
+            return self._fallback_generate_sql(natural_language, dialect, schema_context)
+        system_prompt = self._build_schema_prompt(schema_context, dialect)
+        fix_prompt = (
+            f"The SQL query below failed with an error. Please fix it and return ONLY the corrected SQL.\n\n"
+            f"Original question: {natural_language}\n\n"
+            f"Failed SQL:\n{sql}\n\n"
+            f"Error:\n{error}\n\n"
+            f"IMPORTANT: Only use table and column names from the schema above. "
+            f"The most likely cause of this error is a wrong table or column name.\n\n"
+            f"Return ONLY the corrected raw SQL. No markdown, no explanations."
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": fix_prompt},
+        ]
+        raw = self._call_vllm(messages, temperature=0.1)
+        if raw is None or raw.startswith("ERROR:") or not raw.strip():
+            return self._fallback_generate_sql(natural_language, dialect, schema_context)
+        fixed_sql = self._fixup_sql(raw)
+        tokens = self._estimate_tokens(natural_language, fixed_sql)
+        explanation_messages = [
+            {"role": "system", "content": "Explain the SQL query briefly in 1-2 sentences. Be concise."},
+            {"role": "user", "content": f"Question: {natural_language}\nSQL: {fixed_sql}"},
+        ]
+        explanation_raw = self._call_vllm(explanation_messages, temperature=0, max_tokens=256)
+        explanation = explanation_raw if explanation_raw else self._fallback_explain(natural_language, fixed_sql)
+        return fixed_sql, explanation, tokens
 
     def generate_sql(self, natural_language: str, schema_context: str, connection_type: str) -> tuple[str, str, int]:
         dialect = self._get_db_dialect(connection_type)
@@ -112,6 +163,9 @@ RULES:
 
         sql = self._fixup_sql(raw)
         tokens = self._estimate_tokens(natural_language, sql)
+
+        if self._is_sql_hallucinated(sql, schema_context):
+            return self._fallback_generate_sql(natural_language, dialect, schema_context)
 
         explanation_messages = [
             {"role": "system", "content": "Explain the SQL query briefly in 1-2 sentences. Be concise."},
@@ -210,6 +264,8 @@ RULES:
         return f"{sql}\nLIMIT {n};"
 
     def _list_tables_sql(self, dialect: str, schema: str) -> str:
+        if not schema or schema.startswith("Table:"):
+            schema = "public"
         if dialect == "MySQL":
             return "SHOW TABLES;"
         if dialect == "SQL Server":
@@ -218,14 +274,68 @@ RULES:
         schema_esc = schema.replace("'", "''")
         return f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{schema_esc}' AND table_type = 'BASE TABLE' ORDER BY table_name;"
 
+    def _parse_schema(self, schema: str) -> dict[str, list[tuple[str, str]]]:
+        result: dict[str, list[tuple[str, str]]] = {}
+        for line in schema.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            m = re.match(r"Table:\s*(\S+)\s*\[(.+)\]", line)
+            if m:
+                table = m.group(1)
+                cols_str = m.group(2)
+                cols = []
+                for part in cols_str.split(","):
+                    part = part.strip()
+                    cm = re.match(r"(\S+)\s*\((.+?)\)", part)
+                    if cm:
+                        cols.append((cm.group(1), cm.group(2)))
+                    elif part:
+                        cols.append((part, "unknown"))
+                result[table] = cols
+        return result
+
+    def _find_date_col(self, cols: list[tuple[str, str]]) -> str:
+        date_types = {"date", "datetime", "timestamp", "timestamptz", "timestamp without time zone", "timestamp with time zone"}
+        for name, dtype in cols:
+            if any(t in dtype.lower() for t in {"date", "timestamp"}):
+                return name
+        for name, _ in cols:
+            if name in ("created_at", "updated_at", "order_date", "created_date", "date"):
+                return name
+        return cols[0][0] if cols else "created_at"
+
+    def _find_numeric_col(self, cols: list[tuple[str, str]]) -> str:
+        num_types = {"int", "integer", "bigint", "smallint", "numeric", "decimal", "float", "double", "real", "money"}
+        for name, dtype in cols:
+            dt = dtype.lower()
+            if any(t in dt for t in num_types):
+                return name
+        for name, _ in cols:
+            if name in ("total_amount", "amount", "total", "price", "revenue", "quantity", "cost"):
+                return name
+        return cols[0][0] if cols else "total_amount"
+
+    def _find_table_col(self, schema_dict: dict, table: str, hint_type: str) -> str:
+        for tname, cols in schema_dict.items():
+            if tname.lower() == table.lower():
+                if hint_type == "date":
+                    return self._find_date_col(cols)
+                if hint_type == "numeric":
+                    return self._find_numeric_col(cols)
+                return cols[0][0] if cols else "id"
+        return table
+
     def _fallback_generate_sql(self, nl: str, dialect: str, schema: str) -> tuple[str, str, int]:
         nl_lower = nl.lower()
         trunc_day = self._date_trunc_day
         trunc_month = self._date_trunc_month
         since = self._where_date_since
+        schema_dict = self._parse_schema(schema) if schema else {}
 
         if re.search(r"this\s+month.*user|user.*this\s+month|current.*month.*user|user.*current.*month", nl_lower):
-            month_start = trunc_month("u.created_at", dialect)
+            dc = self._find_table_col(schema_dict, "users", "date") or "created_at"
+            month_start = trunc_month(f"u.{dc}", dialect)
             today = self._current_date(dialect)
             this_month = trunc_month(today, dialect)
             sql = self._apply_limit(
@@ -242,23 +352,26 @@ RULES:
             return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
 
         if re.search(r"daily.*active|dau|user.*rate|active.*user.*today|login.*today|login.*rate|login.*per.*day|rate.*login", nl_lower):
-            day = trunc_day("u.last_login", dialect)
+            lc = self._find_table_col(schema_dict, "users", "date") or "last_login"
+            day = trunc_day(f"u.{lc}", dialect)
             sql = self._apply_limit(
-                f"SELECT {day} AS login_date, COUNT(DISTINCT u.id) AS active_users\nFROM users u\nWHERE u.last_login IS NOT NULL\nGROUP BY login_date\nORDER BY login_date DESC",
+                f"SELECT {day} AS login_date, COUNT(DISTINCT u.id) AS active_users\nFROM users u\nWHERE u.{lc} IS NOT NULL\nGROUP BY login_date\nORDER BY login_date DESC",
                 30, dialect,
             )
             return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
 
         if re.search(r"user.*login.*graph|login.*graph|login.*trend|user.*activity|login.*over.time", nl_lower):
-            day = trunc_day("u.last_login", dialect)
+            lc = self._find_table_col(schema_dict, "users", "date") or "last_login"
+            day = trunc_day(f"u.{lc}", dialect)
             sql = self._apply_limit(
-                f"SELECT {day} AS login_date, COUNT(DISTINCT u.id) AS active_users\nFROM users u\nWHERE u.last_login IS NOT NULL\nGROUP BY login_date\nORDER BY login_date DESC",
+                f"SELECT {day} AS login_date, COUNT(DISTINCT u.id) AS active_users\nFROM users u\nWHERE u.{lc} IS NOT NULL\nGROUP BY login_date\nORDER BY login_date DESC",
                 30, dialect,
             )
             return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
 
         if re.search(r"user.*signup|registration.*trend|sign.up.*over.time|new.*user.*month|user.*growth", nl_lower):
-            month = trunc_month("u.created_at", dialect)
+            uc = self._find_table_col(schema_dict, "users", "date") or "created_at"
+            month = trunc_month(f"u.{uc}", dialect)
             sql = self._apply_limit(
                 f"SELECT {month} AS signup_month, COUNT(u.id) AS new_users\nFROM users u\nGROUP BY signup_month\nORDER BY signup_month DESC",
                 12, dialect,
@@ -277,12 +390,20 @@ RULES:
             return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
 
         if "month" in nl_lower and ("sale" in nl_lower or "order" in nl_lower or "revenue" in nl_lower):
-            month = trunc_month("o.order_date", dialect)
-            since12 = since("o.order_date", 12, dialect)
-            sql = f"SELECT {month} AS month, SUM(o.total_amount) AS total\nFROM orders o\nWHERE {since12}\nGROUP BY month\nORDER BY month;"
+            od = self._find_table_col(schema_dict, "orders", "date") or "order_date"
+            ta = self._find_table_col(schema_dict, "orders", "numeric") or "total_amount"
+            month = trunc_month(f"o.{od}", dialect)
+            since12 = since(f"o.{od}", 12, dialect)
+            sql = f"SELECT {month} AS month, SUM(o.{ta}) AS total\nFROM orders o\nWHERE {since12}\nGROUP BY month\nORDER BY month;"
             return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
 
-        fallback_sql = self._list_tables_sql(dialect, schema) if schema else "SELECT 1;"
+        lines = [line.strip() for line in schema.split("\n") if line.strip()]
+        table_names = [line.split("[")[0].replace("Table:", "").strip() for line in lines]
+        if table_names:
+            listed = ", ".join(table_names[:20])
+            fallback_sql = "SELECT 1 WHERE 1=0"
+            return fallback_sql, f"The database has these tables: {listed}. Try asking about one of them.", 5
+        fallback_sql = "SELECT 1;"
         return fallback_sql, self._fallback_explain(nl, fallback_sql), self._estimate_tokens(nl, fallback_sql)
 
     def _fallback_explain(self, nl: str, sql: str) -> str:

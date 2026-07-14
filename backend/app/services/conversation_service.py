@@ -82,7 +82,10 @@ def update_conversation(
     ).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    conv.title = data.title
+    if data.title is not None:
+        conv.title = data.title
+    if data.database_id is not None:
+        conv.database_id = data.database_id
     conv.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(conv)
@@ -156,7 +159,7 @@ def send_message(
                 schema = connector.get_schema()
                 lines = []
                 for table in schema.tables:
-                    cols = ", ".join(f"{c.name} ({c.data_type})" for c in table.columns[:15])
+                    cols = ", ".join(f"{c.name} ({c.data_type})" for c in table.columns[:25])
                     lines.append(f"Table: {table.name} [{cols}]")
                 schema_context = "\n".join(lines[:30])
             except Exception:
@@ -172,22 +175,34 @@ def send_message(
     error_message = None
 
     if db_conn and sql and not sql.startswith("ERROR:"):
-        try:
-            connector = get_connector(db_conn)
-            import time
-            start = time.time()
-            raw_results = connector.execute_query(sql)
-            elapsed = int((time.time() - start) * 1000)
-            columns = raw_results.get("columns", [])
-            rows = _serialize_rows(raw_results.get("rows", []))
-            results = {
-                "columns": columns,
-                "rows": rows[:1000],
-                "row_count": len(rows),
-                "execution_time_ms": elapsed,
-            }
-        except Exception as e:
-            error_message = str(e)
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                connector = get_connector(db_conn)
+                import time
+                start = time.time()
+                raw_results = connector.execute_query(sql)
+                elapsed = int((time.time() - start) * 1000)
+                columns = raw_results.get("columns", [])
+                rows = _serialize_rows(raw_results.get("rows", []))
+                results = {
+                    "columns": columns,
+                    "rows": rows[:1000],
+                    "row_count": len(rows),
+                    "execution_time_ms": elapsed,
+                }
+                error_message = None
+                break
+            except Exception as e:
+                error_message = str(e)
+                if attempt < max_retries:
+                    sql, explanation, retry_tokens = llm_service.fix_sql(
+                        data.content, sql, error_message, schema_context, dialect,
+                    )
+                    generated_sql = sql
+                    tokens_used = (tokens_used or 0) + (retry_tokens or 0)
+                    if sql.startswith("ERROR:"):
+                        break
 
     response_content = f"{explanation}\n\n```sql\n{sql}\n```"
     if results:

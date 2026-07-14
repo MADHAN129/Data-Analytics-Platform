@@ -436,7 +436,8 @@ export interface ConversationMessageResponse {
 }
 
 export interface UpdateConversationRequest {
-  title: string
+  title?: string
+  database_id?: number | null
 }
 
 export interface MessageListResponse {
@@ -451,4 +452,36 @@ export interface CreateConversationRequest {
 
 export interface SendMessageRequest {
   content: string
+}
+
+// Phase 3: Query Templates
+export interface TemplateCreateRequest {
+  title: string
+  description?: string
+  natural_language: string
+  generated_sql?: string
+  database_id?: number
+}
+
+export interface TemplateUpdateRequest {
+  title?: string
+  description?: string
+  natural_language?: string
+  generated_sql?: string
+}
+
+export interface TemplateResponse {
+  id: number
+  title: string
+  description?: string
+  natural_language: string
+  generated_sql?: string
+  database_id?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TemplateListResponse {
+  templates: TemplateResponse[]
+  total: number
 }

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.connection import DatabaseConnection
 from app.models.query import Query
 from app.models.conversation import Conversation
+from app.models.template import QueryTemplate
 from app.schemas.query import (
     QueryRequest, SQLExecutionRequest, FollowUpRequest,
     QueryResponse, QueryResult, VisualizationSuggestion,
@@ -66,7 +67,7 @@ def _get_schema_context(db_conn: DatabaseConnection) -> str:
         schema = connector.get_schema()
         lines = []
         for table in schema.tables:
-            cols = ", ".join(f"{c.name} ({c.data_type})" for c in table.columns[:20])
+            cols = ", ".join(f"{c.name} ({c.data_type})" for c in table.columns[:25])
             lines.append(f"Table: {table.name} [{cols}]")
         return "\n".join(lines[:50])
     except Exception:
@@ -105,30 +106,43 @@ def execute_natural_language_query(
     db.commit()
     db.refresh(query_record)
 
-    try:
-        connector = get_connector(db_conn)
-        start = time.time()
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            connector = get_connector(db_conn)
+            start = time.time()
 
-        raw_results = connector.execute_query(sql)
-        elapsed = int((time.time() - start) * 1000)
+            raw_results = connector.execute_query(sql)
+            elapsed = int((time.time() - start) * 1000)
 
-        columns = raw_results.get("columns", [])
-        rows = _serialize_rows(raw_results.get("rows", []))
-        row_count = len(rows)
+            columns = raw_results.get("columns", [])
+            rows = _serialize_rows(raw_results.get("rows", []))
+            row_count = len(rows)
 
-        query_record.status = "completed"
-        query_record.result_columns = columns
-        query_record.result_rows = rows[:1000]
-        query_record.row_count = row_count
-        query_record.execution_time_ms = elapsed
-
-    except Exception as e:
-        error_msg = friendly_error(str(e))
-        query_record.status = "failed"
-        query_record.error_message = error_msg
-        db.commit()
-        db.refresh(query_record)
-        return _db_conn_to_query_response(query_record)
+            query_record.status = "completed"
+            query_record.result_columns = columns
+            query_record.result_rows = rows[:1000]
+            query_record.row_count = row_count
+            query_record.execution_time_ms = elapsed
+            break
+        except Exception as e:
+            error_msg = friendly_error(str(e))
+            if attempt < max_retries:
+                sql, explanation, retry_tokens = llm_service.fix_sql(
+                    data.natural_language, sql, error_msg, schema_context, db_conn.connection_type,
+                )
+                query_record.generated_sql = sql
+                query_record.explanation = explanation
+                query_record.tokens_used = (query_record.tokens_used or 0) + (retry_tokens or 0)
+                db.commit()
+                if sql.startswith("ERROR:"):
+                    break
+            else:
+                query_record.status = "failed"
+                query_record.error_message = error_msg
+                db.commit()
+                db.refresh(query_record)
+                return _db_conn_to_query_response(query_record)
 
     db.commit()
     db.refresh(query_record)
@@ -286,6 +300,22 @@ def visualize_query(db: Session, query_id: int, user_id: int) -> VisualizeRespon
     return VisualizeResponse(
         visualizations=[VisualizationSuggestion(**s) for s in suggestions],
     )
+
+
+def get_suggestions(db: Session, user_id: int, q: str) -> list[str]:
+    like = f"{q}%"
+    queries = db.query(Query.natural_language).filter(
+        Query.user_id == user_id,
+        Query.natural_language.ilike(like),
+        Query.status == "completed",
+    ).distinct().limit(8).all()
+    results = [row[0] for row in queries]
+    template_q = db.query(QueryTemplate.natural_language).filter(
+        QueryTemplate.user_id == user_id,
+        QueryTemplate.natural_language.ilike(like),
+    ).limit(3).all()
+    results.extend(row[0] for row in template_q if row[0] not in results)
+    return results[:10]
 
 
 def _get_visualization_suggestions(q: Query) -> list[VisualizationSuggestion]:

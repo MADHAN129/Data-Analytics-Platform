@@ -1,1 +1,1 @@
-from app.api import auth, users, roles, permissions, audit, connections, queries, conversations
+from app.api import auth, users, roles, permissions, audit, connections, queries, conversations, templates
