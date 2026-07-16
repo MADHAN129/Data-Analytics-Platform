@@ -68,26 +68,27 @@ class MongoDBConnector:
             )
 
     def get_schema(self) -> SchemaResponse:
-        self._connection or self.connect()
-        collection_names = self._db.list_collection_names()
-
-        tables = []
-        for coll_name in sorted(collection_names):
-            columns = self._infer_columns(coll_name)
-            tables.append(TableSchema(
-                name=coll_name,
+        self.connect()
+        try:
+            collection_names = self._db.list_collection_names()
+            tables = []
+            for coll_name in sorted(collection_names):
+                columns = self._infer_columns(coll_name)
+                tables.append(TableSchema(
+                    name=coll_name,
+                    schema_name=self.database,
+                    type="table",
+                    columns=columns,
+                ))
+            return SchemaResponse(
+                database_id=0,
                 schema_name=self.database,
-                type="table",
-                columns=columns,
-            ))
-
-        return SchemaResponse(
-            database_id=0,
-            schema_name=self.database,
-            tables=tables,
-            views=[],
-            last_synced_at=None,
-        )
+                tables=tables,
+                views=[],
+                last_synced_at=None,
+            )
+        finally:
+            self.close()
 
     def sync_schema(self, database_id: int) -> SyncResult:
         start = time.time()
@@ -143,104 +144,113 @@ class MongoDBConnector:
         return columns
 
     def get_tables_list(self) -> list[dict]:
-        self._connection or self.connect()
-        collection_names = self._db.list_collection_names()
-        return [
-            {
-                "name": name,
-                "type": "table",
-                "column_count": len(self._infer_columns(name)),
-            }
-            for name in sorted(collection_names)
-        ]
+        self.connect()
+        try:
+            collection_names = self._db.list_collection_names()
+            return [
+                {
+                    "name": name,
+                    "type": "table",
+                    "column_count": len(self._infer_columns(name)),
+                }
+                for name in sorted(collection_names)
+            ]
+        finally:
+            self.close()
 
     def execute_query(self, sql: str) -> dict:
-        self._connection or self.connect()
-        sql_lower = sql.strip().lower()
+        self.connect()
+        try:
+            sql_lower = sql.strip().lower()
 
-        count_match = re.match(r"select\s+count\s*\(\s*(?:\*|1)\s*\)\s+from\s+(\w+)", sql_lower)
-        if count_match:
-            coll = count_match.group(1)
-            count = self._db[coll].count_documents({})
-            return {"columns": ["count"], "rows": [[count]]}
+            count_match = re.match(r"select\s+count\s*\(\s*(?:\*|1)\s*\)\s+from\s+(\w+)", sql_lower)
+            if count_match:
+                coll = count_match.group(1)
+                count = self._db[coll].count_documents({})
+                return {"columns": ["count"], "rows": [[count]]}
 
-        select_match = re.match(
-            r"select\s+(.+?)\s+from\s+(\w+)(?:\s+where\s+(.+?))?(?:\s+order\s+by\s+(.+?))?(?:\s+limit\s+(\d+))?\s*;?\s*$",
-            sql_lower,
-        )
-        if select_match:
-            raw_columns = select_match.group(1).strip()
-            coll = select_match.group(2)
-            where_clause = select_match.group(3)
-            order_clause = select_match.group(4)
-            limit_clause = select_match.group(5)
+            select_match = re.match(
+                r"select\s+(.+?)\s+from\s+(\w+)(?:\s+where\s+(.+?))?(?:\s+order\s+by\s+(.+?))?(?:\s+limit\s+(\d+))?\s*;?\s*$",
+                sql_lower,
+            )
+            if select_match:
+                raw_columns = select_match.group(1).strip()
+                coll = select_match.group(2)
+                where_clause = select_match.group(3)
+                order_clause = select_match.group(4)
+                limit_clause = select_match.group(5)
 
-            query_filter = {}
-            if where_clause:
-                for part in re.split(r"\s+and\s+", where_clause):
-                    op_match = re.match(r"(\w+)\s*(>=|<=|!=|=|>|<)\s*(.+)", part)
-                    if op_match:
-                        field, op, val = op_match.groups()
-                        val = val.strip("'\"")
-                        numeric_val = _to_number(val)
-                        op_map = {">=": "$gte", "<=": "$lte", "!=": "$ne", "=": "$eq", ">": "$gt", "<": "$lt"}
-                        mongo_op = op_map.get(op, "$eq")
-                        if op == "=":
-                            query_filter[field] = numeric_val if numeric_val is not None else val
+                query_filter = {}
+                if where_clause:
+                    for part in re.split(r"\s+and\s+", where_clause):
+                        op_match = re.match(r"(\w+)\s*(>=|<=|!=|=|>|<)\s*(.+)", part)
+                        if op_match:
+                            field, op, val = op_match.groups()
+                            val = val.strip("'\"")
+                            numeric_val = _to_number(val)
+                            op_map = {">=": "$gte", "<=": "$lte", "!=": "$ne", "=": "$eq", ">": "$gt", "<": "$lt"}
+                            mongo_op = op_map.get(op, "$eq")
+                            if op == "=":
+                                query_filter[field] = numeric_val if numeric_val is not None else val
+                            else:
+                                if field not in query_filter:
+                                    query_filter[field] = {}
+                                query_filter[field][mongo_op] = numeric_val if numeric_val is not None else val
+
+                cursor = self._db[coll].find(query_filter)
+                if order_clause:
+                    order_parts = order_clause.split(",")
+                    sort_list = []
+                    for part in order_parts:
+                        part = part.strip()
+                        if "desc" in part:
+                            sort_list.append((part.split()[0].strip(), -1))
                         else:
-                            if field not in query_filter:
-                                query_filter[field] = {}
-                            query_filter[field][mongo_op] = numeric_val if numeric_val is not None else val
+                            sort_list.append((part.split()[0].strip(), 1))
+                    cursor = cursor.sort(sort_list)
+                if limit_clause:
+                    cursor = cursor.limit(int(limit_clause))
+                else:
+                    cursor = cursor.limit(100)
 
-            cursor = self._db[coll].find(query_filter)
-            if order_clause:
-                order_parts = order_clause.split(",")
-                sort_list = []
-                for part in order_parts:
-                    part = part.strip()
-                    if "desc" in part:
-                        sort_list.append((part.split()[0].strip(), -1))
-                    else:
-                        sort_list.append((part.split()[0].strip(), 1))
-                cursor = cursor.sort(sort_list)
-            if limit_clause:
-                cursor = cursor.limit(int(limit_clause))
-            else:
-                cursor = cursor.limit(100)
+                docs = list(cursor)
+                if not docs:
+                    return {"columns": [], "rows": []}
 
-            docs = list(cursor)
-            if not docs:
-                return {"columns": [], "rows": []}
+                if raw_columns == "*":
+                    columns = list(docs[0].keys())
+                else:
+                    columns = [c.strip() for c in raw_columns.split(",")]
 
-            if raw_columns == "*":
-                columns = list(docs[0].keys())
-            else:
-                columns = [c.strip() for c in raw_columns.split(",")]
+                rows = []
+                for doc in docs:
+                    row = []
+                    for c in columns:
+                        val = doc.get(c, None)
+                        if isinstance(val, ObjectId):
+                            val = str(val)
+                        elif not isinstance(val, (str, int, float, bool, type(None))):
+                            val = str(val)
+                        row.append(val)
+                    rows.append(row)
 
-            rows = []
-            for doc in docs:
-                row = []
-                for c in columns:
-                    val = doc.get(c, None)
-                    if isinstance(val, ObjectId):
-                        val = str(val)
-                    elif not isinstance(val, (str, int, float, bool, type(None))):
-                        val = str(val)
-                    row.append(val)
-                rows.append(row)
+                return {"columns": columns, "rows": rows}
 
-            return {"columns": columns, "rows": rows}
-
-        return {"columns": [], "rows": [], "error": f"Unsupported MongoDB query: {sql}"}
+            return {"columns": [], "rows": [], "error": f"Unsupported MongoDB query: {sql}"}
+        finally:
+            self.close()
 
     def get_table_details(self, collection_name: str) -> TableSchema:
-        self._connection or self.connect()
-        columns = self._infer_columns(collection_name)
-        return TableSchema(
-            name=collection_name,
-            schema_name=self.database,
-            columns=columns,
-        )
+        self.connect()
+        try:
+            columns = self._infer_columns(collection_name)
+            return TableSchema(
+                name=collection_name,
+                schema_name=self.database,
+                columns=columns,
+            )
+        finally:
+            self.close()
 
 
 def _to_number(val):

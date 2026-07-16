@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
+import { useDashboardWs, type LiveWidgetData } from "@/hooks/use-dashboard-ws"
 import { formatDate } from "@/lib/utils"
 import type {
   WidgetResponse, DashboardDetailResponse, QueryResponse,
@@ -28,6 +29,7 @@ import type {
 import {
   ArrowLeft, Plus, Trash2, Loader2, Settings, GripVertical, Pencil,
   BarChart3, PieChart, LineChart, AreaChart, Table2, LayoutDashboard,
+  RefreshCw, Wifi, WifiOff,
 } from "lucide-react"
 
 const WIDGET_TYPES = [
@@ -56,6 +58,8 @@ export default function DashboardDetailPage() {
   const [editWidgetOpen, setEditWidgetOpen] = useState(false)
   const [deleteWidgetId, setDeleteWidgetId] = useState<number | null>(null)
   const [layoutUpdating, setLayoutUpdating] = useState(false)
+
+  const { connected, liveData, activePollers, refreshWidget, refreshAll } = useDashboardWs(dashboardId)
 
   const fetchDashboard = useCallback(async () => {
     setIsLoading(true)
@@ -146,6 +150,7 @@ export default function DashboardDetailPage() {
     widget_type: string
     query_id?: number | null
     config?: Record<string, unknown>
+    refresh_interval?: number
   }) => {
     try {
       const updated = await api.updateWidget(dashboardId, widgetId, {
@@ -156,7 +161,7 @@ export default function DashboardDetailPage() {
         width: 6,
         height: 4,
         query_id: data.query_id ?? undefined,
-        config: data.config,
+        config: { ...(data.config || {}), refresh_interval: data.refresh_interval ?? 0 },
       })
       setDash((prev) => prev ? {
         ...prev,
@@ -165,6 +170,9 @@ export default function DashboardDetailPage() {
       setEditWidgetOpen(false)
       setEditingWidget(null)
       toast({ title: "Widget updated", variant: "success" })
+      if (data.refresh_interval && data.refresh_interval > 0) {
+        refreshWidget(widgetId)
+      }
     } catch {
       toast({ title: "Error", description: "Failed to update widget", variant: "destructive" })
     }
@@ -231,16 +239,23 @@ export default function DashboardDetailPage() {
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold">{dash.title}</h1>
                 {dash.auto_generated && <Badge variant="outline" className="gap-1">Auto-generated</Badge>}
+                <ConnectionBadge connected={connected} pollerCount={activePollers.length} />
               </div>
               {dash.description && <p className="text-muted-foreground mt-1">{dash.description}</p>}
               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                 <span>{dash.widgets.length} widget{dash.widgets.length !== 1 ? "s" : ""}</span>
                 <span>Updated {formatDate(dash.updated_at)}</span>
+                {activePollers.length > 0 && <span>{activePollers.length} auto-refresh active</span>}
               </div>
             </>
           )}
         </div>
         <div className="flex items-center gap-2">
+          {activePollers.length > 0 && (
+            <Button variant="outline" size="sm" onClick={() => refreshAll()}>
+              <RefreshCw className="mr-1 h-4 w-4" /> Refresh All
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
             <Settings className="mr-1 h-4 w-4" /> Edit
           </Button>
@@ -287,8 +302,20 @@ export default function DashboardDetailPage() {
                     </div>
                     <CardTitle className="text-sm font-medium">{widget.title}</CardTitle>
                     <WidgetTypeBadge type={widget.widget_type} />
+                    {activePollers.includes(widget.id) && connected && (
+                      <div className="h-2 w-2 rounded-full bg-green-500" title="Auto-refreshing" />
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => refreshWidget(widget.id)}
+                      title="Refresh now"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -308,7 +335,7 @@ export default function DashboardDetailPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-4 pt-0" style={{ height: `calc(100% - 40px)` }}>
-                  <WidgetContent widget={widget} />
+                  <WidgetContent widget={widget} liveData={liveData.get(widget.id)} />
                 </CardContent>
               </Card>
             ))}
@@ -347,6 +374,24 @@ export default function DashboardDetailPage() {
   )
 }
 
+function ConnectionBadge({ connected, pollerCount }: { connected: boolean; pollerCount: number }) {
+  if (connected && pollerCount > 0) {
+    return (
+      <Badge variant="success" className="gap-1 text-xs">
+        <Wifi className="h-3 w-3" /> Live
+      </Badge>
+    )
+  }
+  if (!connected) {
+    return (
+      <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
+        <WifiOff className="h-3 w-3" /> Offline
+      </Badge>
+    )
+  }
+  return null
+}
+
 function WidgetTypeBadge({ type }: { type: string }) {
   const info = WIDGET_TYPES.find((t) => t.value === type)
   if (!info) return <Badge variant="secondary">{type}</Badge>
@@ -372,7 +417,7 @@ function WidgetPlaceholder({ widget }: { widget: WidgetResponse }) {
   )
 }
 
-function WidgetContent({ widget }: { widget: WidgetResponse }) {
+function WidgetContent({ widget, liveData }: { widget: WidgetResponse; liveData?: LiveWidgetData }) {
   const [query, setQuery] = useState<QueryResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -384,15 +429,21 @@ function WidgetContent({ widget }: { widget: WidgetResponse }) {
       setError(false)
       return
     }
+    if (liveData) return
     setLoading(true)
     setError(false)
     api.getQueryById(widget.query_id)
       .then(setQuery)
       .catch(() => setError(true))
       .finally(() => setLoading(false))
-  }, [widget.query_id])
+  }, [widget.query_id, liveData])
 
   if (!widget.query_id) return <WidgetPlaceholder widget={widget} />
+
+  if (liveData) {
+    return <WidgetChartRenderer widget={widget} results={liveData.results} />
+  }
+
   if (loading) return (
     <div className="flex h-full w-full items-center justify-center">
       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -430,22 +481,21 @@ function WidgetChartRenderer({
 }
 
 function QueryPicker({
-  value, onChange, databaseId,
+  value, onChange,
 }: {
   value?: number | null
   onChange: (queryId: number | null) => void
-  databaseId?: number
 }) {
   const [queries, setQueries] = useState<Array<{ id: number; natural_language: string; generated_sql?: string }>>([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     setLoading(true)
-    api.listQueries({ per_page: 50, database_id: databaseId })
+    api.listQueries({ per_page: 50 })
       .then((data) => setQueries(data.queries))
       .catch(() => setQueries([]))
       .finally(() => setLoading(false))
-  }, [databaseId])
+  }, [])
 
   return (
     <div className="space-y-2">
@@ -545,6 +595,7 @@ function EditWidgetDialog({
     widget_type: string
     query_id?: number | null
     config?: Record<string, unknown>
+    refresh_interval?: number
   }) => void
 }) {
   const [title, setTitle] = useState(widget.title)
@@ -554,6 +605,7 @@ function EditWidgetDialog({
   const [loadingQuery, setLoadingQuery] = useState(false)
   const [xCol, setXCol] = useState<string>("")
   const [yCol, setYCol] = useState<string>("")
+  const [refreshInterval, setRefreshInterval] = useState<number>(0)
 
   useEffect(() => {
     setTitle(widget.title)
@@ -562,6 +614,8 @@ function EditWidgetDialog({
     setXCol("")
     setYCol("")
     setSelectedQuery(null)
+    const cfg = widget.config as Record<string, unknown> | undefined
+    setRefreshInterval((cfg?.refresh_interval as number) || 0)
   }, [widget])
 
   useEffect(() => {
@@ -586,15 +640,16 @@ function EditWidgetDialog({
   const handleSave = () => {
     if (!title.trim()) return
     const config: Record<string, unknown> = {}
-    if (xCol) config.x = xCol
-    if (yCol) config.y = yCol
-    if ((widgetType === "pie_chart") && xCol) config.label = xCol
-    if ((widgetType === "pie_chart") && yCol) config.value = yCol
+    if (xCol && xCol !== "__auto__") config.x = xCol
+    if (yCol && yCol !== "__auto__") config.y = yCol
+    if ((widgetType === "pie_chart") && xCol && xCol !== "__auto__") config.label = xCol
+    if ((widgetType === "pie_chart") && yCol && yCol !== "__auto__") config.value = yCol
     onSave(widget.id, {
       title: title.trim(),
       widget_type: widgetType,
       query_id: queryId,
       config: Object.keys(config).length > 0 ? config : undefined,
+      refresh_interval: refreshInterval,
     })
   }
 
@@ -643,7 +698,7 @@ function EditWidgetDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">X / Label Column</Label>
-                  <Select value={xCol} onValueChange={setXCol}>
+                  <Select value={xCol} onValueChange={(v) => setXCol(v === "__auto__" ? "" : v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Auto" />
                     </SelectTrigger>
@@ -657,7 +712,7 @@ function EditWidgetDialog({
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Y / Value Column</Label>
-                  <Select value={yCol} onValueChange={setYCol}>
+                  <Select value={yCol} onValueChange={(v) => setYCol(v === "__auto__" ? "" : v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Auto" />
                     </SelectTrigger>
@@ -672,6 +727,28 @@ function EditWidgetDialog({
               </div>
             </div>
           )}
+
+          <div className="space-y-2 rounded-lg border p-3">
+            <Label htmlFor="refresh-interval">Auto-refresh Interval (seconds)</Label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="refresh-interval"
+                type="number"
+                min={0}
+                max={3600}
+                value={refreshInterval}
+                onChange={(e) => setRefreshInterval(Math.max(0, parseInt(e.target.value) || 0))}
+                className="w-24"
+              />
+              <span className="text-xs text-muted-foreground">
+                {refreshInterval === 0
+                  ? "Disabled — load data once"
+                  : refreshInterval < 5
+                    ? "⚠ Minimum 5s recommended"
+                    : `Updates every ${refreshInterval}s via WebSocket`}
+              </span>
+            </div>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

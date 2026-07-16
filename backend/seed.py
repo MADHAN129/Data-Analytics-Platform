@@ -1,4 +1,6 @@
 """Seed script to create initial roles, permissions, and admin user."""
+from sqlalchemy import inspect, text
+
 from app.database import SessionLocal, engine, Base
 from app.models.user import User, UserRole
 from app.models.role import Role, RolePermission
@@ -6,8 +8,21 @@ from app.models.permission import Permission
 from app.utils.security import get_password_hash
 
 
+def _ensure_columns():
+    """Add columns that may be missing on existing tables."""
+    inspector = inspect(engine)
+    existing = {c["name"] for c in inspector.get_columns("users")}
+    with engine.connect() as conn:
+        if "reset_token" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN reset_token VARCHAR(255)"))
+        if "reset_token_expires" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN reset_token_expires TIMESTAMP WITH TIME ZONE"))
+        conn.commit()
+
+
 def seed():
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()
     db = SessionLocal()
 
     try:

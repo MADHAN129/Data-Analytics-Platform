@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -29,6 +27,15 @@ services:
       timeout: 5s
       retries: 5
 
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: agentic-mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    logging:
+      driver: none
+
   backend:
     build: ./backend
     container_name: agentic-backend
@@ -39,10 +46,14 @@ services:
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: super-secret-key-change-in-production-abc123
       CORS_ORIGINS: '["http://localhost:3000", "http://localhost:3001"]'
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      APP_URL: http://localhost:3000
       VLLM_API_URL: http://ollama:11434/v1
       VLLM_API_KEY: ""
       LLM_USE_MOCK: "false"
       LLM_MODEL: "qwen3:8b"
+      MCP_API_KEY: "sk-mcp-secret"
     volumes:
       - ./backend:/app
     depends_on:
@@ -78,7 +89,7 @@ services:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules

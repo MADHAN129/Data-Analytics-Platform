@@ -246,6 +246,9 @@ export interface DatabaseConnectionResponse {
   schema_name: string
   username: string
   ssl: boolean
+  is_active: boolean
+  pool_size: number
+  timeout_seconds: number
   health_status: boolean | null
   health_latency_ms: number | null
   health_checked_at: string | null

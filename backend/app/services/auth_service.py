@@ -1,8 +1,11 @@
+from datetime import datetime, timezone, timedelta
+from secrets import token_urlsafe
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.schemas.auth import RegisterRequest, LoginRequest
+from app.schemas.auth import RegisterRequest, LoginRequest, ForgotPasswordRequest, ResetPasswordRequest
 from app.utils.security import (
     verify_password,
     get_password_hash,
@@ -11,6 +14,7 @@ from app.utils.security import (
     decode_token,
 )
 from app.services.audit_service import create_audit_log
+from app.services.email_service import send_reset_email
 from app.config import settings
 
 
@@ -101,6 +105,40 @@ def change_password(db: Session, user_id: int, current_password: str, new_passwo
     db.commit()
 
     create_audit_log(db, user_id, "change_password", "auth", str(user_id))
+
+
+def forgot_password(db: Session, data: ForgotPasswordRequest):
+    user = db.query(User).filter(User.email == data.email).first()
+    if not user:
+        return
+
+    token = token_urlsafe(32)
+    user.reset_token = token
+    user.reset_token_expires = datetime.now(timezone.utc) + timedelta(minutes=30)
+    db.commit()
+
+    send_reset_email(user.email, token)
+
+
+def reset_password(db: Session, data: ResetPasswordRequest):
+    user = db.query(User).filter(User.reset_token == data.token).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+    if not user.reset_token_expires or user.reset_token_expires < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset token has expired",
+        )
+
+    user.password_hash = get_password_hash(data.new_password)
+    user.reset_token = None
+    user.reset_token_expires = None
+    db.commit()
+
+    create_audit_log(db, user.id, "reset_password", "auth", str(user.id))
 
 
 def build_token_response(db: Session, user: User):

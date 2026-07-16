@@ -67,20 +67,21 @@ class PostgreSQLConnector:
             )
 
     def get_schema(self) -> SchemaResponse:
-        conn = self._connection or self.connect()
-        cur = conn.cursor()
-
-        tables = self._get_tables(cur, "BASE TABLE")
-        views = self._get_tables(cur, "VIEW")
-
-        cur.close()
-        return SchemaResponse(
-            database_id=0,
-            schema_name=self.schema,
-            tables=tables,
-            views=views,
-            last_synced_at=None,
-        )
+        conn = self.connect()
+        try:
+            cur = conn.cursor()
+            tables = self._get_tables(cur, "BASE TABLE")
+            views = self._get_tables(cur, "VIEW")
+            cur.close()
+            return SchemaResponse(
+                database_id=0,
+                schema_name=self.schema,
+                tables=tables,
+                views=views,
+                last_synced_at=None,
+            )
+        finally:
+            self.close()
 
     def sync_schema(self, database_id: int) -> SyncResult:
         start = time.time()
@@ -174,36 +175,39 @@ class PostgreSQLConnector:
         return columns
 
     def get_tables_list(self) -> list[dict]:
-        conn = self._connection or self.connect()
-        cur = conn.cursor()
-        cur.execute(
-            sql.SQL("""
-                SELECT
-                    table_name,
-                    table_type,
-                    (SELECT COUNT(*) FROM information_schema.columns
-                     WHERE table_schema = %s AND table_name = t.table_name) as column_count
-                FROM information_schema.tables t
-                WHERE t.table_schema = %s
-                ORDER BY t.table_name
-            """),
-            [self.schema, self.schema],
-        )
-        rows = cur.fetchall()
-        cur.close()
-        return [
-            {
-                "name": r[0],
-                "type": "table" if r[1] == "BASE TABLE" else "view",
-                "column_count": r[2],
-            }
-            for r in rows
-        ]
+        conn = self.connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                sql.SQL("""
+                    SELECT
+                        table_name,
+                        table_type,
+                        (SELECT COUNT(*) FROM information_schema.columns
+                         WHERE table_schema = %s AND table_name = t.table_name) as column_count
+                    FROM information_schema.tables t
+                    WHERE t.table_schema = %s
+                    ORDER BY t.table_name
+                """),
+                [self.schema, self.schema],
+            )
+            rows = cur.fetchall()
+            cur.close()
+            return [
+                {
+                    "name": r[0],
+                    "type": "table" if r[1] == "BASE TABLE" else "view",
+                    "column_count": r[2],
+                }
+                for r in rows
+            ]
+        finally:
+            self.close()
 
     def execute_query(self, sql: str) -> dict:
-        conn = self._connection or self.connect()
-        cur = conn.cursor()
+        conn = self.connect()
         try:
+            cur = conn.cursor()
             cur.execute(sql)
             if cur.description:
                 columns = [desc[0] for desc in cur.description]
@@ -217,14 +221,18 @@ class PostgreSQLConnector:
             raise type(e)(friendly_error(str(e)))
         finally:
             cur.close()
+            self.close()
 
     def get_table_details(self, table_name: str) -> TableSchema:
-        conn = self._connection or self.connect()
-        cur = conn.cursor()
-        columns = self._get_columns(cur, table_name)
-        cur.close()
-        return TableSchema(
-            name=table_name,
-            schema_name=self.schema,
-            columns=columns,
-        )
+        conn = self.connect()
+        try:
+            cur = conn.cursor()
+            columns = self._get_columns(cur, table_name)
+            cur.close()
+            return TableSchema(
+                name=table_name,
+                schema_name=self.schema,
+                columns=columns,
+            )
+        finally:
+            self.close()

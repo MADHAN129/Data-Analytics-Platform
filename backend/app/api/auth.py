@@ -41,12 +41,13 @@ def refresh(data: RefreshTokenRequest, db: Session = Depends(get_db)):
 
 @router.post("/auth/forgot-password", response_model=MessageResponse)
 def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    # For security, always return success
+    auth_service.forgot_password(db, data)
     return MessageResponse(message="If the email exists, a reset link has been sent")
 
 
 @router.post("/auth/reset-password", response_model=MessageResponse)
 def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    auth_service.reset_password(db, data)
     return MessageResponse(message="Password reset successful")
 
 

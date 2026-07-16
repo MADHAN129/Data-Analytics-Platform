@@ -71,9 +71,12 @@ const defaultForm: DatabaseCreateRequest = {
   host: "",
   port: 5432,
   database_name: "",
+  schema_name: "public",
   username: "",
   password: "",
   ssl: false,
+  pool_size: 10,
+  timeout_seconds: 30,
 }
 
 export default function DatabasesPage() {
@@ -82,6 +85,7 @@ export default function DatabasesPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
+  const [connectionTypeFilter, setConnectionTypeFilter] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -100,7 +104,12 @@ export default function DatabasesPage() {
   const fetchConnections = useCallback(async () => {
     setIsLoading(true)
     try {
-      const data = await api.listDatabases({ page, per_page: perPage, search: search || undefined })
+      const data = await api.listDatabases({
+        page,
+        per_page: perPage,
+        search: search || undefined,
+        connection_type: connectionTypeFilter || undefined,
+      })
       setConnections(data.connections)
       setTotal(data.total)
     } catch (err: unknown) {
@@ -109,7 +118,7 @@ export default function DatabasesPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [page, perPage, search, toast])
+  }, [page, perPage, search, connectionTypeFilter, toast])
 
   useEffect(() => { fetchConnections() }, [fetchConnections])
 
@@ -238,9 +247,12 @@ export default function DatabasesPage() {
       host: conn.host,
       port: conn.port,
       database_name: conn.database_name,
+      schema_name: conn.schema_name,
       username: conn.username,
       password: "",
       ssl: conn.ssl || false,
+      pool_size: conn.pool_size,
+      timeout_seconds: conn.timeout_seconds,
     })
     setEditDialogOpen(true)
   }
@@ -397,6 +409,19 @@ export default function DatabasesPage() {
                 onChange={(e) => { setSearch(e.target.value); setPage(1) }}
               />
             </div>
+            <Select value={connectionTypeFilter} onValueChange={(v) => { setConnectionTypeFilter(v); setPage(1) }}>
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="All types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All types</SelectItem>
+                <SelectItem value="postgresql">PostgreSQL</SelectItem>
+                <SelectItem value="mysql">MySQL</SelectItem>
+                <SelectItem value="sqlserver">SQL Server</SelectItem>
+                <SelectItem value="mariadb">MariaDB</SelectItem>
+                <SelectItem value="mongodb">MongoDB</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -533,9 +558,15 @@ function ConnectionForm({
           <Input id="conn-port" type="number" value={form.port} onChange={(e) => update("port", e.target.value)} />
         </div>
       </div>
-      <div className="space-y-2">
-        <Label htmlFor="conn-dbname">Database Name</Label>
-        <Input id="conn-dbname" value={form.database_name} onChange={(e) => update("database_name", e.target.value)} placeholder="mydb" />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="conn-dbname">Database Name</Label>
+          <Input id="conn-dbname" value={form.database_name} onChange={(e) => update("database_name", e.target.value)} placeholder="mydb" />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="conn-schema">Schema Name</Label>
+          <Input id="conn-schema" value={form.schema_name || "public"} onChange={(e) => update("schema_name", e.target.value)} placeholder="public" />
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
@@ -547,6 +578,26 @@ function ConnectionForm({
             {isEdit ? "Password (leave blank to keep)" : "Password"}
           </Label>
           <Input id="conn-pass" type="password" value={form.password} onChange={(e) => update("password", e.target.value)} placeholder="••••••••" />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id="conn-ssl"
+          type="checkbox"
+          checked={form.ssl || false}
+          onChange={(e) => update("ssl", e.target.checked)}
+          className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+        />
+        <Label htmlFor="conn-ssl" className="text-sm font-normal">Use SSL/TLS</Label>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="conn-pool">Pool Size</Label>
+          <Input id="conn-pool" type="number" min={1} max={100} value={form.pool_size ?? 10} onChange={(e) => update("pool_size", Number(e.target.value))} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="conn-timeout">Timeout (seconds)</Label>
+          <Input id="conn-timeout" type="number" min={5} max={300} value={form.timeout_seconds ?? 30} onChange={(e) => update("timeout_seconds", Number(e.target.value))} />
         </div>
       </div>
     </div>

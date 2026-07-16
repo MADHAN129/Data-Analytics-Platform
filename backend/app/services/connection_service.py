@@ -200,6 +200,14 @@ def get_schema(db: Session, db_id: int) -> Optional[SchemaResponse]:
     conn = get_database(db, db_id)
     if not conn:
         return None
+
+    if conn.schema_cache:
+        return SchemaResponse(
+            database_id=db_id,
+            **{k: conn.schema_cache[k] for k in ("schema_name", "tables", "views")},
+            last_synced_at=conn.schema_cache_updated_at or conn.last_sync_at,
+        )
+
     connector = get_connector(conn)
     try:
         schema = connector.get_schema()
@@ -208,6 +216,8 @@ def get_schema(db: Session, db_id: int) -> Optional[SchemaResponse]:
         return schema
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to get schema: {friendly_error(str(e))}")
+    finally:
+        connector.close()
 
 
 def sync_schema(db: Session, db_id: int) -> Optional[SyncResult]:
@@ -215,16 +225,19 @@ def sync_schema(db: Session, db_id: int) -> Optional[SyncResult]:
     if not conn:
         return None
     connector = get_connector(conn)
-    result = connector.sync_schema(db_id)
+    try:
+        result = connector.sync_schema(db_id)
 
-    if result.status == "completed":
-        import json
-        conn.schema_cache = json.loads(result.model_dump_json())
-        conn.schema_cache_updated_at = datetime.utcnow()
-        conn.last_sync_at = result.synced_at
-        db.commit()
+        if result.status == "completed":
+            schema = connector.get_schema()
+            conn.schema_cache = schema.model_dump()
+            conn.schema_cache_updated_at = datetime.now(timezone.utc)
+            conn.last_sync_at = result.synced_at
+            db.commit()
 
-    return result
+        return result
+    finally:
+        connector.close()
 
 
 def get_tables(db: Session, db_id: int) -> Optional[list[dict]]:
@@ -236,6 +249,8 @@ def get_tables(db: Session, db_id: int) -> Optional[list[dict]]:
         return connector.get_tables_list()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to list tables: {friendly_error(str(e))}")
+    finally:
+        connector.close()
 
 
 def get_table_details(db: Session, db_id: int, table_name: str):
@@ -247,3 +262,5 @@ def get_table_details(db: Session, db_id: int, table_name: str):
         return connector.get_table_details(table_name)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to get table details: {friendly_error(str(e))}")
+    finally:
+        connector.close()

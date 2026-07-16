@@ -12,6 +12,7 @@ class WidgetConfig(BaseModel):
     height: int = 4
     config: Optional[dict] = None
     query_id: Optional[int] = None
+    refresh_interval: int = Field(0, ge=0, description="Auto-refresh interval in seconds (0 = disabled)")
 
 
 class WidgetResponse(BaseModel):

@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query as FastAPIQuery
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.dashboard import DashboardWidget
+from app.models.query import Query
 from app.schemas.dashboard import (
     DashboardCreateRequest,
     DashboardUpdateRequest,
@@ -53,8 +54,8 @@ def _dashboard_to_list(dash) -> DashboardResponse:
 
 @router.get("", response_model=DashboardListResponse)
 def list_dashboards(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    skip: int = FastAPIQuery(0, ge=0),
+    limit: int = FastAPIQuery(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -121,6 +122,12 @@ def add_widget(
     dash = dashboard_service.get_dashboard(db, dashboard_id)
     if not dash:
         raise HTTPException(status_code=404, detail="Dashboard not found")
+    config = data.config or {}
+    if data.query_id and not config.get("sql"):
+        q = db.query(Query).filter(Query.id == data.query_id).first()
+        if q and q.generated_sql:
+            config["sql"] = q.generated_sql
+            config["database_id"] = q.database_id
     widget = dashboard_service.add_widget(
         db,
         dashboard_id=dashboard_id,
@@ -131,7 +138,7 @@ def add_widget(
         width=data.width,
         height=data.height,
         query_id=data.query_id,
-        config=data.config,
+        config=config,
     )
     return WidgetResponse.model_validate(widget)
 
@@ -157,6 +164,12 @@ def update_widget(
     )
     if not widget:
         raise HTTPException(status_code=404, detail="Widget not found")
+    config = data.config or {}
+    if data.query_id and not config.get("sql"):
+        q = db.query(Query).filter(Query.id == data.query_id).first()
+        if q and q.generated_sql:
+            config["sql"] = q.generated_sql
+            config["database_id"] = q.database_id
     widget = dashboard_service.update_widget(
         db,
         widget,
@@ -167,7 +180,7 @@ def update_widget(
         width=data.width,
         height=data.height,
         query_id=data.query_id,
-        config=data.config,
+        config=config,
     )
     return WidgetResponse.model_validate(widget)
 

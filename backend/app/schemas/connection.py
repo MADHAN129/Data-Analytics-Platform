@@ -42,9 +42,12 @@ class DatabaseResponse(BaseModel):
     host: str
     port: int
     database_name: str
-    schema_name: str
+    schema_name: str = "public"
     username: str
     ssl: bool = False
+    is_active: bool = True
+    pool_size: int = 10
+    timeout_seconds: int = 30
     health_status: Optional[bool] = None
     health_latency_ms: Optional[int] = None
     health_checked_at: Optional[datetime] = None

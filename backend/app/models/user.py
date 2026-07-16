@@ -15,6 +15,8 @@ class User(Base):
     auth_provider_id = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     mfa_enabled = Column(Boolean, default=False)
+    reset_token = Column(String(255), nullable=True, index=True)
+    reset_token_expires = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 

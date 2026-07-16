@@ -15,10 +15,21 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 1025
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "noreply@agentic-analytics.com"
+    SMTP_FROM_NAME: str = "Agentic Analytics"
+    APP_URL: str = "http://localhost:3000"
+
     VLLM_API_URL: str = "http://localhost:11434/v1"
     VLLM_API_KEY: str = ""
     LLM_USE_MOCK: bool = False
     LLM_MODEL: str = "qwen3:8b"
+
+    MCP_API_KEY: str = ""
+    MCP_ENABLED: bool = True
 
     class Config:
         env_file = ".env"

@@ -6,8 +6,11 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, users, roles, permissions, audit, connections, queries, conversations, templates, dashboards
+from app.api import auth, users, roles, permissions, audit, connections, queries, conversations, templates, dashboards, ws
 from app.schemas.common import HealthResponse
+from app.services.ws_manager import manager
+from app.services.widget_poller import poll_manager
+from app.mcp_server import create_mcp_asgi
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -62,3 +65,9 @@ app.include_router(queries.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(templates.router, prefix="/api/v1")
 app.include_router(dashboards.router, prefix="/api/v1")
+app.include_router(ws.router)
+
+if settings.MCP_ENABLED:
+    app.mount("/mcp", create_mcp_asgi())
+
+poll_manager.set_broadcast_cb(manager.broadcast)
