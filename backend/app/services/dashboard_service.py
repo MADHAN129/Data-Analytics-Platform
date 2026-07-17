@@ -2,6 +2,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.dashboard import Dashboard, DashboardWidget
+from app.models.query import Query
 from app.schemas.dashboard import (
     DashboardCreateRequest,
     DashboardUpdateRequest,
@@ -145,7 +146,7 @@ def auto_generate_from_query(
         template = (
             db.query(QueryTemplate)
             .filter(QueryTemplate.database_id == database_id)
-            .order_by(QueryTemplate.usage_count.desc())
+            .order_by(QueryTemplate.created_at.desc())
             .first()
         )
 
@@ -159,15 +160,23 @@ def auto_generate_from_query(
     db.flush()
 
     if template:
+        query = Query(
+            user_id=dash.user_id,
+            database_id=template.database_id,
+            natural_language=template.natural_language,
+            generated_sql=template.generated_sql,
+            status="completed",
+        )
+        db.add(query)
+        db.flush()
         add_widget(
             db,
             dashboard_id=dash.id,
             widget_type="kpi",
             title=template.title,
-            query_id=template.id,
+            query_id=query.id,
             config={
                 "template_id": template.id,
-                "sql": template.sql,
                 "database_id": template.database_id,
             },
         )

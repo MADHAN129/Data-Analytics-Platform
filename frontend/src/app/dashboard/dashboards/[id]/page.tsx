@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import GridLayout, { type Layout, verticalCompactor } from "react-grid-layout"
 import "react-grid-layout/css/styles.css"
@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
 import { useDashboardWs, type LiveWidgetData } from "@/hooks/use-dashboard-ws"
 import { formatDate } from "@/lib/utils"
@@ -27,7 +28,7 @@ import type {
   VisualizationSuggestion, QueryResult,
 } from "@/types/api"
 import {
-  ArrowLeft, Plus, Trash2, Loader2, Settings, GripVertical, Pencil,
+  AlertCircle, ArrowLeft, Download, Plus, Trash2, Loader2, Settings, GripVertical, Pencil,
   BarChart3, PieChart, LineChart, AreaChart, Table2, LayoutDashboard,
   RefreshCw, Wifi, WifiOff,
 } from "lucide-react"
@@ -52,12 +53,15 @@ export default function DashboardDetailPage() {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
+  const [isPublic, setIsPublic] = useState(false)
   const [saving, setSaving] = useState(false)
   const [addWidgetOpen, setAddWidgetOpen] = useState(false)
   const [editingWidget, setEditingWidget] = useState<WidgetResponse | null>(null)
   const [editWidgetOpen, setEditWidgetOpen] = useState(false)
   const [deleteWidgetId, setDeleteWidgetId] = useState<number | null>(null)
   const [layoutUpdating, setLayoutUpdating] = useState(false)
+  const layoutTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const lastSavedLayoutRef = useRef<string>("")
 
   const { connected, liveData, activePollers, refreshWidget, refreshAll } = useDashboardWs(dashboardId)
 
@@ -68,6 +72,7 @@ export default function DashboardDetailPage() {
       setDash(data)
       setTitle(data.title)
       setDescription(data.description || "")
+      setIsPublic(data.is_public)
     } catch {
       toast({ title: "Error", description: "Failed to load dashboard", variant: "destructive" })
     } finally {
@@ -88,8 +93,9 @@ export default function DashboardDetailPage() {
     }))
   }, [dash])
 
-  const handleLayoutChange = useCallback(async (newLayout: Layout) => {
-    if (!dash || layoutUpdating) return
+  const handleLayoutChange = useCallback((newLayout: Layout) => {
+    if (!dash) return
+    if (layoutTimerRef.current) clearTimeout(layoutTimerRef.current)
     const widgets = newLayout.map((item) => ({
       id: Number(item.i),
       position_x: item.x,
@@ -97,16 +103,34 @@ export default function DashboardDetailPage() {
       width: item.w,
       height: item.h,
     }))
-    setLayoutUpdating(true)
-    try {
-      const updated = await api.updateDashboardLayout(dashboardId, { widgets })
-      setDash((prev) => prev ? { ...prev, widgets: updated } : prev)
-    } catch {
-      toast({ title: "Error", description: "Failed to save layout", variant: "destructive" })
-    } finally {
-      setLayoutUpdating(false)
-    }
-  }, [dash, dashboardId, layoutUpdating, toast])
+    const serialized = JSON.stringify(widgets)
+    if (serialized === lastSavedLayoutRef.current) return
+
+    setDash((prev) => {
+      if (!prev) return prev
+      const widgetMap = new Map(newLayout.map((l) => [l.i, l]))
+      return {
+        ...prev,
+        widgets: prev.widgets.map((w) => {
+          const pos = widgetMap.get(String(w.id))
+          return pos ? { ...w, position_x: pos.x, position_y: pos.y, width: pos.w, height: pos.h } : w
+        }),
+      }
+    })
+
+    layoutTimerRef.current = setTimeout(async () => {
+      setLayoutUpdating(true)
+      try {
+        const updated = await api.updateDashboardLayout(dashboardId, { widgets })
+        lastSavedLayoutRef.current = serialized
+        setDash((prev) => prev ? { ...prev, widgets: updated } : prev)
+      } catch {
+        toast({ title: "Error", description: "Failed to save layout", variant: "destructive" })
+      } finally {
+        setLayoutUpdating(false)
+      }
+    }, 500)
+  }, [dash, dashboardId, toast])
 
   const handleSaveDetails = async () => {
     if (!title.trim()) return
@@ -115,6 +139,7 @@ export default function DashboardDetailPage() {
       const updated = await api.updateDashboard(dashboardId, {
         title: title.trim(),
         description: description.trim() || undefined,
+        is_public: isPublic,
       })
       setDash(updated)
       setEditing(false)
@@ -127,12 +152,13 @@ export default function DashboardDetailPage() {
   }
 
   const handleAddWidget = async (widgetType: string, widgetTitle: string, queryId?: number) => {
+    const maxY = dash ? Math.max(0, ...dash.widgets.map((w) => w.position_y + w.height)) : 0
     try {
       const widget = await api.addWidget(dashboardId, {
         widget_type: widgetType,
         title: widgetTitle,
         position_x: 0,
-        position_y: 0,
+        position_y: maxY,
         width: 6,
         height: 4,
         query_id: queryId,
@@ -190,6 +216,30 @@ export default function DashboardDetailPage() {
     }
   }
 
+  const exportWidgetCSV = useCallback(async (widget: WidgetResponse) => {
+    const ld = liveData.get(widget.id)
+    let results: QueryResult | null | undefined = ld?.results
+    if (!results && widget.query_id) {
+      try {
+        const q = await api.getQueryById(widget.query_id)
+        results = q.results
+      } catch {
+        toast({ title: "Error", description: "No data to export", variant: "destructive" })
+        return
+      }
+    }
+    if (!results?.columns || !results?.rows || results.rows.length === 0) {
+      toast({ title: "Error", description: "No data to export", variant: "destructive" })
+      return
+    }
+    const rows = results.rows.map((row) => {
+      const obj: Record<string, unknown> = {}
+      results.columns.forEach((col, i) => { obj[col] = row[i] })
+      return obj
+    })
+    downloadCSV(results.columns, rows, widget.title)
+  }, [liveData, toast])
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -224,6 +274,10 @@ export default function DashboardDetailPage() {
             <div className="space-y-3 max-w-lg">
               <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Dashboard title" />
               <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description..." rows={2} />
+              <div className="flex items-center gap-2">
+                <Switch id="is-public" checked={isPublic} onCheckedChange={setIsPublic} />
+                <Label htmlFor="is-public" className="text-sm">Public sharing</Label>
+              </div>
               <div className="flex gap-2">
                 <Button size="sm" onClick={handleSaveDetails} disabled={saving || !title.trim()}>
                   {saving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
@@ -311,6 +365,15 @@ export default function DashboardDetailPage() {
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6"
+                      onClick={() => exportWidgetCSV(widget)}
+                      title="Export CSV"
+                    >
+                      <Download className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
                       onClick={() => refreshWidget(widget.id)}
                       title="Refresh now"
                     >
@@ -374,6 +437,22 @@ export default function DashboardDetailPage() {
   )
 }
 
+function downloadCSV(columns: string[], rows: Record<string, unknown>[], filename: string) {
+  const header = columns.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")
+  const body = rows.map((row) => columns.map((c) => {
+    const val = row[c]
+    if (val == null) return ""
+    return `"${String(val).replace(/"/g, '""')}"`
+  }).join(",")).join("\n")
+  const blob = new Blob([`${header}\n${body}`], { type: "text/csv;charset=utf-8;" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename.endsWith(".csv") ? filename : `${filename}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function ConnectionBadge({ connected, pollerCount }: { connected: boolean; pollerCount: number }) {
   if (connected && pollerCount > 0) {
     return (
@@ -420,21 +499,24 @@ function WidgetPlaceholder({ widget }: { widget: WidgetResponse }) {
 function WidgetContent({ widget, liveData }: { widget: WidgetResponse; liveData?: LiveWidgetData }) {
   const [query, setQuery] = useState<QueryResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!widget.query_id) {
       setQuery(null)
       setLoading(false)
-      setError(false)
+      setError(null)
       return
     }
     if (liveData) return
     setLoading(true)
-    setError(false)
+    setError(null)
     api.getQueryById(widget.query_id)
       .then(setQuery)
-      .catch(() => setError(true))
+      .catch((err: unknown) => {
+        if (err instanceof Error) setError(err.message)
+        else setError("Failed to load query data")
+      })
       .finally(() => setLoading(false))
   }, [widget.query_id, liveData])
 
@@ -449,7 +531,15 @@ function WidgetContent({ widget, liveData }: { widget: WidgetResponse; liveData?
       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
     </div>
   )
-  if (error || !query?.results) return <WidgetPlaceholder widget={widget} />
+  if (error || !query?.results) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4">
+        <AlertCircle className="h-6 w-6 text-destructive" />
+        <p className="text-sm text-destructive font-medium">Query Error</p>
+        <p className="text-xs text-muted-foreground text-center max-w-[200px] line-clamp-3">{error || "Query returned no results"}</p>
+      </div>
+    )
+  }
 
   return <WidgetChartRenderer widget={widget} results={query.results} suggestions={query.suggested_visualizations} />
 }
