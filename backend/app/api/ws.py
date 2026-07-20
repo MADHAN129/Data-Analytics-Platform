@@ -48,6 +48,57 @@ def _get_dashboard_widgets(dashboard_id: int) -> list[DashboardWidget]:
         db.close()
 
 
+def _widget_poll_target(widget: DashboardWidget) -> tuple[int | None, str | None, int]:
+    """Resolve (database_id, sql, interval) for a widget's live poller.
+
+    Prefers the widget's linked Query (generated_sql + database_id) so
+    auto-generated widgets — whose config only stores natural language — still
+    poll live. Falls back to config.sql / config.database_id for manually
+    configured widgets. The refresh interval comes from config, defaulting to
+    15s when unset so dashboards keep a heartbeat even without an explicit
+    interval.
+    """
+    cfg = widget.config or {}
+    database_id = cfg.get("database_id")
+    sql = cfg.get("sql")
+    interval = int(cfg.get("refresh_interval", 0) or 0)
+
+    if (not sql or not database_id) and widget.query_id:
+        db = SessionLocal()
+        try:
+            from app.models.query import Query
+            query = db.query(Query).filter(Query.id == widget.query_id).first()
+            if query:
+                sql = sql or query.generated_sql
+                database_id = database_id or query.database_id
+        finally:
+            db.close()
+
+    if not interval and sql and database_id:
+        interval = 15
+    return database_id, sql, interval
+
+
+def _restart_poller(dashboard_id: int, widget: DashboardWidget) -> bool:
+    """Stop then start a widget's poller using its resolved query target.
+
+    Returns True if a poller was (re)started, False if the widget has no
+    runnable query (e.g. a placeholder with no linked query).
+    """
+    poll_manager.stop(dashboard_id, widget.id)
+    database_id, sql, interval = _widget_poll_target(widget)
+    if interval > 0 and widget.query_id and sql and database_id:
+        poll_manager.start(
+            dashboard_id=dashboard_id,
+            widget_id=widget.id,
+            interval=interval,
+            database_id=database_id,
+            sql=sql,
+        )
+        return True
+    return False
+
+
 @router.websocket("/ws/dashboards/{dashboard_id}")
 async def dashboard_websocket(
     websocket: WebSocket,
@@ -63,25 +114,23 @@ async def dashboard_websocket(
 
     try:
         widgets = await _get_dashboard_widgets_async(dashboard_id)
+        active = []
         for w in widgets:
-            cfg = w.config or {}
-            interval = cfg.get("refresh_interval", 0)
-            if interval > 0 and w.query_id and cfg.get("sql") and cfg.get("database_id"):
+            database_id, sql, interval = _widget_poll_target(w)
+            if interval > 0 and w.query_id and sql and database_id:
                 poll_manager.start(
                     dashboard_id=dashboard_id,
                     widget_id=w.id,
                     interval=interval,
-                    database_id=cfg["database_id"],
-                    sql=cfg["sql"],
+                    database_id=database_id,
+                    sql=sql,
                 )
+                active.append(w.id)
 
         await websocket.send_json({
             "type": "connected",
             "dashboard_id": dashboard_id,
-            "active_pollers": [
-                w.id for w in widgets
-                if (w.config or {}).get("refresh_interval", 0) > 0
-            ],
+            "active_pollers": active,
         })
 
         while True:
@@ -102,17 +151,7 @@ async def dashboard_websocket(
 
             elif msg_type == "refresh_all":
                 for w in widgets:
-                    cfg = w.config or {}
-                    if w.query_id and cfg.get("sql") and cfg.get("database_id"):
-                        poll_manager.stop(dashboard_id, w.id)
-                        interval = cfg.get("refresh_interval", 10)
-                        poll_manager.start(
-                            dashboard_id=dashboard_id,
-                            widget_id=w.id,
-                            interval=interval,
-                            database_id=cfg["database_id"],
-                            sql=cfg["sql"],
-                        )
+                    _restart_poller(dashboard_id, w)
                 await websocket.send_json({
                     "type": "refresh_all",
                     "status": "started",
@@ -121,24 +160,14 @@ async def dashboard_websocket(
             elif msg_type == "refresh_widget":
                 widget_id = msg.get("widget_id")
                 if widget_id:
-                    poll_manager.stop(dashboard_id, widget_id)
                     w = next((x for x in widgets if x.id == widget_id), None)
                     if w:
-                        cfg = w.config or {}
-                        interval = cfg.get("refresh_interval", 10)
-                        if cfg.get("sql") and cfg.get("database_id"):
-                            poll_manager.start(
-                                dashboard_id=dashboard_id,
-                                widget_id=widget_id,
-                                interval=interval,
-                                database_id=cfg["database_id"],
-                                sql=cfg["sql"],
-                            )
-                            await websocket.send_json({
-                                "type": "refresh_widget",
-                                "widget_id": widget_id,
-                                "status": "started",
-                            })
+                        started = _restart_poller(dashboard_id, w)
+                        await websocket.send_json({
+                            "type": "refresh_widget",
+                            "widget_id": widget_id,
+                            "status": "started" if started else "skipped",
+                        })
 
     except WebSocketDisconnect:
         pass

@@ -280,6 +280,8 @@ def auto_generate_from_query(
             config={
                 "auto_generated": True,
                 "natural_language": natural_language,
+                "database_id": database_id,
+                "sql": sql,
             },
         )
         col = 1 - col

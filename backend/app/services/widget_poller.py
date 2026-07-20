@@ -38,7 +38,7 @@ def _execute_widget_query(database_id: int, sql: str) -> dict[str, Any] | None:
         )
         if not conn:
             logger.warning("Database %d not found for widget poll", database_id)
-            return None
+            return {"error": f"Database connection #{database_id} no longer exists"}
         connector = get_connector(conn)
         raw = connector.execute_query(sql)
         columns = raw.get("columns", [])
@@ -50,7 +50,7 @@ def _execute_widget_query(database_id: int, sql: str) -> dict[str, Any] | None:
         }
     except Exception as e:
         logger.error("Widget poll query failed: %s", e)
-        return None
+        return {"error": f"Database unreachable: {conn.name if conn else 'connection'} is offline"}
     finally:
         db.close()
 
@@ -97,6 +97,17 @@ class WidgetPollManager:
                         _execute_widget_query, database_id, sql
                     )
                     if results is None:
+                        continue
+                    if results.get("error"):
+                        if self._broadcast_cb:
+                            await self._broadcast_cb(
+                                dashboard_id,
+                                {
+                                    "type": "widget_error",
+                                    "widget_id": widget_id,
+                                    "error": results["error"],
+                                },
+                            )
                         continue
                     new_hash = _compute_hash(results)
                     if self._hashes.get(key) == new_hash:
