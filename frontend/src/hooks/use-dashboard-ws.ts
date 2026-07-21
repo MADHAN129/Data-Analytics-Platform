@@ -65,6 +65,9 @@ export function useDashboardWs(dashboardId: number | null) {
         const msg: WsMessage = JSON.parse(event.data)
         switch (msg.type) {
           case "connected":
+            // Clear stale error entries so a recovered connection doesn't
+            // inherit pre-disconnect down states.
+            setLiveData(new Map())
             setActivePollers(msg.active_pollers || [])
             break
           case "widget_update":

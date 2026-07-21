@@ -91,17 +91,19 @@ class WidgetPollManager:
                 interval,
             )
             try:
+                RETRY_INTERVAL = 5  # seconds while DB is down
+                last_ok = False
                 while True:
-                    # Probe immediately (first tick), then every `interval`
-                    # seconds. An immediate first run ensures a down database
-                    # is reported within ~1s of connecting, instead of waiting
-                    # a full interval while the widget shows stale data.
+                    # Probe immediately (first tick), then every `interval`/`RETRY_INTERVAL`
                     results = await asyncio.to_thread(
                         _execute_widget_query, database_id, sql
                     )
                     if results is None:
                         pass
                     elif results.get("error"):
+                        # Clear hash so next success always re-broadcasts
+                        # (fixes identical-data non-recovery).
+                        self._hashes.pop(key, None)
                         if self._broadcast_cb:
                             await self._broadcast_cb(
                                 dashboard_id,
@@ -111,6 +113,7 @@ class WidgetPollManager:
                                     "error": results["error"],
                                 },
                             )
+                        last_ok = False
                     else:
                         new_hash = _compute_hash(results)
                         if self._hashes.get(key) != new_hash:
@@ -124,7 +127,8 @@ class WidgetPollManager:
                                         "results": results,
                                     },
                                 )
-                    await asyncio.sleep(interval)
+                        last_ok = True
+                    await asyncio.sleep(interval if last_ok else RETRY_INTERVAL)
             except asyncio.CancelledError:
                 logger.info(
                     "Poll cancelled: dashboard=%d widget=%d",

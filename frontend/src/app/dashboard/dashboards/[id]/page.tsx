@@ -72,8 +72,10 @@ export default function DashboardDetailPage() {
 
   // Per-widget reported DB-down state, so a database being offline is shared
   // across EVERY widget that uses it (not just the one whose poll errored).
-  const widgetDbStateRef = useRef<Map<number, { dbId: number | undefined; down: boolean }>>(new Map())
-  const dbDownCountRef = useRef<Map<number, number>>(new Map())
+  // A widget also reports whether it has LIVE results — this allows recovery
+  // to work: as soon as any widget proves the DB is reachable (hasLive=true),
+  // the shared down set clears for that DB, so all siblings render data again.
+  const widgetStateRef = useRef<Map<number, { dbId: number | undefined; down: boolean; hasLive: boolean }>>(new Map())
 
   useEffect(() => {
     api.listDatabases({ per_page: 100 })
@@ -101,25 +103,27 @@ export default function DashboardDetailPage() {
   }, [dash])
 
   const handleDbState = useCallback(
-    (widgetId: number, dbId: number | undefined, isDown: boolean) => {
-      const states = widgetDbStateRef.current
-      const prev = states.get(widgetId)
-      if (prev && prev.dbId != null && prev.dbId !== dbId) {
-        // Widget moved to a different database; clear old accounting.
-        const oldCount = dbDownCountRef.current.get(prev.dbId) || 0
-        if (oldCount <= 1) dbDownCountRef.current.delete(prev.dbId)
-        else dbDownCountRef.current.set(prev.dbId, oldCount - 1)
-      }
-      states.set(widgetId, { dbId, down: isDown })
-      // Recompute which databases are down from all widgets' reports.
-      const counts = dbDownCountRef.current
-      counts.clear()
+    (widgetId: number, dbId: number | undefined, down: boolean, hasLive: boolean) => {
+      const states = widgetStateRef.current
+      states.set(widgetId, { dbId, down, hasLive })
+
+      // A database is considered down only when at least one widget on it
+      // reports down AND NO widget on it has live results. Having live
+      // results proves the DB is reachable right now, so a recovering widget
+      // immediately clears the DB for all siblings.
+      const perDb: Record<number, { down: number; hasLive: boolean }> = {}
       for (const s of states.values()) {
-        if (s.down && s.dbId != null) {
-          counts.set(s.dbId, (counts.get(s.dbId) || 0) + 1)
-        }
+        if (s.dbId == null) continue
+        const entry = perDb[s.dbId] || { down: 0, hasLive: false }
+        if (s.down) entry.down++
+        if (s.hasLive) entry.hasLive = true
+        perDb[s.dbId] = entry
       }
-      setDbDownIds(new Set(counts.keys()))
+      const next = new Set<number>()
+      for (const [dbId, state] of Object.entries(perDb)) {
+        if (state.down > 0 && !state.hasLive) next.add(Number(dbId))
+      }
+      setDbDownIds(next)
     },
     [],
   )
@@ -619,17 +623,19 @@ function WidgetContent({
   dbId?: number
   dbDown?: boolean
   dbName?: string
-  onDbState?: (widgetId: number, dbId: number | undefined, isDown: boolean) => void
+  onDbState?: (widgetId: number, dbId: number | undefined, down: boolean, hasLive: boolean) => void
 }) {
   const [query, setQuery] = useState<QueryResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const liveDbDown = !!liveData?.error && isDbUnreachableError(liveData.error)
+  const ownDown = liveDbDown || (query?.status === "failed" && isDbUnreachableError(query.error_message))
+  const hasLive = !!liveData?.results
   // The database is treated as down if this widget's own live query errored
   // OR any sibling widget on the same database reported it down. This is
   // what makes every widget on an offline DB show "no signal" together.
-  const dbIsDown = liveDbDown || !!dbDown
+  const dbIsDown = ownDown || !!dbDown
 
   useEffect(() => {
     if (!widget.query_id) {
@@ -650,12 +656,13 @@ function WidgetContent({
       .finally(() => setLoading(false))
   }, [widget.query_id, liveData])
 
-  // Report DB-down state upward so the dashboard can show a banner and
+  // Report DB-down/up state upward so the dashboard can show a banner and
   // propagate the down state to sibling widgets sharing the same database.
+  // Resolving a widget to "up" (hasLive=true) clears the shared down set
+  // for its database, letting all siblings recover immediately.
   useEffect(() => {
-    const storedDown = query?.status === "failed" && isDbUnreachableError(query.error_message)
-    onDbState?.(widgetId, dbId, dbIsDown || storedDown)
-  }, [dbIsDown, query, widgetId, dbId, onDbState])
+    onDbState?.(widgetId, dbId, ownDown, hasLive)
+  }, [ownDown, hasLive, widgetId, dbId, onDbState])
 
   if (!widget.query_id) return <WidgetPlaceholder widget={widget} />
 
