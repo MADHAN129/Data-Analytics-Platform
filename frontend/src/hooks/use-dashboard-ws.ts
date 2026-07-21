@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { QueryResult } from "@/types/api"
 
 export interface LiveWidgetData {
-  results: QueryResult
+  results?: QueryResult
   error?: string
 }
 
@@ -77,13 +77,13 @@ export function useDashboardWs(dashboardId: number | null) {
             }
             break
           case "widget_error":
+            // Always record the error, even if this widget never received a
+            // successful update. Clear any stale cached results so the widget
+            // shows the offline state rather than pre-failure data.
             if (msg.widget_id && msg.error) {
               setLiveData((prev) => {
                 const next = new Map(prev)
-                const existing = next.get(msg.widget_id!)
-                if (existing) {
-                  next.set(msg.widget_id!, { ...existing, error: msg.error })
-                }
+                next.set(msg.widget_id!, { error: msg.error })
                 return next
               })
             }

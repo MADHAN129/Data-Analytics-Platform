@@ -92,13 +92,16 @@ class WidgetPollManager:
             )
             try:
                 while True:
-                    await asyncio.sleep(interval)
+                    # Probe immediately (first tick), then every `interval`
+                    # seconds. An immediate first run ensures a down database
+                    # is reported within ~1s of connecting, instead of waiting
+                    # a full interval while the widget shows stale data.
                     results = await asyncio.to_thread(
                         _execute_widget_query, database_id, sql
                     )
                     if results is None:
-                        continue
-                    if results.get("error"):
+                        pass
+                    elif results.get("error"):
                         if self._broadcast_cb:
                             await self._broadcast_cb(
                                 dashboard_id,
@@ -108,20 +111,20 @@ class WidgetPollManager:
                                     "error": results["error"],
                                 },
                             )
-                        continue
-                    new_hash = _compute_hash(results)
-                    if self._hashes.get(key) == new_hash:
-                        continue
-                    self._hashes[key] = new_hash
-                    if self._broadcast_cb:
-                        await self._broadcast_cb(
-                            dashboard_id,
-                            {
-                                "type": "widget_update",
-                                "widget_id": widget_id,
-                                "results": results,
-                            },
-                        )
+                    else:
+                        new_hash = _compute_hash(results)
+                        if self._hashes.get(key) != new_hash:
+                            self._hashes[key] = new_hash
+                            if self._broadcast_cb:
+                                await self._broadcast_cb(
+                                    dashboard_id,
+                                    {
+                                        "type": "widget_update",
+                                        "widget_id": widget_id,
+                                        "results": results,
+                                    },
+                                )
+                    await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 logger.info(
                     "Poll cancelled: dashboard=%d widget=%d",
