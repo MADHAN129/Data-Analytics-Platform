@@ -45,6 +45,15 @@ def execute_query(
     return result
 
 
+@router.get("/suggestions", response_model=list[str])
+def query_suggestions(
+    q: str = Query("", min_length=1, max_length=200),
+    current_user: User = Depends(require_permission("query.read")),
+    db: Session = Depends(get_db),
+):
+    return query_service.get_suggestions(db, current_user.id, q)
+
+
 @router.get("/{query_id}", response_model=QueryResponse)
 def get_query(
     query_id: int,
@@ -121,12 +130,3 @@ def visualize_query(
     db: Session = Depends(get_db),
 ):
     return query_service.visualize_query(db, query_id, current_user.id)
-
-
-@router.get("/suggestions", response_model=list[str])
-def query_suggestions(
-    q: str = Query("", min_length=1, max_length=200),
-    current_user: User = Depends(require_permission("query.read")),
-    db: Session = Depends(get_db),
-):
-    return query_service.get_suggestions(db, current_user.id, q)
