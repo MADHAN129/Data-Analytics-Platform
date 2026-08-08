@@ -18,7 +18,7 @@ from app.schemas.query import (
     VisualizeResponse,
 )
 from app.schemas.conversation import MessageResponse
-from app.services import llm_service
+from app.services.llm_service import llm_service
 from app.services.mcp_client import mcp_client
 from app.services.connection_service import get_connector, get_database
 from app.api.deps import user_has_permission_by_id
