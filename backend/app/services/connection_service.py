@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -227,20 +228,67 @@ def check_all_health(
     user_id: Optional[int] = None,
     include_all: bool = False,
 ) -> BatchHealthResponse:
+    """Probe all connections in parallel with a bounded total budget.
+
+    Network probes run in worker threads (no DB access inside them); cache
+    writes happen on the calling thread afterwards, keeping the session
+    thread-confined. A batch that exceeds ``BATCH_TIMEOUT_SECONDS`` returns
+    partial results (unfinished connections are reported unhealthy) instead
+    of hanging the request on unreachable hosts.
+    """
     query = db.query(DatabaseConnection)
     if user_id is not None and not include_all:
         query = query.filter(DatabaseConnection.created_by == user_id)
     connections = query.all()
+
+    BATCH_TIMEOUT_SECONDS = 15
+
+    def _probe(conn: DatabaseConnection) -> Optional[DatabaseTestResult]:
+        try:
+            connector = get_connector(conn)
+            return connector.test_connection()
+        except Exception:
+            return None
+
+    results: dict = {}
+    if connections:
+        workers = max(1, min(len(connections), 6))
+        pool = ThreadPoolExecutor(max_workers=workers)
+        futures = {pool.submit(_probe, conn): conn for conn in connections}
+        try:
+            for future in as_completed(futures, timeout=BATCH_TIMEOUT_SECONDS):
+                conn = futures[future]
+                try:
+                    results[conn.id] = future.result()
+                except Exception:
+                    results[conn.id] = None
+        except TimeoutError:
+            # Do not block on still-running probes: release the request and
+            # let the daemon worker threads finish in the background.
+            pool.shutdown(wait=False, cancel_futures=True)
+            for conn in connections:
+                results.setdefault(conn.id, None)
+        else:
+            pool.shutdown(wait=False)
+
+    now = datetime.now(timezone.utc)
     items = []
     for conn in connections:
-        result = check_health(db, conn.id, user_id, include_all)
+        result = results.get(conn.id)
+        healthy = result.success if result is not None else None
+        latency_ms = result.latency_ms if result is not None else None
+        if result is not None:
+            conn.health_status = healthy
+            conn.health_latency_ms = latency_ms
+            conn.health_checked_at = now
         items.append(ConnectionHealthItem(
             id=conn.id,
             name=conn.name,
-            healthy=result.healthy if result else False,
-            latency_ms=result.latency_ms if result else None,
-            checked_at=result.checked_at if result else datetime.utcnow(),
+            healthy=bool(healthy) if healthy is not None else False,
+            latency_ms=latency_ms,
+            checked_at=now,
         ))
+    db.commit()
     return BatchHealthResponse(connections=items)
 
 

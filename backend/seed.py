@@ -104,16 +104,16 @@ def seed():
         for role_name, role_info in roles_data.items():
             existing_role = db.query(Role).filter(Role.name == role_name).first()
             if existing_role:
-                continue
-
-            role = Role(
-                name=role_name,
-                description=role_info["description"],
-                is_system=role_info["is_system"],
-            )
-            db.add(role)
-            db.commit()
-            db.refresh(role)
+                role = existing_role
+            else:
+                role = Role(
+                    name=role_name,
+                    description=role_info["description"],
+                    is_system=role_info["is_system"],
+                )
+                db.add(role)
+                db.commit()
+                db.refresh(role)
 
             # Assign permissions based on role
             if role_name == "SuperAdmin":
@@ -133,8 +133,18 @@ def seed():
             else:
                 perm_ids = []
 
+            # Reconcile: grant any missing permissions on existing roles so a
+            # seed rerun (or a seed that grew since first deploy) upgrades roles
+            # without dropping existing grants.
+            granted_ids = {
+                rp.permission_id
+                for rp in db.query(RolePermission)
+                .filter(RolePermission.role_id == role.id)
+                .all()
+            }
             for pid in perm_ids:
-                db.add(RolePermission(role_id=role.id, permission_id=pid))
+                if pid not in granted_ids:
+                    db.add(RolePermission(role_id=role.id, permission_id=pid))
 
         db.commit()
 
