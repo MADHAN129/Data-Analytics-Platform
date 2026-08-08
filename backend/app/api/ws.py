@@ -124,7 +124,7 @@ async def dashboard_websocket(
     await manager.connect(dashboard_id, websocket)
 
     try:
-        widgets = await _get_dashboard_widgets_async(dashboard_id)
+        widgets = await _get_dashboard_widgets_async(dashboard_id, user)
         active = []
         for w in widgets:
             database_id, sql, interval = _widget_poll_target(w)

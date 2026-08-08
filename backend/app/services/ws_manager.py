@@ -43,7 +43,7 @@ class ConnectionManager:
             conns = list(self._connections.get(dashboard_id, set()))
         if not conns:
             return
-        text = json.dumps(message)
+        text = json.dumps(message, default=str)
         dead: list[WebSocket] = []
         for ws in conns:
             try:

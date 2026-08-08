@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from datetime import datetime
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -18,6 +19,22 @@ _get_db: Callable[[], Session] | None = None
 def init_poller(get_db_callable: Callable[[], Session]) -> None:
     global _get_db
     _get_db = get_db_callable
+
+
+def _json_safe_cell(val: Any) -> Any:
+    if isinstance(val, (datetime,)):
+        return val.isoformat()
+    if isinstance(val, (bytes, bytearray)):
+        return val.hex()
+    try:
+        json.dumps(val)
+        return val
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def _serialize_rows(rows: list[list[Any]]) -> list[list[Any]]:
+    return [[_json_safe_cell(cell) for cell in row] for row in rows]
 
 
 def _compute_hash(results: dict[str, Any]) -> str:
@@ -42,7 +59,7 @@ def _execute_widget_query(database_id: int, sql: str) -> dict[str, Any] | None:
         connector = get_connector(conn)
         raw = connector.execute_query(sql)
         columns = raw.get("columns", [])
-        rows = raw.get("rows", [])
+        rows = _serialize_rows(raw.get("rows", []))
         return {
             "columns": columns,
             "rows": rows,
