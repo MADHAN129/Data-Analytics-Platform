@@ -10,6 +10,7 @@ from app.models.dashboard import Dashboard, DashboardWidget
 from app.utils.security import decode_token
 from app.services.ws_manager import manager
 from app.services.widget_poller import poll_manager, init_poller
+from app.api.deps import user_has_permission_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +38,17 @@ async def _get_user_from_token(token: str | None) -> User | None:
         db.close()
 
 
-def _get_dashboard_widgets(dashboard_id: int) -> list[DashboardWidget]:
+def _get_dashboard_for_user(dashboard_id: int, user: User) -> list[DashboardWidget]:
+    """Return a dashboard's widgets only if the user owns it (or manages all)."""
     db = SessionLocal()
     try:
-        dash = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
+        include_all = user_has_permission_by_id(db, user.id, "access.manage")
+        dash = db.query(Dashboard).filter(Dashboard.id == dashboard_id)
+        if not include_all:
+            dash = dash.filter(Dashboard.user_id == user.id)
+        dash = dash.first()
         if not dash:
-            return []
+            return None
         return list(dash.widgets)
     finally:
         db.close()
@@ -108,6 +114,11 @@ async def dashboard_websocket(
     user = await _get_user_from_token(token)
     if not user:
         await websocket.close(code=4001, reason="Unauthorized")
+        return
+
+    widgets = await _get_dashboard_widgets_async(dashboard_id, user)
+    if widgets is None:
+        await websocket.close(code=4003, reason="Dashboard not found")
         return
 
     await manager.connect(dashboard_id, websocket)
@@ -176,6 +187,6 @@ async def dashboard_websocket(
         await manager.disconnect(dashboard_id, websocket)
 
 
-async def _get_dashboard_widgets_async(dashboard_id: int) -> list[DashboardWidget]:
+async def _get_dashboard_widgets_async(dashboard_id: int, user: User) -> list[DashboardWidget]:
     from asyncio import to_thread
-    return await to_thread(_get_dashboard_widgets, dashboard_id)
+    return await to_thread(_get_dashboard_for_user, dashboard_id, user)

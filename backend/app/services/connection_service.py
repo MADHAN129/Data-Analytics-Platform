@@ -17,16 +17,25 @@ from app.mcp.mysql_connector import MySQLConnector
 from app.mcp.sqlserver_connector import SQLServerConnector
 from app.mcp.mongodb_connector import MongoDBConnector
 from app.utils.error_messages import friendly_error
+from app.utils.security import encrypt_secret, decrypt_secret
+
+
+def _scoped_query(db: Session, db_id: int, user_id: Optional[int], include_all: bool = False):
+    query = db.query(DatabaseConnection).filter(DatabaseConnection.id == db_id)
+    if user_id is not None and not include_all:
+        query = query.filter(DatabaseConnection.created_by == user_id)
+    return query
 
 
 def get_connector(db_conn: DatabaseConnection):
+    password = decrypt_secret(db_conn.password)
     if db_conn.connection_type == "mysql" or db_conn.connection_type == "mariadb":
         return MySQLConnector(
             host=db_conn.host,
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
-            password=db_conn.password,
+            password=password,
             schema=db_conn.database_name,
             ssl=db_conn.ssl,
         )
@@ -36,7 +45,7 @@ def get_connector(db_conn: DatabaseConnection):
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
-            password=db_conn.password,
+            password=password,
             schema=db_conn.schema_name,
             ssl=db_conn.ssl,
         )
@@ -46,7 +55,7 @@ def get_connector(db_conn: DatabaseConnection):
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
-            password=db_conn.password,
+            password=password,
             ssl=db_conn.ssl,
         )
     return PostgreSQLConnector(
@@ -54,7 +63,7 @@ def get_connector(db_conn: DatabaseConnection):
         port=db_conn.port,
         database=db_conn.database_name,
         user=db_conn.username,
-        password=db_conn.password,
+        password=password,
         schema=db_conn.schema_name,
         ssl=db_conn.ssl,
     )
@@ -67,8 +76,12 @@ def list_databases(
     search: Optional[str] = None,
     type_filter: Optional[str] = None,
     is_active: Optional[bool] = None,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
 ) -> tuple[list[DatabaseResponse], int]:
     query = db.query(DatabaseConnection)
+    if user_id is not None and not include_all:
+        query = query.filter(DatabaseConnection.created_by == user_id)
     if search:
         query = query.filter(
             DatabaseConnection.name.ilike(f"%{search}%")
@@ -87,8 +100,13 @@ def list_databases(
     return [DatabaseResponse.model_validate(c) for c in items], total
 
 
-def get_database(db: Session, db_id: int) -> Optional[DatabaseConnection]:
-    return db.query(DatabaseConnection).filter(DatabaseConnection.id == db_id).first()
+def get_database(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> Optional[DatabaseConnection]:
+    return _scoped_query(db, db_id, user_id, include_all).first()
 
 
 def create_database(db: Session, data: DatabaseConnectionRequest, user_id: int) -> DatabaseResponse:
@@ -101,7 +119,7 @@ def create_database(db: Session, data: DatabaseConnectionRequest, user_id: int) 
         database_name=data.database_name,
         schema_name=data.schema_name,
         username=data.username,
-        password=data.password,
+        password=encrypt_secret(data.password),
         ssl=data.ssl,
         pool_size=data.pool_size,
         timeout_seconds=data.timeout_seconds,
@@ -113,12 +131,20 @@ def create_database(db: Session, data: DatabaseConnectionRequest, user_id: int) 
     return DatabaseResponse.model_validate(conn)
 
 
-def update_database(db: Session, db_id: int, data: DatabaseConnectionUpdate) -> Optional[DatabaseResponse]:
-    conn = get_database(db, db_id)
+def update_database(
+    db: Session,
+    db_id: int,
+    data: DatabaseConnectionUpdate,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> Optional[DatabaseResponse]:
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return None
 
     update_data = data.model_dump(exclude_unset=True)
+    if "password" in update_data and update_data["password"]:
+        update_data["password"] = encrypt_secret(update_data["password"])
     for key, value in update_data.items():
         setattr(conn, key, value)
     db.commit()
@@ -126,8 +152,13 @@ def update_database(db: Session, db_id: int, data: DatabaseConnectionUpdate) -> 
     return DatabaseResponse.model_validate(conn)
 
 
-def delete_database(db: Session, db_id: int) -> bool:
-    conn = get_database(db, db_id)
+def delete_database(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> bool:
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return False
     db.delete(conn)
@@ -135,16 +166,26 @@ def delete_database(db: Session, db_id: int) -> bool:
     return True
 
 
-def test_connection(db: Session, db_id: int) -> Optional[DatabaseTestResult]:
-    conn = get_database(db, db_id)
+def test_connection(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> Optional[DatabaseTestResult]:
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)
     return connector.test_connection()
 
 
-def check_health(db: Session, db_id: int) -> Optional[ConnectionHealthResponse]:
-    conn = get_database(db, db_id)
+def check_health(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> Optional[ConnectionHealthResponse]:
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return None
 
@@ -181,11 +222,18 @@ def check_health(db: Session, db_id: int) -> Optional[ConnectionHealthResponse]:
     )
 
 
-def check_all_health(db: Session) -> BatchHealthResponse:
-    connections = db.query(DatabaseConnection).all()
+def check_all_health(
+    db: Session,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> BatchHealthResponse:
+    query = db.query(DatabaseConnection)
+    if user_id is not None and not include_all:
+        query = query.filter(DatabaseConnection.created_by == user_id)
+    connections = query.all()
     items = []
     for conn in connections:
-        result = check_health(db, conn.id)
+        result = check_health(db, conn.id, user_id, include_all)
         items.append(ConnectionHealthItem(
             id=conn.id,
             name=conn.name,
@@ -196,8 +244,13 @@ def check_all_health(db: Session) -> BatchHealthResponse:
     return BatchHealthResponse(connections=items)
 
 
-def get_schema(db: Session, db_id: int) -> Optional[SchemaResponse]:
-    conn = get_database(db, db_id)
+def get_schema(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> Optional[SchemaResponse]:
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return None
 
@@ -220,8 +273,13 @@ def get_schema(db: Session, db_id: int) -> Optional[SchemaResponse]:
         connector.close()
 
 
-def sync_schema(db: Session, db_id: int) -> Optional[SyncResult]:
-    conn = get_database(db, db_id)
+def sync_schema(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> Optional[SyncResult]:
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)
@@ -240,8 +298,13 @@ def sync_schema(db: Session, db_id: int) -> Optional[SyncResult]:
         connector.close()
 
 
-def get_tables(db: Session, db_id: int) -> Optional[list[dict]]:
-    conn = get_database(db, db_id)
+def get_tables(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+) -> Optional[list[dict]]:
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)
@@ -253,8 +316,14 @@ def get_tables(db: Session, db_id: int) -> Optional[list[dict]]:
         connector.close()
 
 
-def get_table_details(db: Session, db_id: int, table_name: str):
-    conn = get_database(db, db_id)
+def get_table_details(
+    db: Session,
+    db_id: int,
+    table_name: str,
+    user_id: Optional[int] = None,
+    include_all: bool = False,
+):
+    conn = get_database(db, db_id, user_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)

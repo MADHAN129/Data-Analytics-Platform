@@ -36,3 +36,11 @@ Thumbs.db
 
 # Project-specific
 *.log
+
+# Local tooling state
+.gstack/
+.claude/
+.claude-flow/
+.swarm/
+ruvector.db
+*.tsbuildinfo

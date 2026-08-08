@@ -38,12 +38,15 @@ def _run_with_timeout(func, seconds: int):
 
 
 def list_dashboards(
-    db: Session, skip: int = 0, limit: int = 50
+    db: Session, skip: int = 0, limit: int = 50,
+    user_id: int | None = None, include_all: bool = False,
 ) -> tuple[list[Dashboard], int]:
-    total = db.query(func.count(Dashboard.id)).scalar() or 0
+    query = db.query(Dashboard)
+    if user_id is not None and not include_all:
+        query = query.filter(Dashboard.user_id == user_id)
+    total = query.with_entities(func.count(Dashboard.id)).scalar() or 0
     dashboards = (
-        db.query(Dashboard)
-        .order_by(Dashboard.updated_at.desc())
+        query.order_by(Dashboard.updated_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -51,8 +54,14 @@ def list_dashboards(
     return dashboards, total
 
 
-def get_dashboard(db: Session, dashboard_id: int) -> Dashboard | None:
-    return db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
+def get_dashboard(
+    db: Session, dashboard_id: int,
+    user_id: int | None = None, include_all: bool = False,
+) -> Dashboard | None:
+    query = db.query(Dashboard).filter(Dashboard.id == dashboard_id)
+    if user_id is not None and not include_all:
+        query = query.filter(Dashboard.user_id == user_id)
+    return query.first()
 
 
 def create_dashboard(
@@ -167,8 +176,12 @@ def auto_generate_from_query(
     from app.services.connection_service import get_database, get_connector
     from app.services.query_service import _serialize_rows
     from app.services.llm_service import llm_service
+    from app.api.deps import user_has_permission_by_id
 
-    db_conn = get_database(db, database_id)
+    db_conn = get_database(
+        db, database_id, user_id=user_id or 0,
+        include_all=user_has_permission_by_id(db, user_id or 0, "access.manage"),
+    )
     if not db_conn:
         raise ValueError("Database connection not found")
 

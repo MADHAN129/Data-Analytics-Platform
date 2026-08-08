@@ -1,4 +1,7 @@
 """Seed script to create initial roles, permissions, and admin user."""
+import os
+import secrets
+
 from sqlalchemy import inspect, text
 
 from app.database import SessionLocal, engine, Base
@@ -139,9 +142,12 @@ def seed():
         admin_email = "admin@agentic.com"
         existing_admin = db.query(User).filter(User.email == admin_email).first()
         if not existing_admin:
+            # Prefer ADMIN_PASSWORD from the environment; otherwise generate a
+            # strong random one. Never use a hardcoded default.
+            admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(12)
             admin = User(
                 email=admin_email,
-                password_hash=get_password_hash("admin123"),
+                password_hash=get_password_hash(admin_password),
                 full_name="System Admin",
                 is_active=True,
             )
@@ -156,7 +162,10 @@ def seed():
                 db.commit()
 
         print("Seed completed successfully!")
-        print(f"Admin login: {admin_email} / admin123")
+        if not existing_admin:
+            print(f"Admin login: {admin_email} / {admin_password}")
+        else:
+            print("Admin user already exists (password not changed)")
 
     finally:
         db.close()
