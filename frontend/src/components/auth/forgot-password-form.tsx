@@ -36,14 +36,17 @@ export function ForgotPasswordForm() {
     setIsSubmitting(true)
     try {
       await api.forgotPassword(data)
-      setIsSent(true)
+      toast({
+        title: "Reset link sent",
+        description: "Redirecting to MailHog inbox...",
+      })
+      window.location.href = "http://localhost:8025"
     } catch {
       toast({
         title: "Error",
         description: "Something went wrong. Please try again.",
         variant: "destructive",
       })
-    } finally {
       setIsSubmitting(false)
     }
   }
