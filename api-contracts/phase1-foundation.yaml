@@ -1,0 +1,2767 @@
+openapi: 3.1.0
+info:
+  title: Agentic Analytics Platform - Phase 1: Foundation API
+  description: |
+    Complete API contract for Phase 1: Foundation
+    Includes: Authentication, User Management, RBAC, Audit Logging
+    
+    ## Authentication
+    - JWT Bearer token authentication
+    - OAuth2/OIDC support (Azure AD, Google)
+    - Token refresh mechanism
+    
+    ## Authorization
+    - Role-Based Access Control (RBAC)
+    - Permission-based resource access
+    - Predefined roles: SuperAdmin, Admin, Analyst, Viewer
+    
+    ## Audit
+    - All operations are logged
+    - Track who did what and when
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@agentic-analytics.com
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+  - url: https://api.agentic-analytics.com/api/v1
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: User authentication and token management
+  - name: Users
+    description: User profile and management operations
+  - name: Roles
+    description: Role management for RBAC
+  - name: Permissions
+    description: Permission management and assignment
+  - name: Audit
+    description: Audit logging and history
+  - name: Health
+    description: System health checks
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/login or /auth/register
+    
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/common/oauth2/v2.0/token
+          scopes:
+            openid: OpenID Connect
+            profile: User profile
+            email: User email
+
+  schemas:
+    # ============================================
+    # AUTHENTICATION SCHEMAS
+    # ============================================
+    
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - full_name
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@company.com"
+        password:
+          type: string
+          minLength: 8
+          description: Password (min 8 characters)
+          example: "SecurePass123!"
+        full_name:
+          type: string
+          minLength: 2
+          description: User's full name
+          example: "John Doe"
+        phone:
+          type: string
+          description: Optional phone number
+          example: "+1-555-123-4567"
+    
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@company.com"
+        password:
+          type: string
+          description: User's password
+          example: "SecurePass123!"
+        remember_me:
+          type: boolean
+          default: false
+          description: Extend token validity to 30 days
+    
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: Refresh token for obtaining new access tokens
+          example: "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4..."
+        token_type:
+          type: string
+          enum: [bearer]
+          description: Token type
+          example: "bearer"
+        expires_in:
+          type: integer
+          description: Token expiration in seconds
+          example: 3600
+        user:
+          $ref: '#/components/schemas/UserResponse'
+    
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Refresh token obtained during login
+          example: "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4..."
+    
+    OAuthCallbackRequest:
+      type: object
+      required:
+        - code
+        - state
+      properties:
+        code:
+          type: string
+          description: Authorization code from OAuth provider
+          example: "AQABAAAAAABn..."
+        state:
+          type: string
+          description: State parameter for CSRF protection
+          example: "xyzABC123"
+    
+    ChangePasswordRequest:
+      type: object
+      required:
+        - current_password
+        - new_password
+      properties:
+        current_password:
+          type: string
+          description: Current password for verification
+          example: "OldPassword123!"
+        new_password:
+          type: string
+          minLength: 8
+          description: New password (min 8 characters)
+          example: "NewSecurePass456!"
+    
+    ForgotPasswordRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email address to send reset link
+          example: "john.doe@company.com"
+    
+    ResetPasswordRequest:
+      type: object
+      required:
+        - token
+        - new_password
+      properties:
+        token:
+          type: string
+          description: Password reset token from email
+          example: "reset-token-abc123"
+        new_password:
+          type: string
+          minLength: 8
+          description: New password
+          example: "NewSecurePass789!"
+    
+    # ============================================
+    # USER SCHEMAS
+    # ============================================
+    
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: User ID
+          example: 1
+        email:
+          type: string
+          format: email
+          description: User's email
+          example: "john.doe@company.com"
+        full_name:
+          type: string
+          description: User's full name
+          example: "John Doe"
+        phone:
+          type: string
+          nullable: true
+          description: Phone number
+          example: "+1-555-123-4567"
+        avatar_url:
+          type: string
+          nullable: true
+          description: Profile picture URL
+          example: "https://example.com/avatars/john.jpg"
+        auth_provider:
+          type: string
+          enum: [local, azure_ad, google]
+          description: Authentication provider
+          example: "local"
+        is_active:
+          type: boolean
+          description: Account status
+          example: true
+        mfa_enabled:
+          type: boolean
+          description: Multi-factor authentication status
+          example: false
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleResponse'
+          description: Assigned roles
+        created_at:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          example: "2026-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-07-10T14:20:00Z"
+    
+    UpdateProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+          minLength: 2
+          description: Updated full name
+          example: "John D. Doe"
+        phone:
+          type: string
+          description: Updated phone number
+          example: "+1-555-987-6543"
+        avatar_url:
+          type: string
+          format: uri
+          description: Profile picture URL
+          example: "https://example.com/avatars/john-new.jpg"
+    
+    UserListResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        total:
+          type: integer
+          description: Total number of users
+          example: 150
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        per_page:
+          type: integer
+          description: Items per page
+          example: 20
+        pages:
+          type: integer
+          description: Total pages
+          example: 8
+    
+    # ============================================
+    # ROLE SCHEMAS
+    # ============================================
+    
+    RoleResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Role ID
+          example: 1
+        name:
+          type: string
+          description: Role name
+          example: "Admin"
+        description:
+          type: string
+          description: Role description
+          example: "Full system access with user management"
+        is_system:
+          type: boolean
+          description: System-defined role (cannot be deleted)
+          example: true
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionResponse'
+          description: Assigned permissions
+        user_count:
+          type: integer
+          description: Number of users with this role
+          example: 5
+        created_at:
+          type: string
+          format: date-time
+          description: Role creation timestamp
+          example: "2026-01-01T00:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-07-10T14:20:00Z"
+    
+    CreateRoleRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+          description: Role name
+          example: "DataAnalyst"
+        description:
+          type: string
+          maxLength: 200
+          description: Role description
+          example: "Can view and query data, create dashboards"
+        permission_ids:
+          type: array
+          items:
+            type: integer
+          description: List of permission IDs to assign
+          example: [1, 2, 3, 5, 8]
+    
+    UpdateRoleRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+          description: Updated role name
+          example: "SeniorAnalyst"
+        description:
+          type: string
+          maxLength: 200
+          description: Updated description
+          example: "Senior data analyst with full query access"
+        permission_ids:
+          type: array
+          items:
+            type: integer
+          description: Updated permission IDs
+          example: [1, 2, 3, 4, 5, 6, 7, 8]
+    
+    RoleListResponse:
+      type: object
+      properties:
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleResponse'
+        total:
+          type: integer
+          description: Total number of roles
+          example: 10
+    
+    # ============================================
+    # PERMISSION SCHEMAS
+    # ============================================
+    
+    PermissionResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Permission ID
+          example: 1
+        name:
+          type: string
+          description: Permission name
+          example: "database.create"
+        resource:
+          type: string
+          description: Resource type
+          example: "database"
+        action:
+          type: string
+          description: Allowed action
+          example: "create"
+        description:
+          type: string
+          description: Human-readable description
+          example: "Create new database connections"
+        created_at:
+          type: string
+          format: date-time
+          description: Permission creation timestamp
+          example: "2026-01-01T00:00:00Z"
+    
+    PermissionListResponse:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionResponse'
+        total:
+          type: integer
+          description: Total number of permissions
+          example: 25
+    
+    # ============================================
+    # AUDIT SCHEMAS
+    # ============================================
+    
+    AuditLogResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Audit log ID
+          example: 12345
+        user_id:
+          type: integer
+          description: User who performed the action
+          example: 1
+        user_email:
+          type: string
+          format: email
+          description: User's email
+          example: "john.doe@company.com"
+        action:
+          type: string
+          description: Action performed
+          example: "login"
+        resource_type:
+          type: string
+          description: Resource type affected
+          example: "auth"
+        resource_id:
+          type: string
+          nullable: true
+          description: Specific resource ID
+          example: null
+        details:
+          type: object
+          nullable: true
+          description: Additional action details
+          example:
+            ip_address: "192.168.1.100"
+            user_agent: "Mozilla/5.0..."
+        status:
+          type: string
+          enum: [success, failure]
+          description: Action result
+          example: "success"
+        created_at:
+          type: string
+          format: date-time
+          description: When the action occurred
+          example: "2026-07-10T14:30:00Z"
+    
+    AuditLogListResponse:
+      type: object
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogResponse'
+        total:
+          type: integer
+          description: Total matching logs
+          example: 5000
+        page:
+          type: integer
+          description: Current page
+          example: 1
+        per_page:
+          type: integer
+          description: Items per page
+          example: 50
+    
+    # ============================================
+    # HEALTH SCHEMAS
+    # ============================================
+    
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          description: Overall system status
+          example: "healthy"
+        version:
+          type: string
+          description: API version
+          example: "1.0.0"
+        timestamp:
+          type: string
+          format: date-time
+          description: Current timestamp
+          example: "2026-07-10T14:30:00Z"
+        services:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [connected, disconnected]
+              example: "connected"
+            redis:
+              type: string
+              enum: [connected, disconnected]
+              example: "connected"
+            llm:
+              type: string
+              enum: [ready, loading, error]
+              example: "ready"
+    
+    # ============================================
+    # ERROR SCHEMAS
+    # ============================================
+    
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Error message
+          example: "Invalid credentials"
+        error_code:
+          type: string
+          description: Machine-readable error code
+          example: "AUTH_INVALID_CREDENTIALS"
+        metadata:
+          type: object
+          nullable: true
+          description: Additional error context
+          example:
+            field: "email"
+    
+    ValidationErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Validation error message
+          example: "Validation failed"
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                description: Field with error
+                example: "email"
+              message:
+                type: string
+                description: Error message
+                example: "Invalid email format"
+              code:
+                type: string
+                description: Error code
+                example: "invalid_format"
+    
+    # ============================================
+    # COMMON SCHEMAS
+    # ============================================
+    
+    PaginationParams:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Page number
+        per_page:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+          description: Items per page
+    
+    SortParams:
+      type: object
+      properties:
+        sort_by:
+          type: string
+          description: Field to sort by
+          example: "created_at"
+        sort_order:
+          type: string
+          enum: [asc, desc]
+          default: desc
+          description: Sort direction
+    
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "Operation completed successfully"
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: Page number
+    
+    PerPageParam:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Items per page
+    
+    SortByParam:
+      name: sort_by
+      in: query
+      schema:
+        type: string
+      description: Field to sort by
+    
+    SortOrderParam:
+      name: sort_order
+      in: query
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
+      description: Sort direction
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not authenticated"
+            error_code: "AUTH_REQUIRED"
+    
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not enough permissions"
+            error_code: "INSUFFICIENT_PERMISSIONS"
+    
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Resource not found"
+            error_code: "NOT_FOUND"
+    
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+    
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Internal server error"
+            error_code: "INTERNAL_ERROR"
+
+# ============================================
+# PATHS
+# ============================================
+
+paths:
+  # ============================================
+  # HEALTH ENDPOINTS
+  # ============================================
+  
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Check system health and service status
+      operationId: healthCheck
+      security: []
+      responses:
+        200:
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        503:
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  
+  # ============================================
+  # AUTHENTICATION ENDPOINTS
+  # ============================================
+  
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register new user
+      description: Create a new user account with email and password
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        201:
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        400:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        409:
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Email already registered"
+                error_code: "EMAIL_EXISTS"
+        422:
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login user
+      description: Authenticate user with email and password
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        200:
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Invalid email or password"
+                error_code: "AUTH_INVALID_CREDENTIALS"
+        422:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+  
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Logout user
+      description: Invalidate current session and tokens
+      operationId: logoutUser
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+  
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      description: Obtain new access token using refresh token
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        200:
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Invalid refresh token"
+                error_code: "AUTH_INVALID_REFRESH_TOKEN"
+  
+  /auth/oauth/{provider}:
+    get:
+      tags: [Authentication]
+      summary: Initiate OAuth login
+      description: Redirect to OAuth provider for authentication
+      operationId: oauthLogin
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [azure_ad, google]
+          description: OAuth provider name
+      responses:
+        302:
+          description: Redirect to OAuth provider
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+              description: OAuth authorization URL
+        400:
+          description: Invalid provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /auth/oauth/{provider}/callback:
+    post:
+      tags: [Authentication]
+      summary: OAuth callback
+      description: Handle OAuth provider callback and complete authentication
+      operationId: oauthCallback
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [azure_ad, google]
+          description: OAuth provider name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthCallbackRequest'
+      responses:
+        200:
+          description: OAuth authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: OAuth authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /auth/forgot-password:
+    post:
+      tags: [Authentication]
+      summary: Request password reset
+      description: Send password reset email to user
+      operationId: forgotPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        200:
+          description: Reset email sent (always returns success for security)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: "If the email exists, a reset link has been sent"
+  
+  /auth/reset-password:
+    post:
+      tags: [Authentication]
+      summary: Reset password
+      description: Reset user password using token from email
+      operationId: resetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        200:
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        400:
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Invalid or expired reset token"
+                error_code: "AUTH_INVALID_TOKEN"
+  
+  /auth/change-password:
+    post:
+      tags: [Authentication]
+      summary: Change password
+      description: Change password for authenticated user
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        200:
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Current password is incorrect"
+                error_code: "AUTH_WRONG_PASSWORD"
+  
+  # ============================================
+  # USER ENDPOINTS
+  # ============================================
+  
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      description: Get authenticated user's profile information
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+    
+    put:
+      tags: [Users]
+      summary: Update current user profile
+      description: Update authenticated user's profile information
+      operationId: updateCurrentUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        200:
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        422:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+  
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users
+      description: Get paginated list of all users (Admin only)
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/SortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by name or email
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+          description: Filter by active status
+        - name: role_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by role ID
+      responses:
+        200:
+          description: Users list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+  
+  /users/{user_id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      description: Get specific user's profile (Admin only)
+      operationId: getUserById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Users]
+      summary: Update user
+      description: Update user profile (Admin only)
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        200:
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    delete:
+      tags: [Users]
+      summary: Delete user
+      description: Soft delete user account (Admin only)
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  /users/{user_id}/activate:
+    post:
+      tags: [Users]
+      summary: Activate user
+      description: Activate user account (Admin only)
+      operationId: activateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  /users/{user_id}/deactivate:
+    post:
+      tags: [Users]
+      summary: Deactivate user
+      description: Deactivate user account (Admin only)
+      operationId: deactivateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User deactivated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  /users/{user_id}/roles:
+    get:
+      tags: [Users]
+      summary: Get user roles
+      description: Get all roles assigned to a user
+      operationId: getUserRoles
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User roles retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    post:
+      tags: [Users]
+      summary: Assign role to user
+      description: Assign a role to a user (Admin only)
+      operationId: assignRoleToUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - role_id
+              properties:
+                role_id:
+                  type: integer
+                  description: Role ID to assign
+                  example: 2
+      responses:
+        200:
+          description: Role assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+        409:
+          description: Role already assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /users/{user_id}/roles/{role_id}:
+    delete:
+      tags: [Users]
+      summary: Remove role from user
+      description: Remove a role from a user (Admin only)
+      operationId: removeRoleFromUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID to remove
+      responses:
+        200:
+          description: Role removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  # ============================================
+  # ROLE ENDPOINTS
+  # ============================================
+  
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List all roles
+      description: Get all roles in the system
+      operationId: listRoles
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: include_permissions
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include permissions in response
+      responses:
+        200:
+          description: Roles list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+    
+    post:
+      tags: [Roles]
+      summary: Create new role
+      description: Create a new custom role (Admin only)
+      operationId: createRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        201:
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        400:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        409:
+          description: Role name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /roles/{role_id}:
+    get:
+      tags: [Roles]
+      summary: Get role by ID
+      description: Get specific role with details
+      operationId: getRoleById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      responses:
+        200:
+          description: Role retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Roles]
+      summary: Update role
+      description: Update role details and permissions (Admin only)
+      operationId: updateRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+      responses:
+        200:
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        400:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    delete:
+      tags: [Roles]
+      summary: Delete role
+      description: Delete custom role (cannot delete system roles)
+      operationId: deleteRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      responses:
+        200:
+          description: Role deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+        409:
+          description: Cannot delete system role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Cannot delete system role"
+                error_code: "ROLE_SYSTEM_PROTECTED"
+  
+  /roles/{role_id}/permissions:
+    get:
+      tags: [Roles]
+      summary: Get role permissions
+      description: Get all permissions assigned to a role
+      operationId: getRolePermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      responses:
+        200:
+          description: Role permissions retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    post:
+      tags: [Roles]
+      summary: Add permission to role
+      description: Add a permission to a role (Admin only)
+      operationId: addPermissionToRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - permission_id
+              properties:
+                permission_id:
+                  type: integer
+                  description: Permission ID to add
+                  example: 5
+      responses:
+        200:
+          description: Permission added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  /roles/{role_id}/permissions/{permission_id}:
+    delete:
+      tags: [Roles]
+      summary: Remove permission from role
+      description: Remove a permission from a role (Admin only)
+      operationId: removePermissionFromRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+        - name: permission_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Permission ID to remove
+      responses:
+        200:
+          description: Permission removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  # ============================================
+  # PERMISSION ENDPOINTS
+  # ============================================
+  
+  /permissions:
+    get:
+      tags: [Permissions]
+      summary: List all permissions
+      description: Get all available permissions in the system
+      operationId: listPermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: resource
+          in: query
+          schema:
+            type: string
+          description: Filter by resource type
+      responses:
+        200:
+          description: Permissions list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+  
+  /permissions/{permission_id}:
+    get:
+      tags: [Permissions]
+      summary: Get permission by ID
+      description: Get specific permission details
+      operationId: getPermissionById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: permission_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Permission ID
+      responses:
+        200:
+          description: Permission retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  # ============================================
+  # AUDIT LOG ENDPOINTS
+  # ============================================
+  
+  /audit/logs:
+    get:
+      tags: [Audit]
+      summary: List audit logs
+      description: Get paginated audit logs with filters (Admin only)
+      operationId: listAuditLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/SortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+        - name: user_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by user ID
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by action type
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+          description: Filter by resource type
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [success, failure]
+          description: Filter by status
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter from date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter to date
+      responses:
+        200:
+          description: Audit logs retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+  
+  /audit/logs/{log_id}:
+    get:
+      tags: [Audit]
+      summary: Get audit log by ID
+      description: Get specific audit log details (Admin only)
+      operationId: getAuditLogById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: log_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Audit log ID
+      responses:
+        200:
+          description: Audit log retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  /audit/stats:
+    get:
+      tags: [Audit]
+      summary: Get audit statistics
+      description: Get audit log statistics and summaries (Admin only)
+      operationId: getAuditStats
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Stats from date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Stats to date
+      responses:
+        200:
+          description: Audit statistics retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_events:
+                    type: integer
+                    description: Total number of events
+                    example: 15000
+                  successful_events:
+                    type: integer
+                    description: Successful events
+                    example: 14500
+                  failed_events:
+                    type: integer
+                    description: Failed events
+                    example: 500
+                  unique_users:
+                    type: integer
+                    description: Unique users performing actions
+                    example: 45
+                  top_actions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        action:
+                          type: string
+                          example: "login"
+                        count:
+                          type: integer
+                          example: 5000
+                  top_users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id:
+                          type: integer
+                          example: 1
+                        email:
+                          type: string
+                          example: "admin@company.com"
+                        action_count:
+                          type: integer
+                          example: 250
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+
+# ============================================
+# PATHS
+# ============================================
+
+paths:
+  # ============================================
+  # HEALTH ENDPOINTS
+  # ============================================
+  
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Check system health and service status
+      operationId: healthCheck
+      security: []
+      responses:
+        200:
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        503:
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  
+  # ============================================
+  # AUTHENTICATION ENDPOINTS
+  # ============================================
+  
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register new user
+      description: Create a new user account with email and password
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        201:
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        400:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        409:
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Email already registered"
+                error_code: "EMAIL_EXISTS"
+  
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login user
+      description: Authenticate user with email and password
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        200:
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Invalid email or password"
+                error_code: "AUTH_INVALID_CREDENTIALS"
+  
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Logout user
+      description: Invalidate current session and tokens
+      operationId: logoutUser
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+  
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      description: Obtain new access token using refresh token
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        200:
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        401:
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /auth/forgot-password:
+    post:
+      tags: [Authentication]
+      summary: Request password reset
+      description: Send password reset email to user
+      operationId: forgotPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        200:
+          description: Reset email sent (always returns success for security)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: "If the email exists, a reset link has been sent"
+  
+  /auth/reset-password:
+    post:
+      tags: [Authentication]
+      summary: Reset password
+      description: Reset user password using token from email
+      operationId: resetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        200:
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        400:
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /auth/change-password:
+    post:
+      tags: [Authentication]
+      summary: Change password
+      description: Change password for authenticated user
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        200:
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  # ============================================
+  # USER ENDPOINTS
+  # ============================================
+  
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      description: Get authenticated user's profile information
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+    
+    put:
+      tags: [Users]
+      summary: Update current user profile
+      description: Update authenticated user's profile information
+      operationId: updateCurrentUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        200:
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+  
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users
+      description: Get paginated list of all users (Admin only)
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by name or email
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+          description: Filter by active status
+        - name: role_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by role ID
+      responses:
+        200:
+          description: Users list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+  
+  /users/{user_id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      description: Get specific user's profile (Admin only)
+      operationId: getUserById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Users]
+      summary: Update user
+      description: Update user profile (Admin only)
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        200:
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    delete:
+      tags: [Users]
+      summary: Delete user
+      description: Soft delete user account (Admin only)
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  /users/{user_id}/roles:
+    get:
+      tags: [Users]
+      summary: Get user roles
+      description: Get all roles assigned to a user
+      operationId: getUserRoles
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        200:
+          description: User roles retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    post:
+      tags: [Users]
+      summary: Assign role to user
+      description: Assign a role to a user (Admin only)
+      operationId: assignRoleToUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - role_id
+              properties:
+                role_id:
+                  type: integer
+                  description: Role ID to assign
+                  example: 2
+      responses:
+        200:
+          description: Role assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+  
+  /users/{user_id}/roles/{role_id}:
+    delete:
+      tags: [Users]
+      summary: Remove role from user
+      description: Remove a role from a user (Admin only)
+      operationId: removeRoleFromUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID to remove
+      responses:
+        200:
+          description: Role removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  # ============================================
+  # ROLE ENDPOINTS
+  # ============================================
+  
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List all roles
+      description: Get all roles in the system
+      operationId: listRoles
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: include_permissions
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include permissions in response
+      responses:
+        200:
+          description: Roles list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+    
+    post:
+      tags: [Roles]
+      summary: Create new role
+      description: Create a new custom role (Admin only)
+      operationId: createRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        201:
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        400:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+  
+  /roles/{role_id}:
+    get:
+      tags: [Roles]
+      summary: Get role by ID
+      description: Get specific role with details
+      operationId: getRoleById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      responses:
+        200:
+          description: Role retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Roles]
+      summary: Update role
+      description: Update role details and permissions (Admin only)
+      operationId: updateRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+      responses:
+        200:
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        400:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+    
+    delete:
+      tags: [Roles]
+      summary: Delete role
+      description: Delete custom role (cannot delete system roles)
+      operationId: deleteRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      responses:
+        200:
+          description: Role deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  /roles/{role_id}/permissions:
+    post:
+      tags: [Roles]
+      summary: Add permission to role
+      description: Add a permission to a role (Admin only)
+      operationId: addPermissionToRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - permission_id
+              properties:
+                permission_id:
+                  type: integer
+                  description: Permission ID to add
+                  example: 5
+      responses:
+        200:
+          description: Permission added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+  
+  /roles/{role_id}/permissions/{permission_id}:
+    delete:
+      tags: [Roles]
+      summary: Remove permission from role
+      description: Remove a permission from a role (Admin only)
+      operationId: removePermissionFromRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Role ID
+        - name: permission_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Permission ID to remove
+      responses:
+        200:
+          description: Permission removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  # ============================================
+  # PERMISSION ENDPOINTS
+  # ============================================
+  
+  /permissions:
+    get:
+      tags: [Permissions]
+      summary: List all permissions
+      description: Get all available permissions in the system
+      operationId: listPermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: resource
+          in: query
+          schema:
+            type: string
+          description: Filter by resource type
+      responses:
+        200:
+          description: Permissions list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+  
+  /permissions/{permission_id}:
+    get:
+      tags: [Permissions]
+      summary: Get permission by ID
+      description: Get specific permission details
+      operationId: getPermissionById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: permission_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Permission ID
+      responses:
+        200:
+          description: Permission retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        404:
+          $ref: '#/components/responses/NotFound'
+  
+  # ============================================
+  # AUDIT LOG ENDPOINTS
+  # ============================================
+  
+  /audit/logs:
+    get:
+      tags: [Audit]
+      summary: List audit logs
+      description: Get paginated audit logs with filters (Admin only)
+      operationId: listAuditLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: user_id
+          in: query
+          schema:
+            type: integer
+          description: Filter by user ID
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by action type
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+          description: Filter by resource type
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [success, failure]
+          description: Filter by status
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter from date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter to date
+      responses:
+        200:
+          description: Audit logs retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+  
+  /audit/logs/{log_id}:
+    get:
+      tags: [Audit]
+      summary: Get audit log by ID
+      description: Get specific audit log details (Admin only)
+      operationId: getAuditLogById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: log_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Audit log ID
+      responses:
+        200:
+          description: Audit log retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogResponse'
+        401:
+          $ref: '#/components/responses/Unauthorized'
+        403:
+          $ref: '#/components/responses/Forbidden'
+        404:
+          $ref: '#/components/responses/NotFound'

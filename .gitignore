@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Build outputs
+.next/
+out/
+build/
+dist/
+*.egg-info/
+*.tsbuildinfo
+
+# Environment and sensitive files
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+agentic.db
+*.sqlite
+*.sqlite3
+*.db
+
+# Docker and OS files
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+distro/
+*.tar
