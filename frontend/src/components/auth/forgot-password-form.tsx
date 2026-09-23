@@ -60,6 +60,24 @@ export function ForgotPasswordForm() {
             If an account exists with that email, we&apos;ve sent password reset instructions.
           </CardDescription>
         </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-center">
+            <p className="text-sm font-medium text-foreground mb-2">
+              Development Mailbox (MailHog)
+            </p>
+            <p className="text-xs text-muted-foreground mb-3">
+              In this environment, outgoing emails are captured locally by MailHog.
+            </p>
+            <a
+              href="http://localhost:8025"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
+            >
+              Open Mailbox (localhost:8025) ↗
+            </a>
+          </div>
+        </CardContent>
         <CardFooter className="flex justify-center">
           <a
             href="/login"
