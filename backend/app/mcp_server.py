@@ -13,7 +13,7 @@ Usage (stdio — for Claude Desktop):
 from collections.abc import Callable
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer as FastMCP
 
 from app.config import settings
 from app.database import SessionLocal

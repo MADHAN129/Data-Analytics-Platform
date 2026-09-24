@@ -60,7 +60,7 @@ import type {
   AutoGenerateRequest,
 } from "@/types/api"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1"
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090/api/v1"
 
 class ApiClient {
   private accessToken: string | null = null

@@ -16,6 +16,7 @@ from app.mcp.postgresql_connector import PostgreSQLConnector
 from app.mcp.mysql_connector import MySQLConnector
 from app.mcp.sqlserver_connector import SQLServerConnector
 from app.mcp.mongodb_connector import MongoDBConnector
+from app.mcp.oracle_connector import OracleConnector
 from app.utils.error_messages import friendly_error
 
 
@@ -47,6 +48,16 @@ def get_connector(db_conn: DatabaseConnection):
             database=db_conn.database_name,
             user=db_conn.username,
             password=db_conn.password,
+            ssl=db_conn.ssl,
+        )
+    elif db_conn.connection_type == "oracle":
+        return OracleConnector(
+            host=db_conn.host,
+            port=db_conn.port,
+            database=db_conn.database_name,
+            user=db_conn.username,
+            password=db_conn.password,
+            schema=db_conn.schema_name or db_conn.username,
             ssl=db_conn.ssl,
         )
     return PostgreSQLConnector(

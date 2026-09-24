@@ -65,13 +65,61 @@ def _get_schema_context(db_conn: DatabaseConnection) -> str:
     try:
         connector = get_connector(db_conn)
         schema = connector.get_schema()
-        lines = []
+        lines = [
+            f"DATABASE TYPE: {db_conn.connection_type.upper()} ({db_conn.name})",
+            f"SCHEMA / OWNER: {db_conn.schema_name or 'Default'}",
+            "",
+            "AVAILABLE TABLES & STRUCTURE:"
+        ]
+        
+        pk_map = {}
+        all_table_cols = {}
         for table in schema.tables:
-            cols = ", ".join(f"{c.name} ({c.data_type})" for c in table.columns[:25])
-            lines.append(f"Table: {table.name} [{cols}]")
-        return "\n".join(lines[:50])
+            col_lines = []
+            t_name = table.name.upper()
+            all_table_cols[t_name] = set()
+            for c in table.columns:
+                c_name = c.name.upper()
+                all_table_cols[t_name].add(c_name)
+                pk_tag = " [PRIMARY KEY]" if c.is_primary_key else ""
+                if c.is_primary_key:
+                    pk_map[c_name] = t_name
+                col_lines.append(f"  - {c.name} ({c.data_type}{pk_tag})")
+            lines.append(f"Table: {table.name}")
+            lines.extend(col_lines)
+            lines.append("")
+
+        # Dynamically infer relationships between tables
+        relationships = []
+        for table in schema.tables:
+            t_upper = table.name.upper()
+            for c in table.columns:
+                c_upper = c.name.upper()
+                if c.is_primary_key:
+                    continue
+
+                # 1. Direct PK match: e.g. ID in table A matches PK ID in table B
+                if c_upper in pk_map and pk_map[c_upper] != t_upper:
+                    relationships.append(f"- {t_upper}.{c_upper} relates to {pk_map[c_upper]}.{c_upper}")
+                # 2. Key name matching across tables
+                elif c_upper.endswith(("_ID", "_CODE")):
+                    for target_t, t_cols in all_table_cols.items():
+                        if target_t != t_upper:
+                            if c_upper in t_cols:
+                                relationships.append(f"- {t_upper}.{c_upper} relates to {target_t}.{c_upper}")
+                            else:
+                                for t_col in t_cols:
+                                    if t_col in pk_map and t_col.endswith("_ID") and any(part in c_upper for part in t_col.split("_") if len(part) > 2):
+                                        relationships.append(f"- {t_upper}.{c_upper} relates to {target_t}.{t_col}")
+
+        if relationships:
+            lines.append("RELATIONSHIPS:")
+            lines.extend(sorted(set(relationships)))
+            lines.append("")
+
+        return "\n".join(lines)
     except Exception:
-        return "Schema unavailable"
+        return f"Database Type: {db_conn.connection_type}. Schema unavailable."
 
 
 def execute_natural_language_query(
@@ -89,7 +137,12 @@ def execute_natural_language_query(
     )
 
     if not sql or sql.strip() in (";", ""):
-        sql = "SELECT 1 WHERE 1=0"
+        if db_conn.connection_type == "oracle":
+            sql = "SELECT 1 FROM DUAL WHERE 1=0;"
+        elif db_conn.connection_type == "mongodb":
+            sql = "{}"
+        else:
+            sql = "SELECT 1 WHERE 1=0;"
         explanation = "Could not generate a valid SQL query from your question. Try rephrasing or being more specific."
 
     query_record = Query(
@@ -124,6 +177,15 @@ def execute_natural_language_query(
             query_record.result_rows = rows[:1000]
             query_record.row_count = row_count
             query_record.execution_time_ms = elapsed
+
+            # Synthesize executive data insights and visualization label assessment
+            if rows and columns:
+                summary_explanation = llm_service.synthesize_data_summary(
+                    data.natural_language, sql, columns, rows
+                )
+                if summary_explanation:
+                    query_record.explanation = summary_explanation
+
             break
         except Exception as e:
             error_msg = friendly_error(str(e))
@@ -320,7 +382,8 @@ def get_suggestions(db: Session, user_id: int, q: str) -> list[str]:
 
 def _get_visualization_suggestions(q: Query) -> list[VisualizationSuggestion]:
     columns = q.result_columns or []
+    rows = q.result_rows or []
     if not columns:
         return []
-    suggestions = llm_service.suggest_visualizations(columns)
+    suggestions = llm_service.suggest_visualizations(columns, rows=rows, natural_language=q.natural_language or "")
     return [VisualizationSuggestion(**s) for s in suggestions]

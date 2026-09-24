@@ -32,6 +32,7 @@ const connectionTypeColors: Record<string, string> = {
   sqlserver: "bg-red-500/10 text-red-600 border-red-200",
   mariadb: "bg-teal-500/10 text-teal-600 border-teal-200",
   mongodb: "bg-emerald-500/10 text-emerald-600 border-emerald-200",
+  oracle: "bg-red-600/10 text-red-600 border-red-200",
 }
 
 export default function DatabaseDetailPage() {

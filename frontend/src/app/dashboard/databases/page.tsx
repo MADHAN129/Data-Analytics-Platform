@@ -54,6 +54,7 @@ const connectionTypeColors: Record<ConnectionType, string> = {
   sqlserver: "bg-red-500/10 text-red-600 border-red-200",
   mariadb: "bg-teal-500/10 text-teal-600 border-teal-200",
   mongodb: "bg-emerald-500/10 text-emerald-600 border-emerald-200",
+  oracle: "bg-red-600/10 text-red-600 border-red-200",
 }
 
 const defaultPorts: Record<ConnectionType, string> = {
@@ -62,6 +63,7 @@ const defaultPorts: Record<ConnectionType, string> = {
   sqlserver: "1433",
   mariadb: "3306",
   mongodb: "27017",
+  oracle: "1521",
 }
 
 const defaultForm: DatabaseCreateRequest = {
@@ -420,6 +422,7 @@ export default function DatabasesPage() {
                 <SelectItem value="sqlserver">SQL Server</SelectItem>
                 <SelectItem value="mariadb">MariaDB</SelectItem>
                 <SelectItem value="mongodb">MongoDB</SelectItem>
+                <SelectItem value="oracle">Oracle</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -545,6 +548,7 @@ function ConnectionForm({
             <SelectItem value="sqlserver">SQL Server</SelectItem>
             <SelectItem value="mariadb">MariaDB</SelectItem>
             <SelectItem value="mongodb">MongoDB</SelectItem>
+            <SelectItem value="oracle">Oracle</SelectItem>
           </SelectContent>
         </Select>
       </div>
