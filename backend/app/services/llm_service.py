@@ -348,16 +348,65 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             sql = self._list_tables_sql(dialect, schema)
             return sql, f"Lists all accessible tables in the {dialect} database.", self._estimate_tokens(nl, sql)
 
-        # 2. Check for matching specific table names in schema
-        for tname in schema_dict.keys():
-            if re.search(r"\b" + re.escape(tname.lower()) + r"\b", nl_lower):
-                if re.search(r"\b(count|how many|total count|number of)\b", nl_lower):
-                    sql = f"SELECT COUNT(*) AS total_count FROM {tname};"
-                    return sql, f"Counts the total number of records in table '{tname}'.", self._estimate_tokens(nl, sql)
-                else:
-                    base_sql = f"SELECT * FROM {tname}"
-                    sql = self._apply_limit(base_sql, 20, dialect)
-                    return sql, f"Retrieves rows from table '{tname}'.", self._estimate_tokens(nl, sql)
+        # 2. Check for matching specific table names or keywords in schema
+        best_table = None
+        best_score = 0
+        best_cols = []
+        words = set(re.findall(r"\w+", nl_lower))
+
+        for tname, cols in schema_dict.items():
+            tname_lower = tname.lower()
+            score = 0
+            if tname_lower in nl_lower:
+                score += 15
+            t_parts = tname_lower.split("_")
+            for part in t_parts:
+                if len(part) > 2 and (part in words or any(part in w or (len(w) > 3 and w in part) for w in words)):
+                    score += 6
+            for col_name, _ in cols:
+                c_lower = col_name.lower()
+                c_parts = c_lower.split("_")
+                for cpart in c_parts:
+                    if len(cpart) > 2 and (cpart in words or any(cpart in w or (len(w) > 3 and w in cpart) for w in words)):
+                        score += 3
+            if score > best_score:
+                best_score = score
+                best_table = tname
+                best_cols = cols
+
+        if best_table and best_score >= 3:
+            tname = best_table
+            is_count = bool(re.search(r"\b(count|how many|total count|number of)\b", nl_lower))
+            is_sum = bool(re.search(r"\b(total|sum|revenue|sales|budget|spent|salary|salaries|profit)\b", nl_lower))
+            
+            group_col = None
+            for cname, _ in best_cols:
+                cn = cname.lower()
+                if any(part in words for part in cn.split("_") if len(part) > 2):
+                    if cn not in ("id", "salary", "budget", "spent", "revenue", "total_revenue", "net_profit", "operating_expenses", "units_sold", "unit_price"):
+                        group_col = cname
+                        break
+
+            num_col = None
+            for cname, dtype in best_cols:
+                cn = cname.lower()
+                if any(k in cn for k in ("revenue", "salary", "budget", "spent", "profit", "amount", "total", "cost")):
+                    num_col = cname
+                    break
+
+            if is_count and not is_sum and not group_col:
+                sql = f"SELECT COUNT(*) AS total_count FROM {tname};"
+                return sql, f"Counts total records in '{tname}'.", self._estimate_tokens(nl, sql)
+            elif is_sum and num_col and group_col:
+                sql = self._apply_limit(
+                    f"SELECT {group_col}, SUM({num_col}) AS total_{num_col.lower()}\nFROM {tname}\nGROUP BY {group_col}\nORDER BY total_{num_col.lower()} DESC",
+                    20, dialect
+                )
+                return sql, f"Calculates total {num_col} grouped by {group_col} from '{tname}'.", self._estimate_tokens(nl, sql)
+            else:
+                base_sql = f"SELECT * FROM {tname}"
+                sql = self._apply_limit(base_sql, 20, dialect)
+                return sql, f"Retrieves records from table '{tname}'.", self._estimate_tokens(nl, sql)
 
         # 3. User activity / login templates
         if re.search(r"this\s+month.*user|user.*this\s+month|current.*month.*user|user.*current.*month", nl_lower):

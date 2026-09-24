@@ -150,29 +150,48 @@ class OracleConnector:
         )
 
     def _get_tables(self, cur, is_view: bool = False) -> list[TableSchema]:
-        owner = self.schema
+        owner = self.schema if self.schema and self.schema != "PUBLIC" else self.user.upper()
+        
+        # System prefixes to filter out for cleaner application analytics
+        sys_filters = (
+            "table_name NOT LIKE '%$%' "
+            "AND table_name NOT LIKE 'LOGMNR%' "
+            "AND table_name NOT LIKE 'MVIEW$%' "
+            "AND table_name NOT LIKE 'AQ$%' "
+            "AND table_name NOT LIKE 'ROLLING$%' "
+            "AND table_name NOT LIKE 'REDO_%' "
+            "AND table_name NOT LIKE 'SCHEDULER_%' "
+            "AND table_name NOT LIKE 'OL$%' "
+            "AND table_name NOT LIKE 'LOGSTDBY$%' "
+            "AND table_name NOT IN ('HELP', 'SQLPLUS_PRODUCT_PROFILE')"
+        ) if not is_view else (
+            "view_name NOT LIKE '%$%' "
+            "AND view_name NOT LIKE 'LOGMNR%' "
+            "AND view_name NOT LIKE 'MVIEW$%' "
+            "AND view_name NOT LIKE 'AQ$%'"
+        )
+
         if is_view:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT view_name
                 FROM all_views
-                WHERE owner = :owner
+                WHERE owner = :owner AND {sys_filters}
                 ORDER BY view_name
             """, {"owner": owner})
         else:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT table_name
                 FROM all_tables
-                WHERE owner = :owner
+                WHERE owner = :owner AND {sys_filters}
                 ORDER BY table_name
             """, {"owner": owner})
 
         rows = cur.fetchall()
-        # Fallback to user_tables / user_views if all_tables returned nothing for owner
-        if not rows and owner == self.user.upper():
+        if not rows:
             if is_view:
                 cur.execute("SELECT view_name FROM user_views ORDER BY view_name")
             else:
-                cur.execute("SELECT table_name FROM user_tables ORDER BY table_name")
+                cur.execute(f"SELECT table_name FROM user_tables WHERE {sys_filters} ORDER BY table_name")
             rows = cur.fetchall()
 
         tables = []
@@ -181,7 +200,7 @@ class OracleConnector:
             columns = self._get_columns(cur, table_name)
             tables.append(TableSchema(
                 name=table_name,
-                schema_name=self.schema,
+                schema_name=owner,
                 type="view" if is_view else "table",
                 columns=columns,
             ))
