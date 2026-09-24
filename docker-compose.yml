@@ -65,14 +65,22 @@ services:
       sh -c "python seed.py && uvicorn app.main:app --host 0.0.0.0 --port 8090 --reload"
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.5.12
     container_name: agentic-ollama
+    restart: unless-stopped
     environment:
       OLLAMA_HOST: 0.0.0.0
     ports:
       - "8001:11434"
     volumes:
       - ollama_cache:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   frontend:
     build: ./frontend
