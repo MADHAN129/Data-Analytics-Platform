@@ -90,6 +90,13 @@ class DatabaseTestResult(BaseModel):
     server_version: Optional[str] = None
 
 
+class ForeignKeyInfo(BaseModel):
+    table_name: Optional[str] = None
+    column_name: str
+    referenced_table: str
+    referenced_column: str
+
+
 class ColumnInfo(BaseModel):
     name: str
     data_type: str
@@ -98,6 +105,7 @@ class ColumnInfo(BaseModel):
     is_foreign_key: bool = False
     default_value: Optional[str] = None
     max_length: Optional[int] = None
+    sample_values: Optional[list[str]] = None
 
 
 class TableSchema(BaseModel):
@@ -106,6 +114,7 @@ class TableSchema(BaseModel):
     type: str = "table"
     row_count: Optional[int] = None
     columns: list[ColumnInfo]
+    foreign_keys: list[ForeignKeyInfo] = []
 
 
 class SchemaResponse(BaseModel):
@@ -113,6 +122,7 @@ class SchemaResponse(BaseModel):
     schema_name: str
     tables: list[TableSchema]
     views: list[TableSchema]
+    foreign_keys: list[ForeignKeyInfo] = []
     last_synced_at: Optional[datetime] = None
 
 

@@ -1,0 +1,248 @@
+"""
+Automated Test Suite for Data Analyzer: Dynamic Question Answering
+-----------------------------------------------------------------
+Validates all requirements specified in:
+# Data Analyzer: Dynamic Question Answering Requirements
+
+Crucial Rule:
+NO hardcoded answers or fixed values.
+Ground truth values are extracted directly from the live database at test time.
+"""
+
+import unittest
+import math
+from app.database import SessionLocal
+from app.models.connection import DatabaseConnection
+from app.services.connection_service import get_connector
+from app.services.query_service import execute_natural_language_query
+from app.schemas.query import QueryRequest
+
+
+class TestDynamicDataAnalyzer(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.db = SessionLocal()
+        cls.db_conn = cls.db.query(DatabaseConnection).filter_by(id=2).first()
+        assert cls.db_conn is not None, "Oracle database connection (id=2) not found in PostgreSQL"
+        cls.connector = get_connector(cls.db_conn)
+        cls.oracle_conn = cls.connector.connect()
+        cls.user_id = 1
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.oracle_conn.close()
+        except Exception:
+            pass
+        cls.db.close()
+
+    def _exec_ground_truth(self, sql: str) -> list[tuple]:
+        cur = self.oracle_conn.cursor()
+        cur.execute(sql.rstrip(";"))
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    # 1. Basic Question
+    def test_01_basic_question(self):
+        """1. Basic questions (e.g., 'How many employees are there?')"""
+        gt_rows = self._exec_ground_truth("SELECT COUNT(*) FROM EMPLOYEES")
+        expected_count = gt_rows[0][0]
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="How many employees are there?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        self.assertTrue(len(resp.results.rows) >= 1)
+        actual_val = resp.results.rows[0][0]
+        self.assertEqual(int(actual_val), int(expected_count))
+
+    # 2. Filtering Question
+    def test_02_filtering_question(self):
+        """2. Filtering questions (e.g., 'Which employees earn more than $150,000?')"""
+        gt_rows = self._exec_ground_truth("SELECT COUNT(*) FROM EMPLOYEES WHERE SALARY > 150000")
+        expected_count = gt_rows[0][0]
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Which employees earn more than $150,000?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        self.assertEqual(len(resp.results.rows), expected_count)
+
+    # 3. Aggregation Question
+    def test_03_aggregation_question(self):
+        """3. Aggregation questions (e.g., 'What is the average salary in Engineering?')"""
+        gt_rows = self._exec_ground_truth("""
+            SELECT ROUND(AVG(E.SALARY), 2)
+            FROM EMPLOYEES E
+            JOIN DEPARTMENTS D ON E.DEPARTMENT_ID = D.DEPARTMENT_ID
+            WHERE D.DEPARTMENT_NAME = 'Engineering'
+        """)
+        expected_avg = float(gt_rows[0][0])
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="What is the average salary in Engineering?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        actual_avg = float(resp.results.rows[0][0])
+        self.assertAlmostEqual(actual_avg, expected_avg, delta=1.0)
+
+    # 4. Ranking Question
+    def test_04_ranking_question(self):
+        """4. Ranking questions (e.g., 'Who is the highest-paid employee?')"""
+        gt_rows = self._exec_ground_truth("""
+            SELECT FIRST_NAME, LAST_NAME, SALARY
+            FROM EMPLOYEES
+            ORDER BY SALARY DESC
+            FETCH FIRST 1 ROWS ONLY
+        """)
+        expected_first = gt_rows[0][0]
+        expected_last = gt_rows[0][1]
+        expected_salary = float(gt_rows[0][2])
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Who is the highest-paid employee?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        self.assertTrue(len(resp.results.rows) >= 1)
+        # Check that top salary or employee identity is present
+        row_str = " ".join(str(c) for c in resp.results.rows[0])
+        self.assertTrue(expected_last in row_str or math.isclose(float(resp.results.rows[0][-1]), expected_salary, abs_tol=1.0))
+
+    # 5. Calculation Question
+    def test_05_calculation_question(self):
+        """5. Calculation questions (e.g., 'What percentage of the project budget has been spent?')"""
+        gt_rows = self._exec_ground_truth("""
+            SELECT (SUM(SPENT) / SUM(BUDGET)) * 100 FROM PROJECTS
+        """)
+        expected_pct = float(gt_rows[0][0])
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="What percentage of the project budget has been spent?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        self.assertTrue(len(resp.results.rows) >= 1)
+        actual_pct = float(resp.results.rows[0][0])
+        self.assertAlmostEqual(actual_pct, expected_pct, delta=2.0)
+
+    # 6. JOIN Question
+    def test_06_join_question(self):
+        """6. JOIN questions (e.g., 'Which department has the highest project spending?')"""
+        gt_rows = self._exec_ground_truth("""
+            SELECT D.DEPARTMENT_NAME, SUM(P.SPENT) AS TOTAL_SPENT
+            FROM PROJECTS P
+            JOIN DEPARTMENTS D ON P.DEPARTMENT_ID = D.DEPARTMENT_ID
+            GROUP BY D.DEPARTMENT_NAME
+            ORDER BY TOTAL_SPENT DESC
+            FETCH FIRST 1 ROWS ONLY
+        """)
+        expected_dept = gt_rows[0][0]
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Which department has the highest project spending?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        row_str = " ".join(str(c) for c in resp.results.rows[0])
+        self.assertIn(expected_dept, row_str)
+
+    # 7. Subquery Question
+    def test_07_subquery_question(self):
+        """7. Subquery questions (e.g., 'Which employees earn more than the company average salary?')"""
+        gt_rows = self._exec_ground_truth("""
+            SELECT COUNT(*) FROM EMPLOYEES WHERE SALARY > (SELECT AVG(SALARY) FROM EMPLOYEES)
+        """)
+        expected_count = gt_rows[0][0]
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Which employees earn more than the company average salary?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        self.assertEqual(len(resp.results.rows), expected_count)
+
+    # 8. Multi-table Question
+    def test_08_multi_table_question(self):
+        """8. Multi-table analysis questions (e.g., 'Which sales representative generated the most revenue?')"""
+        gt_rows = self._exec_ground_truth("""
+            SELECT E.FIRST_NAME, E.LAST_NAME, SUM(S.TOTAL_REVENUE) AS TOTAL_REV
+            FROM SALES_RECORDS S
+            JOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID
+            GROUP BY E.FIRST_NAME, E.LAST_NAME
+            ORDER BY TOTAL_REV DESC
+            FETCH FIRST 1 ROWS ONLY
+        """)
+        expected_rep = gt_rows[0][1] # e.g. Taylor
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Which sales representative generated the most revenue?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        row_str = " ".join(str(c) for c in resp.results.rows[0])
+        self.assertIn(expected_rep, row_str)
+
+    # 9. Financial Analysis Question
+    def test_09_financial_question(self):
+        """9. Financial analysis questions (e.g., 'Which quarter had the highest net profit?')"""
+        gt_rows = self._exec_ground_truth("""
+            SELECT QUARTER, NET_PROFIT FROM COMPANY_FINANCIALS ORDER BY NET_PROFIT DESC FETCH FIRST 1 ROWS ONLY
+        """)
+        expected_quarter = gt_rows[0][0]
+        expected_profit = float(gt_rows[0][1])
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Which quarter had the highest net profit?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        row_str = " ".join(str(c) for c in resp.results.rows[0])
+        self.assertIn(expected_quarter, row_str)
+
+    # 10. Complex Business Analysis
+    def test_10_complex_business_analysis(self):
+        """10. Complex cross-table business analysis"""
+        req = QueryRequest(
+            database_id=self.db_conn.id, 
+            natural_language="Provide an executive summary: Department with highest employee salary cost, Project with highest budget utilization, Sales representative with highest revenue, Quarter with highest net profit"
+        )
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        self.assertTrue(len(resp.results.rows) >= 1)
+        self.assertIn("### 🎯 Direct Answer", resp.explanation)
+        self.assertIn("### 📊 Key Calculated Values", resp.explanation)
+
+    # 11. Unrelated Question Handling
+    def test_11_unrelated_question(self):
+        """11. Unrelated questions (e.g., 'Who won the FIFA World Cup?') handled without executing SQL"""
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Who won the FIFA World Cup?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNone(resp.generated_sql)
+        self.assertEqual(len(resp.results.rows if resp.results else []), 0)
+        self.assertIn("This question cannot be answered from the connected database", resp.explanation)
+        self.assertIn("Available Topics", resp.explanation)
+
+    # 12. Ambiguous Question Handling
+    def test_12_ambiguous_question(self):
+        """12. Ambiguous questions (e.g., 'Who is the best?') handled cleanly with metric suggestions"""
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Who is the best?")
+        resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
+
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNone(resp.generated_sql)
+        self.assertEqual(len(resp.results.rows if resp.results else []), 0)
+        self.assertIn("ambiguous", resp.explanation.lower())
+        self.assertIn("Suggested Metrics", resp.explanation)
+
+
+if __name__ == "__main__":
+    unittest.main()

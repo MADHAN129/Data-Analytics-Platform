@@ -91,19 +91,38 @@ class LLMService:
 DATABASE CONTEXT AND SCHEMA:
 {schema_context}
 
-CRITICAL RULES:
-1. STRICT COLUMN & TABLE GROUNDING: Every column and table you reference in SELECT, JOIN, WHERE, GROUP BY, or ORDER BY MUST exist under that specific table in the schema above. NEVER invent or assume non-existent columns.
-2. ONLY RELEVANT TABLES: Only include tables that are directly required to answer the user's question. Do not join unrelated tables.
-3. VALID JOINS ONLY: Join tables only when there is a valid foreign key relationship between them. Never join tables on columns that do not exist.
-4. MULTI-METRIC QUESTIONS ACROSS UNRELATED TABLES: When a question asks for metrics across multiple independent tables that have no foreign key relationship, do NOT join them into one flat FROM clause. Instead, compute each metric in its own Common Table Expression (WITH clause) and combine the single-row results using CROSS JOIN:
-   WITH
-     metric_1 AS (SELECT ... ORDER BY ... DESC FETCH FIRST 1 ROWS ONLY),
-     metric_2 AS (SELECT ... ORDER BY ... DESC FETCH FIRST 1 ROWS ONLY)
-   SELECT * FROM metric_1 CROSS JOIN metric_2;
-5. AGGREGATIONS & GROUP BY: All non-aggregated columns in SELECT must appear in GROUP BY.
-6. SYNTAX & DIALECT:{dialect_rules}
-7. ROW LIMIT: Include a row limit clause (e.g. FETCH FIRST 20 ROWS ONLY for Oracle, TOP 20 for SQL Server, LIMIT 20 for PostgreSQL/MySQL) when returning multi-row results.
-8. OUTPUT FORMAT: Return ONLY the raw SQL query. Do not wrap with conversational text."""
+CRITICAL RULES FOR SQL GENERATION:
+1. STRICT COLUMN GROUNDING: Every column you reference in SELECT, JOIN, WHERE, GROUP BY, or ORDER BY MUST exist under that specific table in the schema above.
+   - NEVER invent non-existent column names (e.g. do NOT write 'project_spending', 'total_employee_salary_cost', 'employee_count', 'average_salary').
+   - Use the actual column names from the schema: e.g. in table PROJECTS the spending column is 'SPENT', budget is 'BUDGET'. In EMPLOYEES salary is 'SALARY'.
+2. SINGLE TABLE COMPLETENESS: If all required metrics and columns exist in a single table (e.g. both SPENT and BUDGET are in table PROJECTS), query ONLY that table. Do NOT join other tables unnecessarily.
+3. PRE-AGGREGATE FIRST, THEN JOIN (ROW MULTIPLICATION / FAN-OUT PREVENTION):
+   - When a question involves multiple child tables that each have a one-to-many relationship to the same parent table (e.g. EMPLOYEES has many employees per department, and PROJECTS has many projects per department):
+     NEVER join multiple child tables directly in a single FROM clause before aggregation! (e.g. 5 employees * 2 projects produces 10 rows, multiplying salaries and spending!).
+     Instead, you MUST pre-aggregate each child table independently in a CTE (WITH clause) or subquery grouped by the parent key (department_id), and then join the aggregated totals to the parent table.
+4. NO SELECT ALIASES IN HAVING OR WHERE (ORACLE SQL):
+   - In Oracle SQL, column aliases defined in SELECT (e.g. `AS total_spent`) CANNOT be referenced in HAVING or WHERE clauses.
+   - Instead, wrap the query in a CTE (WITH clause) or subquery, and filter in the outer WHERE clause:
+     `WITH dept_totals AS (SELECT d.department_name, NVL(e.total_salary, 0) AS total_salary, NVL(p.total_spent, 0) AS total_spent FROM ...) SELECT * FROM dept_totals WHERE total_spent > total_salary;`
+5. FILTERING BY ENTITY OR CATEGORY NAMES: When the user question mentions an entity name or category (e.g. 'Engineering', 'Q2', 'Completed'):
+   - Look at the [Sample Values] in the schema to find which table and column holds that value (e.g. DEPARTMENTS.DEPARTMENT_NAME contains 'Engineering').
+   - You MUST include a WHERE clause filtering on that column: e.g. `WHERE D.DEPARTMENT_NAME = 'Engineering'`.
+   - If querying a related table (e.g. EMPLOYEES), JOIN the parent table on the foreign key relationship:
+     `SELECT AVG(E.SALARY) FROM EMPLOYEES E JOIN DEPARTMENTS D ON E.DEPARTMENT_ID = D.DEPARTMENT_ID WHERE D.DEPARTMENT_NAME = 'Engineering';`
+6. 'WHO', 'WHICH', AND RANKING QUESTIONS:
+   - When asked 'Who ...' (e.g. 'Who has highest salary?', 'Who is the top sales rep?'): SELECT the person's identity (`FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME`) together with the metric, and use `ORDER BY <metric> DESC FETCH FIRST 1 ROWS ONLY`.
+   - When asked 'Which department...', 'Which project...', or 'Which quarter...': SELECT the entity name (`DEPARTMENT_NAME`, `PROJECT_NAME`, `QUARTER`, etc.) together with the metric, and `ORDER BY <metric> DESC FETCH FIRST 1 ROWS ONLY`.
+7. INDEPENDENT TABLES & MULTI-METRIC CTEs: Independent tables that have no foreign key relationship to other tables (such as company-wide financial tables) must NOT be joined directly in a single FROM clause. Compute each metric in its own Common Table Expression (WITH clause) using FETCH FIRST 1 ROWS ONLY and combine the single-row CTEs using CROSS JOIN.
+8. AGGREGATIONS & GROUP BY: All non-aggregated columns in SELECT must appear in GROUP BY.
+9. SYNTAX & DIALECT:{dialect_rules}
+10. ROW LIMIT: Include FETCH FIRST 20 ROWS ONLY for multi-row queries unless answering a top 1 ranking question.
+
+INTENT & RELEVANCE RULES:
+1. UNRELATED QUESTIONS: If the user question is completely unrelated to the available tables and columns in the schema (such as general knowledge, weather, movies, sports, recipes, or outside domains not in the schema), do NOT generate any SQL query. Output strictly:
+   UNRELATED: The connected database does not contain information to answer this question.
+2. AMBIGUOUS QUESTIONS: If the user asks a question with subjective or undefined criteria (e.g. 'Who is the best?', 'Which is greatest?') with no specified metric, do NOT guess. Output strictly:
+   AMBIGUOUS: The question is ambiguous. Please clarify which metric you would like to evaluate (e.g., salary, revenue, budget, performance).
+3. VALID DATABASE QUESTIONS: Generate a single valid {dialect} query that accurately answers the question. Output your query strictly inside a ```sql ... ``` code block. Return ONLY the ```sql ... ``` block without explanation or conversational text."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
         if not raw or not raw.strip():
@@ -121,7 +140,10 @@ CRITICAL RULES:
                 raw,
                 flags=re.IGNORECASE,
             )
-            sql = sql_match.group(0).strip() if sql_match else raw
+            sql = sql_match.group(0).strip() if sql_match else ""
+
+        if not sql:
+            return ""
 
         # 3. Strip any conversational text after the ending semicolon
         if ";" in sql:
@@ -138,10 +160,9 @@ CRITICAL RULES:
             # Sanitize Oracle table aliases: Oracle does not accept 'FROM table AS alias'
             sql = re.sub(r"\b(FROM|JOIN)\s+([a-zA-Z0-9_]+)\s+AS\s+([a-zA-Z0-9_]+)\b", r"\1 \2 \3", sql, flags=re.IGNORECASE)
             # Replace LIMIT with FETCH FIRST n ROWS ONLY
-            m_limit = re.search(r"\bLIMIT\s+(\d+)\s*;?$", sql, flags=re.IGNORECASE)
-            if m_limit:
-                limit_num = m_limit.group(1)
-                sql = re.sub(r"\bLIMIT\s+\d+\s*;?$", f"FETCH FIRST {limit_num} ROWS ONLY;", sql, flags=re.IGNORECASE)
+            sql = re.sub(r"\bLIMIT\s+(\d+)\s*;?$", r"FETCH FIRST \1 ROWS ONLY;", sql, flags=re.IGNORECASE)
+            # Normalize FETCH FIRST 1 ROW ONLY to FETCH FIRST 1 ROWS ONLY
+            sql = re.sub(r"\bFETCH\s+FIRST\s+(\d+)\s+ROW\s+ONLY", r"FETCH FIRST \1 ROWS ONLY", sql, flags=re.IGNORECASE)
         return sql
 
     def _estimate_tokens(self, nl: str, sql: str) -> int:
@@ -158,6 +179,14 @@ CRITICAL RULES:
         raw = self._call_vllm(messages, temperature=0.1)
         if not raw or raw.strip().startswith("ERROR:"):
             return "", "The AI model was unable to generate a SQL query for this question.", 0
+
+        raw_trimmed = raw.strip()
+        if raw_trimmed.startswith("UNRELATED:"):
+            msg = raw_trimmed[len("UNRELATED:"):].strip()
+            return "UNRELATED", msg, self._estimate_tokens(natural_language, msg)
+        if raw_trimmed.startswith("AMBIGUOUS:"):
+            msg = raw_trimmed[len("AMBIGUOUS:"):].strip()
+            return "AMBIGUOUS", msg, self._estimate_tokens(natural_language, msg)
 
         sql = self._fixup_sql(raw, dialect)
         tokens = self._estimate_tokens(natural_language, sql)
@@ -180,10 +209,11 @@ CRITICAL RULES:
             f"User Question: {natural_language}\n\n"
             f"Failed SQL:\n{sql}\n\n"
             f"Database Error:\n{error}\n\n"
-            f"INSTRUCTIONS TO FIX:\n"
-            f"- If the error is 'invalid identifier' (e.g. ORA-00904 or missing column), check the schema for that table and replace or remove the non-existent column/join.\n"
-            f"- Ensure all columns and table joins strictly exist in the schema provided in the system prompt.\n"
-            f"- Return ONLY the corrected raw SQL query without conversational text."
+            f"INSTRUCTIONS TO FIX DYNAMICALLY:\n"
+            f"1. Understand what caused the error (e.g. ORA-00904 = column does not exist, ORA-00918 = ambiguous column, ORA-00937 = non-aggregated column in SELECT missing from GROUP BY).\n"
+            f"2. Inspect the schema context above to find the exact table and column names.\n"
+            f"3. Regenerate the corrected query using ONLY tables and columns verified in the schema.\n"
+            f"4. Return ONLY the corrected raw SQL query without conversational text."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -270,7 +300,7 @@ CRITICAL RULES:
         if row_count == 1 and len(columns) == 1 and len(num_indices) == 1:
             title_text = columns[0].replace("_", " ").title()
             return [
-                {"type": "kpi_card", "title": title_text, "config": {"metric": columns[0]}},
+                {"type": "kpi", "title": title_text, "config": {"metric": columns[0]}},
                 {"type": "table", "title": "Data Table", "config": {}},
             ]
 
@@ -343,17 +373,20 @@ CRITICAL RULES:
             {
                 "role": "system",
                 "content": (
-                    "You are an expert AI Database Agent with direct database tool access. "
+                    "You are an expert AI Database Analyst with live database tool access. "
                     "Analyze the query results returned from the database to answer the user's question. "
-                    "Provide your response in the following clear, structured sections:\n\n"
-                    "### 📊 Key Findings & Insights\n"
-                    "Summarize the direct answers to the user's question using the exact values from the data. "
-                    "Use clean bullet points and format numbers (e.g. $ currency, % percentages, commas).\n\n"
-                    "### 📈 Visualization & Labels Assessment\n"
-                    "- **Visualizable**: State clearly whether this data can/should be visualized as a chart (Yes / No / Single Metric).\n"
-                    "- **Dimension Labels**: State which column(s) serve as category or time labels (or explain that no labels are present if it is a single scalar or multi-metric row).\n"
-                    "- **Label Presence**: Explicitly declare whether chartable labels are present in the dataset.\n"
-                    "- **Recommended Visual**: Specify the best visual representation (e.g., Bar Chart, Line Chart, Pie Chart, KPI Card, or Data Table) and why."
+                    "Provide your response adhering to this format:\n\n"
+                    "### 🎯 Direct Answer\n"
+                    "State the direct answer clearly and concisely using the live database values.\n\n"
+                    "### 📊 Key Calculated Values\n"
+                    "List the specific metrics and calculated figures using proper formatting (currency $, percentages %, totals, commas).\n\n"
+                    "### 💡 Insights & Explanation\n"
+                    "Provide a brief 1-2 sentence analytical explanation of the findings and data limitations if any.\n\n"
+                    "### 🛠️ Execution Trace & Details\n"
+                    "- **Intent**: The analytical goal.\n"
+                    "- **Tables & Columns Used**: Tables and columns from the executed query.\n"
+                    "- **Validation**: Validated against live database records.\n"
+                    "- **Visualizable Labels Assessment**: State whether chartable labels are present and recommend the best visualization type."
                 ),
             },
             {

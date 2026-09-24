@@ -70,6 +70,8 @@ services:
     restart: unless-stopped
     environment:
       OLLAMA_HOST: 0.0.0.0
+      OLLAMA_NUM_PARALLEL: 1
+      OLLAMA_MAX_LOADED_MODELS: 1
     ports:
       - "8001:11434"
     volumes:

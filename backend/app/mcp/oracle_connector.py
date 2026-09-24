@@ -5,7 +5,9 @@ from typing import Optional
 
 import oracledb
 
-from app.schemas.connection import ColumnInfo, TableSchema, SchemaResponse, DatabaseTestResult, SyncResult
+from app.schemas.connection import (
+    ColumnInfo, TableSchema, SchemaResponse, DatabaseTestResult, SyncResult, ForeignKeyInfo,
+)
 from app.utils.error_messages import friendly_error
 
 
@@ -105,18 +107,62 @@ class OracleConnector:
                 message=friendly_error(str(e)),
             )
 
+    def _get_foreign_keys(self, cur) -> list[ForeignKeyInfo]:
+        owner = self.schema if self.schema and self.schema != "PUBLIC" else self.user.upper()
+        try:
+            cur.execute("""
+                SELECT 
+                    a.table_name, 
+                    a_col.column_name, 
+                    c_pk.table_name AS ref_table, 
+                    r_col.column_name AS ref_col
+                FROM all_constraints a
+                JOIN all_cons_columns a_col 
+                  ON a.constraint_name = a_col.constraint_name AND a.owner = a_col.owner
+                JOIN all_constraints c_pk 
+                  ON a.r_constraint_name = c_pk.constraint_name AND a.r_owner = c_pk.owner
+                JOIN all_cons_columns r_col 
+                  ON c_pk.constraint_name = r_col.constraint_name AND c_pk.owner = r_col.owner 
+                 AND a_col.position = r_col.position
+                WHERE a.constraint_type = 'R' 
+                  AND a.owner = :owner
+                  AND a.table_name NOT LIKE '%$%'
+                  AND a.table_name NOT LIKE 'AQ$%'
+                  AND a.table_name NOT LIKE 'MVIEW$%'
+                ORDER BY a.table_name, a_col.position
+            """, {"owner": owner})
+            rows = cur.fetchall()
+            return [
+                ForeignKeyInfo(
+                    table_name=r[0],
+                    column_name=r[1],
+                    referenced_table=r[2],
+                    referenced_column=r[3],
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
     def get_schema(self) -> SchemaResponse:
         conn = self.connect()
         try:
             cur = conn.cursor()
-            tables = self._get_tables(cur, is_view=False)
-            views = self._get_tables(cur, is_view=True)
+            fks = self._get_foreign_keys(cur)
+            fk_by_table: dict[str, list[ForeignKeyInfo]] = {}
+            for fk in fks:
+                if fk.table_name:
+                    fk_by_table.setdefault(fk.table_name.upper(), []).append(fk)
+
+            tables = self._get_tables(cur, is_view=False, fk_by_table=fk_by_table)
+            views = self._get_tables(cur, is_view=True, fk_by_table=fk_by_table)
             cur.close()
             return SchemaResponse(
                 database_id=0,
                 schema_name=self.schema,
                 tables=tables,
                 views=views,
+                foreign_keys=fks,
                 last_synced_at=None,
             )
         finally:
@@ -149,8 +195,9 @@ class OracleConnector:
             synced_at=datetime.utcnow(),
         )
 
-    def _get_tables(self, cur, is_view: bool = False) -> list[TableSchema]:
+    def _get_tables(self, cur, is_view: bool = False, fk_by_table: dict = None) -> list[TableSchema]:
         owner = self.schema if self.schema and self.schema != "PUBLIC" else self.user.upper()
+        fk_by_table = fk_by_table or {}
         
         # System prefixes to filter out for cleaner application analytics
         sys_filters = (
@@ -197,18 +244,33 @@ class OracleConnector:
         tables = []
         for row in rows:
             table_name = row[0]
-            columns = self._get_columns(cur, table_name)
+            table_fks = fk_by_table.get(table_name.upper(), [])
+            columns = self._get_columns(cur, table_name, table_fks=table_fks)
+
+            row_count = None
+            if not is_view:
+                try:
+                    cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    rc_row = cur.fetchone()
+                    if rc_row:
+                        row_count = int(rc_row[0])
+                except Exception:
+                    pass
+
             tables.append(TableSchema(
                 name=table_name,
                 schema_name=owner,
                 type="view" if is_view else "table",
+                row_count=row_count,
                 columns=columns,
+                foreign_keys=table_fks,
             ))
         return tables
 
-    def _get_columns(self, cur, table_name: str) -> list[ColumnInfo]:
+    def _get_columns(self, cur, table_name: str, table_fks: list[ForeignKeyInfo] = None) -> list[ColumnInfo]:
         owner = self.schema
         pk_columns = set()
+        fk_columns = {fk.column_name.upper() for fk in (table_fks or [])}
         try:
             cur.execute("""
                 SELECT cols.column_name
@@ -254,14 +316,31 @@ class OracleConnector:
 
         columns = []
         for row in rows:
+            col_name = row[0]
+            col_type = str(row[1])
             default_val = str(row[3]).strip() if row[3] is not None else None
+            is_pk = col_name in pk_columns
+            is_fk = col_name in fk_columns
+
+            sample_values = None
+            if ("VARCHAR" in col_type.upper() or "CHAR" in col_type.upper()) and (row[4] or 0) <= 255 and not is_pk and not is_fk:
+                try:
+                    cur.execute(f"SELECT DISTINCT {col_name} FROM {table_name} WHERE {col_name} IS NOT NULL FETCH FIRST 10 ROWS ONLY")
+                    distinct_vals = [str(sv[0]) for sv in cur.fetchall() if sv[0] is not None]
+                    if distinct_vals and len(distinct_vals) <= 10:
+                        sample_values = distinct_vals
+                except Exception:
+                    pass
+
             columns.append(ColumnInfo(
-                name=row[0],
-                data_type=str(row[1]),
+                name=col_name,
+                data_type=col_type,
                 nullable=row[2] == "Y",
-                is_primary_key=row[0] in pk_columns,
+                is_primary_key=is_pk,
+                is_foreign_key=is_fk,
                 default_value=default_val,
                 max_length=row[4],
+                sample_values=sample_values,
             ))
         return columns
 
