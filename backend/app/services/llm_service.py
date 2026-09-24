@@ -95,10 +95,33 @@ CRITICAL RULES:
 1. STRICT COLUMN GROUNDING: Every column you reference in SELECT, JOIN, WHERE, GROUP BY, or ORDER BY MUST exist under that specific table in the schema above. NEVER invent or assume columns (e.g. do not guess CUSTOMER_ID, DEPARTMENT_ID, or STATUS on a table unless it is explicitly listed under that table in the schema).
 2. ONLY RELEVANT TABLES: Only include tables that are directly required to answer the user's question. Do not join unrelated tables.
 3. VALID JOINS ONLY: Join tables only when there is a valid primary key / foreign key relationship between them. Never join tables on columns that do not exist.
-4. AGGREGATIONS & GROUP BY: All non-aggregated columns in SELECT must appear in GROUP BY.
-5. SYNTAX & DIALECT:{dialect_rules}
-6. ROW LIMIT: Include a row limit clause (e.g. FETCH FIRST 20 ROWS ONLY for Oracle, TOP 20 for SQL Server, LIMIT 20 for PostgreSQL/MySQL) when returning multi-row results.
-7. OUTPUT FORMAT: Return ONLY the raw SQL query. Do not wrap in conversational sentences."""
+4. MULTI-METRIC / EXECUTIVE SUMMARY QUESTIONS: When a question asks for multiple separate top metrics or summaries across independent tables (e.g. top department by salary, top project by budget utilization, top sales rep by revenue, top quarter by net profit), DO NOT join these tables together in a flat FROM clause. Instead, write a CTE for EACH requested metric, sort each CTE with ORDER BY ... DESC FETCH FIRST 1 ROWS ONLY, and in the final SELECT, CROSS JOIN ALL defined CTEs so all requested metrics are returned together:
+   Example:
+   WITH
+     top_dept AS (
+       SELECT D.DEPARTMENT_NAME, SUM(E.SALARY) AS TOTAL_SALARY
+       FROM EMPLOYEES E JOIN DEPARTMENTS D ON E.DEPARTMENT_ID = D.DEPARTMENT_ID
+       GROUP BY D.DEPARTMENT_NAME ORDER BY TOTAL_SALARY DESC FETCH FIRST 1 ROWS ONLY
+     ),
+     top_proj AS (
+       SELECT PROJECT_NAME, BUDGET, SPENT, ROUND((SPENT/NULLIF(BUDGET,0))*100, 2) AS BUDGET_UTILIZATION_PCT
+       FROM PROJECTS ORDER BY BUDGET_UTILIZATION_PCT DESC FETCH FIRST 1 ROWS ONLY
+     ),
+     top_rep AS (
+       SELECT E.FIRST_NAME || ' ' || E.LAST_NAME AS TOP_REP, SUM(S.TOTAL_REVENUE) AS TOTAL_REVENUE
+       FROM SALES_RECORDS S JOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID
+       GROUP BY E.FIRST_NAME, E.LAST_NAME ORDER BY TOTAL_REVENUE DESC FETCH FIRST 1 ROWS ONLY
+     ),
+     top_quarter AS (
+       SELECT FISCAL_YEAR, QUARTER, REVENUE, OPERATING_EXPENSES, NET_PROFIT, PROFIT_MARGIN_PCT
+       FROM COMPANY_FINANCIALS ORDER BY NET_PROFIT DESC FETCH FIRST 1 ROWS ONLY
+     )
+   SELECT * FROM top_dept CROSS JOIN top_proj CROSS JOIN top_rep CROSS JOIN top_quarter;
+5. BUDGET UTILIZATION FORMULA: Use (SPENT / NULLIF(BUDGET, 0)) * 100 or ROUND((SPENT / NULLIF(BUDGET, 0)) * 100, 2).
+6. AGGREGATIONS & GROUP BY: All non-aggregated columns in SELECT must appear in GROUP BY.
+7. SYNTAX & DIALECT:{dialect_rules}
+8. ROW LIMIT: Include a row limit clause (e.g. FETCH FIRST 20 ROWS ONLY for Oracle, TOP 20 for SQL Server, LIMIT 20 for PostgreSQL/MySQL) when returning multi-row results.
+9. OUTPUT FORMAT: Return ONLY the raw SQL query. Do not wrap in conversational sentences."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
         if not raw or not raw.strip():
@@ -312,6 +335,34 @@ CRITICAL RULES:
 
         suggestions.append({"type": "table", "title": "Data Table", "config": {}})
         return suggestions
+
+    def synthesize_data_summary(self, natural_language: str, columns: list[str], rows: list[list]) -> str:
+        """
+        Synthesize rich, executive data insights directly from the executed query dataset.
+        """
+        if not rows or not columns:
+            return f"Query returned no records for: {natural_language}"
+
+        sample_rows = rows[:10]
+        data_preview = f"Columns: {', '.join(columns)}\nSample Rows:\n" + "\n".join(str(r) for r in sample_rows)
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an executive AI data analyst. Given the user question and the query results, "
+                    "provide a clear, structured, and insightful summary answering the user question with the exact figures and metrics. "
+                    "Use clean bullet points and format numbers cleanly (e.g. currency $, percentages %, commas for thousands). "
+                    "Be concise, direct, and professional. Do NOT include raw SQL or code blocks."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"User Question: {natural_language}\n\nQuery Results Data:\n{data_preview}\n\nPlease provide the executive analysis summary based on this data:",
+            },
+        ]
+        summary = self._call_vllm(messages, temperature=0.2, max_tokens=512)
+        return summary.strip() if summary else f"Query completed with {len(rows)} result rows."
 
 
 llm_service = LLMService()
