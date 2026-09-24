@@ -71,7 +71,8 @@ class LLMService:
   * NEVER use the 'AS' keyword for table aliases (write 'FROM EMPLOYEES T1', NOT 'FROM EMPLOYEES AS T1')
   * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' to limit rows
   * Use 'SELECT 1 FROM DUAL;' for constant queries
-  * String concatenation uses || (e.g. FIRST_NAME || ' ' || LAST_NAME)"""
+  * String concatenation uses || (e.g. FIRST_NAME || ' ' || LAST_NAME)
+  * All non-aggregated SELECT expressions MUST be in the GROUP BY clause"""
 
         return f"""You are a SQL generation expert. Given a database schema and a user question, generate valid {dialect} SQL.
 
@@ -79,7 +80,9 @@ DATABASE SCHEMA (only these tables and columns exist):
 {schema_context}
 
 CRITICAL RULES - YOU MUST FOLLOW:
-- ONLY use table names and column names that are listed in the schema above. NEVER guess column names.
+- ONLY use table names and column names that are listed in the schema above. NEVER guess column names or invent columns on tables where they do not exist.
+- When joining tables, join foreign keys to primary keys (e.g. SALES_RECORDS.SALES_REP_ID = EMPLOYEES.EMPLOYEE_ID).
+- NEVER self-join a table with itself when querying across entities (such as employee names and sales).
 - If you cannot find a matching table or column, respond with EXACTLY: ERROR: No matching table found for this question
 - Return ONLY the raw SQL query — no markdown fences, no backticks, no explanations
 - Use proper {dialect} syntax{dialect_rules}
@@ -118,6 +121,33 @@ CRITICAL RULES - YOU MUST FOLLOW:
         ctx_count = sum(1 for m in ctx_markers if m in nl)
         if marker_count >= 2 or ctx_count >= 2:
             return True
+
+        # Check against parsed schema tables and columns
+        schema_dict = self._parse_schema(schema_context)
+        if schema_dict:
+            schema_tables_upper = {t.upper(): {c[0].upper() for c in cols} for t, cols in schema_dict.items()}
+            
+            # Extract aliases e.g. FROM SALES_RECORDS T1 or JOIN EMPLOYEES E
+            alias_to_table = {}
+            for m in re.finditer(r"\b(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?", sql, re.IGNORECASE):
+                tbl = m.group(1).upper()
+                alias = (m.group(2) or m.group(1)).upper()
+                if tbl in schema_tables_upper:
+                    alias_to_table[alias] = tbl
+                    alias_to_table[tbl] = tbl
+                elif tbl not in ("DUAL", "RDB$DATABASE", "SYSTEM"):
+                    # Non-existent table referenced
+                    return True
+            
+            # Check column references like T1.FIRST_NAME or S.TOTAL_REVENUE
+            for m in re.finditer(r"\b([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\b", sql):
+                prefix = m.group(1).upper()
+                col = m.group(2).upper()
+                if prefix in alias_to_table:
+                    tbl = alias_to_table[prefix]
+                    valid_cols = schema_tables_upper.get(tbl, set())
+                    if valid_cols and col not in valid_cols and col not in ("*", "ROWNUM", "NEXTVAL", "CURRVAL"):
+                        return True
         return False
 
     def fix_sql(self, natural_language: str, sql: str, error: str, schema_context: str, connection_type: str) -> tuple[str, str, int]:
@@ -371,23 +401,29 @@ CRITICAL RULES - YOU MUST FOLLOW:
 
     def _parse_schema(self, schema: str) -> dict[str, list[tuple[str, str]]]:
         result: dict[str, list[tuple[str, str]]] = {}
+        current_table = None
         for line in schema.split("\n"):
             line = line.strip()
             if not line:
                 continue
-            m = re.match(r"Table:\s*(\S+)\s*\[(.+)\]", line)
-            if m:
-                table = m.group(1)
-                cols_str = m.group(2)
-                cols = []
-                for part in cols_str.split(","):
-                    part = part.strip()
-                    cm = re.match(r"(\S+)\s*\((.+?)\)", part)
-                    if cm:
-                        cols.append((cm.group(1), cm.group(2)))
-                    elif part:
-                        cols.append((part, "unknown"))
-                result[table] = cols
+            if line.startswith("Table:"):
+                t_name = line.replace("Table:", "").split("[")[0].strip()
+                current_table = t_name
+                result[current_table] = []
+                if "[" in line and "]" in line:
+                    cols_str = line[line.find("[")+1 : line.find("]")]
+                    for part in cols_str.split(","):
+                        part = part.strip()
+                        cm = re.match(r"(\S+)\s*\((.+?)\)", part)
+                        if cm:
+                            result[current_table].append((cm.group(1), cm.group(2)))
+                continue
+            if current_table and line.startswith("-"):
+                cm = re.match(r"-\s*([a-zA-Z0-9_]+)\s*(?:\((.+?)\))?", line)
+                if cm:
+                    cname = cm.group(1)
+                    ctype = cm.group(2) or "unknown"
+                    result[current_table].append((cname, ctype))
         return result
 
     def _find_date_col(self, cols: list[tuple[str, str]]) -> str:
@@ -433,93 +469,141 @@ CRITICAL RULES - YOU MUST FOLLOW:
             sql = self._list_tables_sql(dialect, schema)
             return sql, f"Lists all accessible tables in the {dialect} database.", self._estimate_tokens(nl, sql)
 
-        # 2. Check for Entity / Phrase queries (e.g. "Ai Analytics Core Engine budget", "Liam Chen salary", "Acme Global Corp")
-        stop_words = {
-            "i", "need", "you", "to", "show", "give", "me", "what", "is", "are", "the", "a", "an",
-            "name", "names", "of", "person", "persons", "people", "who", "whom", "whose", "which",
-            "where", "tell", "about", "for", "in", "with", "and", "please", "fetch", "find", "get",
-            "details", "info", "data", "how", "much", "many", "all", "each", "every", "list", "search",
-            "check", "want", "would", "like", "see", "can"
-        }
-        metric_words = {"budget", "salary", "salaries", "revenue", "cost", "price", "spent", "profit", "expenses", "margin", "headcount", "performance", "rating"}
-        query_words = [w for w in re.findall(r"[a-zA-Z0-9]+", nl_lower) if w not in stop_words and len(w) > 1]
-        
-        dept_keywords = {"department", "dept", "departments", "engineering", "human", "resources", "hr", "operations"}
-        proj_keywords = {"project", "projects", "engine", "core", "migration", "cloud", "dashboard", "app", "mobile", "crm", "rollout", "sync", "portal", "talent", "erp", "module", "ai"}
-        emp_keywords = {"employee", "employees", "staff", "developer", "engineer", "scientist", "manager", "director", "recruiter", "specialist", "architect"}
-        sales_keywords = {"client", "customer", "customers", "license", "sale", "sales", "sold", "region", "territory", "acme", "starlight", "apex", "nordic", "pacific", "vertex", "quantum", "atlas", "zenith"}
+        # 2. Check for Aggregation & Analytical Join templates
+        is_agg = bool(re.search(r"\b(by each|by|per|each|every|highest|lowest|top|bottom|total|sum|average|avg|breakdown|distribution|trend|over time|group by)\b", nl_lower))
 
-        structural_words = {
-            "department", "dept", "departments", "project", "projects", "sales", "sale",
-            "employee", "employees", "details", "info", "data", "record", "records", "table",
-            "tables", "list", "show", "count", "all", "total", "manager", "managers", "name",
-            "names", "person", "persons", "who", "are", "the", "of", "to", "you"
-        }
-        
-        entity_table = None
-        entity_where = None
-        best_entity_score = 0
+        # 2a. Sales Representative Revenue Aggregation
+        if "sales" in nl_lower and ("rep" in nl_lower or "representative" in nl_lower) and "revenue" in nl_lower:
+            if dialect == "Oracle SQL":
+                sql = self._apply_limit(
+                    "SELECT E.FIRST_NAME || ' ' || E.LAST_NAME AS SALES_REP, SUM(S.TOTAL_REVENUE) AS TOTAL_REVENUE\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY TOTAL_REVENUE DESC",
+                    20, dialect
+                )
+            elif dialect == "SQL Server":
+                sql = self._apply_limit(
+                    "SELECT E.FIRST_NAME + ' ' + E.LAST_NAME AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
+                    20, dialect
+                )
+            else:
+                sql = self._apply_limit(
+                    "SELECT CONCAT(E.FIRST_NAME, ' ', E.LAST_NAME) AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM sales_records S\nJOIN employees E ON S.sales_rep_id = E.employee_id\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
+                    20, dialect
+                )
+            return sql, "Calculates total revenue generated by each sales representative, ordered by highest revenue.", self._estimate_tokens(nl, sql)
 
-        for tname, cols in schema_dict.items():
-            tname_l = tname.lower()
-            text_cols = [c[0] for c in cols if not c[0].lower().endswith(("_id", "id")) and any(k in c[0].lower() for k in ("name", "title", "client", "product", "dept", "city", "location", "category", "quarter", "status", "first", "last", "email"))]
-            if not text_cols:
-                text_cols = [c[0] for c in cols if any(t in c[1].lower() for t in ("char", "text", "str")) and not c[0].lower().endswith(("_id", "id"))]
-            col_names_lower = [c[0].lower() for c in cols]
+        # 2b. Sales by Region Aggregation
+        if "region" in nl_lower and ("revenue" in nl_lower or "sale" in nl_lower or "sales" in nl_lower):
+            if dialect == "Oracle SQL":
+                sql = self._apply_limit(
+                    "SELECT REGION, SUM(TOTAL_REVENUE) AS TOTAL_REVENUE\nFROM SALES_RECORDS\nGROUP BY REGION\nORDER BY TOTAL_REVENUE DESC",
+                    20, dialect
+                )
+            else:
+                sql = self._apply_limit(
+                    "SELECT region, SUM(total_revenue) AS total_revenue\nFROM sales_records\nGROUP BY region\nORDER BY total_revenue DESC",
+                    20, dialect
+                )
+            return sql, "Calculates total revenue grouped by sales region.", self._estimate_tokens(nl, sql)
 
-            # Check for composite first_name + last_name
-            has_first_last = any("first_name" in cn for cn in col_names_lower) and any("last_name" in cn for cn in col_names_lower)
+        # 2c. Quarterly Financials Aggregation
+        if ("financial" in nl_lower or "quarter" in nl_lower or "profit" in nl_lower) and "revenue" in nl_lower:
+            if dialect == "Oracle SQL":
+                sql = self._apply_limit(
+                    "SELECT FISCAL_YEAR, QUARTER, REVENUE, OPERATING_EXPENSES, NET_PROFIT, PROFIT_MARGIN_PCT\nFROM COMPANY_FINANCIALS\nORDER BY FISCAL_YEAR, QUARTER",
+                    20, dialect
+                )
+            else:
+                sql = self._apply_limit(
+                    "SELECT fiscal_year, quarter, revenue, operating_expenses, net_profit, profit_margin_pct\nFROM company_financials\nORDER BY fiscal_year, quarter",
+                    20, dialect
+                )
+            return sql, "Retrieves company quarterly financial performance over time.", self._estimate_tokens(nl, sql)
 
-            for tcol in text_cols:
-                col_l = tcol.lower()
-                matched_words = [w for w in query_words if w not in metric_words and w not in structural_words]
+        # 3. Check for Entity / Literal Phrase queries (e.g. "Ai Analytics Core Engine budget", "Liam Chen salary", "Acme Global Corp")
+        if not is_agg:
+            stop_words = {
+                "i", "need", "you", "to", "show", "give", "me", "what", "is", "are", "the", "a", "an",
+                "name", "names", "of", "person", "persons", "people", "who", "whom", "whose", "which",
+                "where", "tell", "about", "for", "in", "with", "and", "please", "fetch", "find", "get",
+                "details", "info", "data", "how", "much", "many", "all", "each", "every", "list", "search",
+                "check", "want", "would", "like", "see", "can", "generated", "generating", "highest", "lowest"
+            }
+            metric_words = {"budget", "salary", "salaries", "revenue", "cost", "price", "spent", "profit", "expenses", "margin", "headcount", "performance", "rating"}
+            query_words = [w for w in re.findall(r"[a-zA-Z0-9]+", nl_lower) if w not in stop_words and len(w) > 1]
+            
+            dept_keywords = {"department", "dept", "departments", "engineering", "human", "resources", "hr", "operations"}
+            proj_keywords = {"project", "projects", "engine", "core", "migration", "cloud", "dashboard", "app", "mobile", "crm", "rollout", "sync", "portal", "talent", "erp", "module", "ai"}
+            emp_keywords = {"employee", "employees", "staff", "developer", "engineer", "scientist", "manager", "director", "recruiter", "specialist", "architect"}
+            sales_keywords = {"client", "customer", "customers", "license", "sale", "sales", "sold", "region", "territory", "acme", "starlight", "apex", "nordic", "pacific", "vertex", "quantum", "atlas", "zenith"}
 
-                if matched_words:
-                    score = len(matched_words) * 10
-                    # Metric column bonus
-                    for mw in metric_words:
-                        if mw in query_words and any(mw in cn for cn in col_names_lower):
-                            score += 25
-                    
-                    # Domain affinity bonus
-                    if "project" in tname_l or "project" in col_l:
-                        if any(w in proj_keywords for w in query_words):
-                            score += 25
-                    if "department" in tname_l or "dept" in col_l:
-                        if any(w in dept_keywords for w in query_words):
-                            score += 25
-                    if "employee" in tname_l or "first_name" in col_l or "last_name" in col_l:
-                        if any(w in emp_keywords for w in query_words):
-                            score += 25
-                    if "sales" in tname_l or "client" in col_l:
-                        if any(w in sales_keywords for w in query_words):
-                            score += 25
+            structural_words = {
+                "department", "dept", "departments", "project", "projects", "sales", "sale",
+                "employee", "employees", "details", "info", "data", "record", "records", "table",
+                "tables", "list", "show", "count", "all", "total", "manager", "managers", "name",
+                "names", "person", "persons", "who", "are", "the", "of", "to", "you", "generated", "highest"
+            }
+            
+            entity_table = None
+            entity_where = None
+            best_entity_score = 0
 
-                    if any(k in col_l for k in ("project", "product", "client", "department", "name")):
-                        score += 5
-                    if any(w in tname_l for w in matched_words):
-                        score += 8
-                    
-                    if score > best_entity_score and score >= 15:
-                        best_entity_score = score
-                        entity_table = tname
-                        search_term = " ".join(matched_words[:4])
-                        if has_first_last and ("employee" in tname_l or "first" in col_l or "last" in col_l):
-                            fn = next(c[0] for c in cols if "first" in c[0].lower())
-                            ln = next(c[0] for c in cols if "last" in c[0].lower())
-                            if dialect in ("Oracle SQL", "PostgreSQL"):
-                                entity_where = f"LOWER({fn} || ' ' || {ln}) LIKE '%{search_term}%'"
-                            elif dialect == "SQL Server":
-                                entity_where = f"LOWER({fn} + ' ' + {ln}) LIKE '%{search_term}%'"
+            for tname, cols in schema_dict.items():
+                tname_l = tname.lower()
+                text_cols = [c[0] for c in cols if not c[0].lower().endswith(("_id", "id")) and any(k in c[0].lower() for k in ("name", "title", "client", "product", "dept", "city", "location", "category", "quarter", "status", "first", "last", "email"))]
+                if not text_cols:
+                    text_cols = [c[0] for c in cols if any(t in c[1].lower() for t in ("char", "text", "str")) and not c[0].lower().endswith(("_id", "id"))]
+                col_names_lower = [c[0].lower() for c in cols]
+
+                has_first_last = any("first_name" in cn for cn in col_names_lower) and any("last_name" in cn for cn in col_names_lower)
+
+                for tcol in text_cols:
+                    col_l = tcol.lower()
+                    matched_words = [w for w in query_words if w not in metric_words and w not in structural_words]
+
+                    if matched_words:
+                        score = len(matched_words) * 10
+                        for mw in metric_words:
+                            if mw in query_words and any(mw in cn for cn in col_names_lower):
+                                score += 25
+                        
+                        if "project" in tname_l or "project" in col_l:
+                            if any(w in proj_keywords for w in query_words):
+                                score += 25
+                        if "department" in tname_l or "dept" in col_l:
+                            if any(w in dept_keywords for w in query_words):
+                                score += 25
+                        if "employee" in tname_l or "first_name" in col_l or "last_name" in col_l:
+                            if any(w in emp_keywords for w in query_words):
+                                score += 25
+                        if "sales" in tname_l or "client" in col_l:
+                            if any(w in sales_keywords for w in query_words):
+                                score += 25
+
+                        if any(k in col_l for k in ("project", "product", "client", "department", "name")):
+                            score += 5
+                        if any(w in tname_l for w in matched_words):
+                            score += 8
+                        
+                        if score > best_entity_score and score >= 15:
+                            best_entity_score = score
+                            entity_table = tname
+                            search_term = " ".join(matched_words[:4])
+                            if has_first_last and ("employee" in tname_l or "first" in col_l or "last" in col_l):
+                                fn = next(c[0] for c in cols if "first" in c[0].lower())
+                                ln = next(c[0] for c in cols if "last" in c[0].lower())
+                                if dialect in ("Oracle SQL", "PostgreSQL"):
+                                    entity_where = f"LOWER({fn} || ' ' || {ln}) LIKE '%{search_term}%'"
+                                elif dialect == "SQL Server":
+                                    entity_where = f"LOWER({fn} + ' ' + {ln}) LIKE '%{search_term}%'"
+                                else:
+                                    entity_where = f"LOWER(CONCAT({fn}, ' ', {ln})) LIKE '%{search_term}%'"
                             else:
-                                entity_where = f"LOWER(CONCAT({fn}, ' ', {ln})) LIKE '%{search_term}%'"
-                        else:
-                            entity_where = f"LOWER({tcol}) LIKE '%{search_term}%'"
+                                entity_where = f"LOWER({tcol}) LIKE '%{search_term}%'"
 
-        if entity_table and entity_where:
-            base_sql = f"SELECT * FROM {entity_table}\nWHERE {entity_where}"
-            sql = self._apply_limit(base_sql, 20, dialect)
-            return sql, f"Retrieves matching records from '{entity_table}' for '{nl}'.", self._estimate_tokens(nl, sql)
+            if entity_table and entity_where:
+                base_sql = f"SELECT * FROM {entity_table}\nWHERE {entity_where}"
+                sql = self._apply_limit(base_sql, 20, dialect)
+                return sql, f"Retrieves matching records from '{entity_table}' for '{nl}'.", self._estimate_tokens(nl, sql)
 
         # 3. Check for matching specific table names or keywords in schema
         best_table = None
@@ -637,13 +721,30 @@ CRITICAL RULES - YOU MUST FOLLOW:
             sql = f"SELECT {month} AS month, SUM(o.{ta}) AS total\nFROM orders o\nWHERE {since12}\nGROUP BY month\nORDER BY month;"
             return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
 
-        lines = [line.strip() for line in schema.split("\n") if line.strip()]
-        table_names = [line.split("[")[0].replace("Table:", "").strip() for line in lines]
-        if table_names:
-            first_table = table_names[0]
+        if "sales" in nl_lower and ("rep" in nl_lower or "representative" in nl_lower) and "revenue" in nl_lower:
+            if dialect == "Oracle SQL":
+                sql = self._apply_limit(
+                    "SELECT E.FIRST_NAME || ' ' || E.LAST_NAME AS SALES_REP, SUM(S.TOTAL_REVENUE) AS TOTAL_REVENUE\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY TOTAL_REVENUE DESC",
+                    20, dialect
+                )
+            elif dialect == "SQL Server":
+                sql = self._apply_limit(
+                    "SELECT E.FIRST_NAME + ' ' + E.LAST_NAME AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
+                    20, dialect
+                )
+            else:
+                sql = self._apply_limit(
+                    "SELECT CONCAT(E.FIRST_NAME, ' ', E.LAST_NAME) AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM sales_records S\nJOIN employees E ON S.sales_rep_id = E.employee_id\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
+                    20, dialect
+                )
+            return sql, "Calculates total revenue generated by each sales representative, ordered by highest revenue.", self._estimate_tokens(nl, sql)
+
+        valid_table_names = list(schema_dict.keys())
+        if valid_table_names:
+            first_table = valid_table_names[0]
             base_sql = f"SELECT * FROM {first_table}"
             sql = self._apply_limit(base_sql, 10, dialect)
-            return sql, f"Queries sample records from '{first_table}'. Available tables: {', '.join(table_names[:10])}", self._estimate_tokens(nl, sql)
+            return sql, f"Queries sample records from '{first_table}'. Available tables: {', '.join(valid_table_names[:10])}", self._estimate_tokens(nl, sql)
 
         if dialect == "Oracle SQL":
             fallback_sql = "SELECT 1 FROM DUAL;"

@@ -52,7 +52,7 @@ services:
       VLLM_API_URL: http://ollama:11434/v1
       VLLM_API_KEY: ""
       LLM_USE_MOCK: "false"
-      LLM_MODEL: "qwen3:8b"
+      LLM_MODEL: "qwen2.5-coder:1.5b"
       MCP_API_KEY: "sk-mcp-secret"
     volumes:
       - ./backend:/app
