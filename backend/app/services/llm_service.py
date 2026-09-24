@@ -348,7 +348,84 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             sql = self._list_tables_sql(dialect, schema)
             return sql, f"Lists all accessible tables in the {dialect} database.", self._estimate_tokens(nl, sql)
 
-        # 2. Check for matching specific table names or keywords in schema
+        # 2. Check for Entity / Phrase queries (e.g. "Ai Analytics Core Engine budget", "Liam Chen salary", "Acme Global Corp")
+        stop_words = {"i", "need", "a", "an", "the", "show", "give", "me", "what", "is", "are", "tell", "about", "for", "in", "of", "with", "and", "please", "fetch", "find", "get", "details", "info", "data", "how", "much", "many"}
+        metric_words = {"budget", "salary", "salaries", "revenue", "cost", "price", "spent", "profit", "expenses", "margin", "headcount", "performance", "rating"}
+        query_words = [w for w in re.findall(r"[a-zA-Z0-9]+", nl_lower) if w not in stop_words and len(w) > 1]
+        
+        dept_keywords = {"department", "dept", "departments", "engineering", "human", "resources", "hr", "operations"}
+        proj_keywords = {"project", "projects", "engine", "core", "migration", "cloud", "dashboard", "app", "mobile", "crm", "rollout", "sync", "portal", "talent", "erp", "module", "ai"}
+        emp_keywords = {"employee", "employees", "staff", "developer", "engineer", "scientist", "manager", "director", "recruiter", "specialist", "architect"}
+        sales_keywords = {"client", "customer", "customers", "license", "sale", "sales", "sold", "region", "territory", "acme", "starlight", "apex", "nordic", "pacific", "vertex", "quantum", "atlas", "zenith"}
+
+        structural_words = {"department", "dept", "departments", "project", "projects", "sales", "sale", "employee", "employees", "details", "info", "data", "record", "records", "table", "tables", "list", "show", "count", "all", "total"}
+        
+        entity_table = None
+        entity_where = None
+        best_entity_score = 0
+
+        for tname, cols in schema_dict.items():
+            tname_l = tname.lower()
+            text_cols = [c[0] for c in cols if not c[0].lower().endswith(("_id", "id")) and any(k in c[0].lower() for k in ("name", "title", "client", "product", "dept", "city", "location", "category", "quarter", "status", "first", "last", "email"))]
+            if not text_cols:
+                text_cols = [c[0] for c in cols if any(t in c[1].lower() for t in ("char", "text", "str")) and not c[0].lower().endswith(("_id", "id"))]
+            col_names_lower = [c[0].lower() for c in cols]
+
+            # Check for composite first_name + last_name
+            has_first_last = any("first_name" in cn for cn in col_names_lower) and any("last_name" in cn for cn in col_names_lower)
+
+            for tcol in text_cols:
+                col_l = tcol.lower()
+                matched_words = [w for w in query_words if w not in metric_words and w not in structural_words]
+
+                if matched_words:
+                    score = len(matched_words) * 10
+                    # Metric column bonus
+                    for mw in metric_words:
+                        if mw in query_words and any(mw in cn for cn in col_names_lower):
+                            score += 25
+                    
+                    # Domain affinity bonus
+                    if "project" in tname_l or "project" in col_l:
+                        if any(w in proj_keywords for w in query_words):
+                            score += 25
+                    if "department" in tname_l or "dept" in col_l:
+                        if any(w in dept_keywords for w in query_words):
+                            score += 25
+                    if "employee" in tname_l or "first_name" in col_l or "last_name" in col_l:
+                        if any(w in emp_keywords for w in query_words):
+                            score += 25
+                    if "sales" in tname_l or "client" in col_l:
+                        if any(w in sales_keywords for w in query_words):
+                            score += 25
+
+                    if any(k in col_l for k in ("project", "product", "client", "department", "name")):
+                        score += 5
+                    if any(w in tname_l for w in matched_words):
+                        score += 8
+                    
+                    if score > best_entity_score and score >= 15:
+                        best_entity_score = score
+                        entity_table = tname
+                        search_term = " ".join(matched_words[:4])
+                        if has_first_last and ("employee" in tname_l or "first" in col_l or "last" in col_l):
+                            fn = next(c[0] for c in cols if "first" in c[0].lower())
+                            ln = next(c[0] for c in cols if "last" in c[0].lower())
+                            if dialect in ("Oracle SQL", "PostgreSQL"):
+                                entity_where = f"LOWER({fn} || ' ' || {ln}) LIKE '%{search_term}%'"
+                            elif dialect == "SQL Server":
+                                entity_where = f"LOWER({fn} + ' ' + {ln}) LIKE '%{search_term}%'"
+                            else:
+                                entity_where = f"LOWER(CONCAT({fn}, ' ', {ln})) LIKE '%{search_term}%'"
+                        else:
+                            entity_where = f"LOWER({tcol}) LIKE '%{search_term}%'"
+
+        if entity_table and entity_where:
+            base_sql = f"SELECT * FROM {entity_table}\nWHERE {entity_where}"
+            sql = self._apply_limit(base_sql, 20, dialect)
+            return sql, f"Retrieves matching records from '{entity_table}' for '{nl}'.", self._estimate_tokens(nl, sql)
+
+        # 3. Check for matching specific table names or keywords in schema
         best_table = None
         best_score = 0
         best_cols = []
