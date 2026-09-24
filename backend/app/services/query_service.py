@@ -65,13 +65,29 @@ def _get_schema_context(db_conn: DatabaseConnection) -> str:
     try:
         connector = get_connector(db_conn)
         schema = connector.get_schema()
-        lines = []
+        lines = [
+            f"DATABASE TYPE: {db_conn.connection_type.upper()} ({db_conn.name})",
+            f"SCHEMA / OWNER: {db_conn.schema_name or 'Default'}",
+            "",
+            "AVAILABLE TABLES & STRUCTURE:"
+        ]
         for table in schema.tables:
-            cols = ", ".join(f"{c.name} ({c.data_type})" for c in table.columns[:25])
-            lines.append(f"Table: {table.name} [{cols}]")
-        return "\n".join(lines[:50])
+            col_lines = []
+            for c in table.columns:
+                pk_tag = " [PRIMARY KEY]" if c.is_primary_key else ""
+                col_lines.append(f"  - {c.name} ({c.data_type}{pk_tag})")
+            lines.append(f"Table: {table.name}")
+            lines.extend(col_lines)
+            lines.append("")
+
+        if any(t.name in ("EMPLOYEES", "DEPARTMENTS", "PROJECTS", "SALES_RECORDS") for t in schema.tables):
+            lines.append("RELATIONSHIPS:")
+            lines.append("- EMPLOYEES.DEPARTMENT_ID relates to DEPARTMENTS.DEPARTMENT_ID")
+            lines.append("- PROJECTS.DEPARTMENT_ID relates to DEPARTMENTS.DEPARTMENT_ID")
+            lines.append("- SALES_RECORDS.SALES_REP_ID relates to EMPLOYEES.EMPLOYEE_ID")
+        return "\n".join(lines)
     except Exception:
-        return "Schema unavailable"
+        return f"Database Type: {db_conn.connection_type}. Schema unavailable."
 
 
 def execute_natural_language_query(
@@ -325,7 +341,8 @@ def get_suggestions(db: Session, user_id: int, q: str) -> list[str]:
 
 def _get_visualization_suggestions(q: Query) -> list[VisualizationSuggestion]:
     columns = q.result_columns or []
+    rows = q.result_rows or []
     if not columns:
         return []
-    suggestions = llm_service.suggest_visualizations(columns)
+    suggestions = llm_service.suggest_visualizations(columns, rows=rows, natural_language=q.natural_language or "")
     return [VisualizationSuggestion(**s) for s in suggestions]

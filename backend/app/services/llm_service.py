@@ -217,21 +217,91 @@ CRITICAL RULES - YOU MUST FOLLOW:
                 pass
         return self._fallback_optimize(sql)
 
-    def suggest_visualizations(self, columns: list[str]) -> list[dict]:
+    def suggest_visualizations(self, columns: list[str], rows: list[list] = None, natural_language: str = "") -> list[dict]:
+        if not columns or not rows:
+            return [{"type": "table", "title": "Data Table", "config": {}}]
+
+        row_count = len(rows)
+
+        def is_col_numeric(idx: int) -> bool:
+            num_count = 0
+            for r in rows[:15]:
+                if idx < len(r) and r[idx] is not None:
+                    try:
+                        float(r[idx])
+                        num_count += 1
+                    except (ValueError, TypeError):
+                        pass
+            return num_count >= min(len(rows), 2)
+
+        num_indices = [i for i in range(len(columns)) if is_col_numeric(i)]
+        text_indices = [i for i in range(len(columns)) if i not in num_indices]
+
+        # 1. Single scalar number (e.g. COUNT(*), SUM(revenue))
+        if row_count == 1 and len(columns) == 1 and len(num_indices) == 1:
+            title_text = columns[0].replace("_", " ").title()
+            return [
+                {"type": "kpi_card", "title": title_text, "config": {"metric": columns[0]}},
+                {"type": "table", "title": "Data Table", "config": {}}
+            ]
+
+        # 2. Single detail record with many fields (e.g. a specific project or employee)
+        if row_count == 1:
+            return [{"type": "table", "title": "Record Details", "config": {}}]
+
+        # 3. Pure text list (e.g. list of table names or employee names) -> No meaningful chart can be drawn
+        if not num_indices:
+            return [{"type": "table", "title": "Data Table", "config": {}}]
+
+        # 4. Multi-row tabular dataset with numerical metrics
         suggestions = []
-        if len(columns) >= 2:
+
+        # Find the best numeric metric column (prefer real metric fields over ID numbers or years)
+        metric_col = columns[num_indices[0]]
+        for ni in num_indices:
+            cn = columns[ni].lower()
+            if any(k in cn for k in ("revenue", "profit", "budget", "salary", "spent", "sales", "amount", "total", "cost", "units", "score", "margin", "headcount")):
+                metric_col = columns[ni]
+                break
+            elif not cn.endswith(("_id", "id", "_code", "year")):
+                metric_col = columns[ni]
+
+        # Find the best category / dimension column (prefer names/labels over IDs)
+        dim_col = columns[text_indices[0]] if text_indices else columns[0]
+        for ti in text_indices:
+            if any(k in columns[ti].lower() for k in ("name", "title", "region", "status", "category", "quarter", "month", "year", "dept", "city")):
+                dim_col = columns[ti]
+                break
+
+        is_time_series = any(k in dim_col.lower() for k in ("date", "time", "month", "quarter", "year", "day"))
+        y_label = metric_col.replace("_", " ").title()
+        x_label = dim_col.replace("_", " ").title()
+
+        if is_time_series:
+            suggestions.append({
+                "type": "line_chart",
+                "title": f"{y_label} Trend by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "asc"}
+            })
+            suggestions.append({
+                "type": "area_chart",
+                "title": f"{y_label} Growth Area ({x_label})",
+                "config": {"x": dim_col, "y": metric_col}
+            })
+        else:
             suggestions.append({
                 "type": "bar_chart",
-                "title": f"{columns[0]} by {columns[1]}",
-                "config": {"x": columns[1], "y": columns[0], "sort": "desc"},
+                "title": f"{y_label} by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "desc"}
             })
-            suggestions.append({
-                "type": "pie_chart",
-                "title": f"{columns[0]} distribution",
-                "config": {"label": columns[1], "value": columns[0]},
-            })
-        if len(columns) >= 1:
-            suggestions.append({"type": "table", "title": "Data Table", "config": {}})
+            if row_count <= 8:
+                suggestions.append({
+                    "type": "pie_chart",
+                    "title": f"{y_label} Share by {x_label}",
+                    "config": {"label": dim_col, "value": metric_col}
+                })
+
+        suggestions.append({"type": "table", "title": "Data Table", "config": {}})
         return suggestions
 
     # -- fallback / mock methods (used when vLLM is unavailable) --
