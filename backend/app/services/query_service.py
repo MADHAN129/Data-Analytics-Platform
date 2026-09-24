@@ -98,22 +98,19 @@ def _get_schema_context(db_conn: DatabaseConnection) -> str:
                 if c.is_primary_key:
                     continue
 
-                # 1. Direct PK match: e.g. DEPARTMENT_ID -> DEPARTMENTS
+                # 1. Direct PK match: e.g. ID in table A matches PK ID in table B
                 if c_upper in pk_map and pk_map[c_upper] != t_upper:
                     relationships.append(f"- {t_upper}.{c_upper} relates to {pk_map[c_upper]}.{c_upper}")
-                # 2. Semantic FK matching (e.g. SALES_REP_ID -> EMPLOYEES.EMPLOYEE_ID)
-                elif c_upper.endswith(("_REP_ID", "_EMPLOYEE_ID", "REP_ID", "EMPLOYEE_ID")):
-                    if "EMPLOYEES" in all_table_cols and "EMPLOYEE_ID" in all_table_cols["EMPLOYEES"]:
-                        relationships.append(f"- {t_upper}.{c_upper} relates to EMPLOYEES.EMPLOYEE_ID")
-                # 3. Same column name in target entity table
+                # 2. Key name matching across tables
                 elif c_upper.endswith(("_ID", "_CODE")):
-                    prefix = c_upper.rsplit("_", 1)[0]
                     for target_t, t_cols in all_table_cols.items():
-                        if target_t != t_upper and (target_t.startswith(prefix) or prefix in target_t):
+                        if target_t != t_upper:
                             if c_upper in t_cols:
                                 relationships.append(f"- {t_upper}.{c_upper} relates to {target_t}.{c_upper}")
-                            elif f"{prefix}_ID" in t_cols:
-                                relationships.append(f"- {t_upper}.{c_upper} relates to {target_t}.{prefix}_ID")
+                            else:
+                                for t_col in t_cols:
+                                    if t_col in pk_map and t_col.endswith("_ID") and any(part in c_upper for part in t_col.split("_") if len(part) > 2):
+                                        relationships.append(f"- {t_upper}.{c_upper} relates to {target_t}.{t_col}")
 
         if relationships:
             lines.append("RELATIONSHIPS:")
