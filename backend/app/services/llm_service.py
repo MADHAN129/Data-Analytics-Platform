@@ -97,15 +97,11 @@ If the user's question requires multiple distinct pieces of information (e.g., "
         if not sql or sql.strip() in (";", ""):
             return True
         nl = sql.lower()
-        if "information_schema.tables" in nl or "information_schema.columns" in nl or "information_schema.schemata" in nl:
-            return True
         table_markers = ["table:", " tables ", " columns "]
         marker_count = sum(1 for m in table_markers if m in nl)
         ctx_markers = ["(character varying)", "(integer)", "(timestamp", "(jsonb)", "(boolean)"]
         ctx_count = sum(1 for m in ctx_markers if m in nl)
         if marker_count >= 2 or ctx_count >= 2:
-            return True
-        if "select table_name from" in nl or "select column_name from" in nl:
             return True
         return False
 
@@ -233,6 +229,8 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             return f"DATE({col})"
         if dialect == "SQL Server":
             return f"CAST({col} AS DATE)"
+        if dialect == "Oracle SQL":
+            return f"TRUNC({col})"
         return f"DATE_TRUNC('day', {col})"
 
     def _date_trunc_month(self, col: str, dialect: str) -> str:
@@ -240,6 +238,8 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             return f"DATE_FORMAT({col}, '%Y-%m-01')"
         if dialect == "SQL Server":
             return f"DATEFROMPARTS(YEAR({col}), MONTH({col}), 1)"
+        if dialect == "Oracle SQL":
+            return f"TRUNC({col}, 'MM')"
         return f"DATE_TRUNC('month', {col})"
 
     def _current_date(self, dialect: str) -> str:
@@ -247,6 +247,8 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             return "CURDATE()"
         if dialect == "SQL Server":
             return "GETDATE()"
+        if dialect == "Oracle SQL":
+            return "SYSDATE"
         return "CURRENT_DATE"
 
     def _where_date_since(self, col: str, months: int, dialect: str) -> str:
@@ -254,26 +256,33 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             return f"{col} >= {self._current_date(dialect)} - INTERVAL {months} MONTH"
         if dialect == "SQL Server":
             return f"{col} >= DATEADD(month, -{months}, GETDATE())"
+        if dialect == "Oracle SQL":
+            return f"{col} >= ADD_MONTHS(SYSDATE, -{months})"
         return f"{col} >= {self._current_date(dialect)} - INTERVAL '{months} months'"
 
     def _limit_clause(self, dialect: str) -> str:
         return "" if dialect == "SQL Server" else "LIMIT"
 
     def _apply_limit(self, sql: str, n: int, dialect: str) -> str:
+        sql = sql.rstrip(";")
         if dialect == "SQL Server":
-            return re.sub(r"^SELECT\b", f"SELECT TOP {n}", sql, count=1)
+            return re.sub(r"^SELECT\b", f"SELECT TOP {n}", sql, count=1) + ";"
+        if dialect == "Oracle SQL":
+            return f"{sql}\nFETCH FIRST {n} ROWS ONLY;"
+        if dialect == "MongoDB (NoSQL)":
+            return sql
         return f"{sql}\nLIMIT {n};"
 
-    def _list_tables_sql(self, dialect: str, schema: str) -> str:
-        if not schema or schema.startswith("Table:"):
-            schema = "public"
+    def _list_tables_sql(self, dialect: str, schema: str = "") -> str:
         if dialect == "MySQL":
             return "SHOW TABLES;"
         if dialect == "SQL Server":
-            schema_esc = schema.replace("'", "''")
-            return f"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema_esc}' AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME;"
-        schema_esc = schema.replace("'", "''")
-        return f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{schema_esc}' AND table_type = 'BASE TABLE' ORDER BY table_name;"
+            return "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME;"
+        if dialect == "Oracle SQL":
+            return "SELECT table_name FROM user_tables ORDER BY table_name;"
+        if dialect == "MongoDB (NoSQL)":
+            return '{"listCollections": 1}'
+        return "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;"
 
     def _parse_schema(self, schema: str) -> dict[str, list[tuple[str, str]]]:
         result: dict[str, list[tuple[str, str]]] = {}
@@ -302,12 +311,12 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             if any(t in dtype.lower() for t in {"date", "timestamp"}):
                 return name
         for name, _ in cols:
-            if name in ("created_at", "updated_at", "order_date", "created_date", "date"):
+            if any(k in name.lower() for k in ("date", "time", "created", "updated", "login", "at")):
                 return name
         return cols[0][0] if cols else "created_at"
 
     def _find_numeric_col(self, cols: list[tuple[str, str]]) -> str:
-        num_types = {"int", "integer", "bigint", "smallint", "numeric", "decimal", "float", "double", "real", "money"}
+        num_types = {"int", "integer", "bigint", "smallint", "numeric", "decimal", "float", "double", "real", "money", "number"}
         for name, dtype in cols:
             dt = dtype.lower()
             if any(t in dt for t in num_types):
@@ -334,6 +343,23 @@ If the user's question requires multiple distinct pieces of information (e.g., "
         since = self._where_date_since
         schema_dict = self._parse_schema(schema) if schema else {}
 
+        # 1. Check for listing tables / schemas
+        if re.search(r"\b(what|show|list|tell|all|display|get|which)\b.*\b(table|tables|all tables|tables availab|tables exist|tabels)\b|\btables\b", nl_lower):
+            sql = self._list_tables_sql(dialect, schema)
+            return sql, f"Lists all accessible tables in the {dialect} database.", self._estimate_tokens(nl, sql)
+
+        # 2. Check for matching specific table names in schema
+        for tname in schema_dict.keys():
+            if re.search(r"\b" + re.escape(tname.lower()) + r"\b", nl_lower):
+                if re.search(r"\b(count|how many|total count|number of)\b", nl_lower):
+                    sql = f"SELECT COUNT(*) AS total_count FROM {tname};"
+                    return sql, f"Counts the total number of records in table '{tname}'.", self._estimate_tokens(nl, sql)
+                else:
+                    base_sql = f"SELECT * FROM {tname}"
+                    sql = self._apply_limit(base_sql, 20, dialect)
+                    return sql, f"Retrieves rows from table '{tname}'.", self._estimate_tokens(nl, sql)
+
+        # 3. User activity / login templates
         if re.search(r"this\s+month.*user|user.*this\s+month|current.*month.*user|user.*current.*month", nl_lower):
             dc = self._find_table_col(schema_dict, "users", "date") or "created_at"
             month_start = trunc_month(f"u.{dc}", dialect)
@@ -353,15 +379,6 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
 
         if re.search(r"daily.*active|dau|user.*rate|active.*user.*today|login.*today|login.*rate|login.*per.*day|rate.*login", nl_lower):
-            lc = self._find_table_col(schema_dict, "users", "date") or "last_login"
-            day = trunc_day(f"u.{lc}", dialect)
-            sql = self._apply_limit(
-                f"SELECT {day} AS login_date, COUNT(DISTINCT u.id) AS active_users\nFROM users u\nWHERE u.{lc} IS NOT NULL\nGROUP BY login_date\nORDER BY login_date DESC",
-                30, dialect,
-            )
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if re.search(r"user.*login.*graph|login.*graph|login.*trend|user.*activity|login.*over.time", nl_lower):
             lc = self._find_table_col(schema_dict, "users", "date") or "last_login"
             day = trunc_day(f"u.{lc}", dialect)
             sql = self._apply_limit(
@@ -401,10 +418,17 @@ If the user's question requires multiple distinct pieces of information (e.g., "
         lines = [line.strip() for line in schema.split("\n") if line.strip()]
         table_names = [line.split("[")[0].replace("Table:", "").strip() for line in lines]
         if table_names:
-            listed = ", ".join(table_names[:20])
-            fallback_sql = "SELECT 1 WHERE 1=0"
-            return fallback_sql, f"The database has these tables: {listed}. Try asking about one of them.", 5
-        fallback_sql = "SELECT 1;"
+            first_table = table_names[0]
+            base_sql = f"SELECT * FROM {first_table}"
+            sql = self._apply_limit(base_sql, 10, dialect)
+            return sql, f"Queries sample records from '{first_table}'. Available tables: {', '.join(table_names[:10])}", self._estimate_tokens(nl, sql)
+
+        if dialect == "Oracle SQL":
+            fallback_sql = "SELECT 1 FROM DUAL;"
+        elif dialect == "MongoDB (NoSQL)":
+            fallback_sql = "{}"
+        else:
+            fallback_sql = "SELECT 1;"
         return fallback_sql, self._fallback_explain(nl, fallback_sql), self._estimate_tokens(nl, fallback_sql)
 
     def _fallback_explain(self, nl: str, sql: str) -> str:

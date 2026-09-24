@@ -89,7 +89,12 @@ def execute_natural_language_query(
     )
 
     if not sql or sql.strip() in (";", ""):
-        sql = "SELECT 1 WHERE 1=0"
+        if db_conn.connection_type == "oracle":
+            sql = "SELECT 1 FROM DUAL WHERE 1=0;"
+        elif db_conn.connection_type == "mongodb":
+            sql = "{}"
+        else:
+            sql = "SELECT 1 WHERE 1=0;"
         explanation = "Could not generate a valid SQL query from your question. Try rephrasing or being more specific."
 
     query_record = Query(
