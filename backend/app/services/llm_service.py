@@ -12,13 +12,11 @@ class LLMService:
         self.model_name = settings.LLM_MODEL
         self.api_url = settings.VLLM_API_URL
         self.api_key = settings.VLLM_API_KEY or "not-needed"
-        self.use_mock = settings.LLM_USE_MOCK
         self._client: Optional[httpx.Client] = None
-        self._mock_cache = {}
 
     @property
     def client(self) -> Optional[httpx.Client]:
-        if self._client is None and not self.use_mock:
+        if self._client is None:
             try:
                 self._client = httpx.Client(
                     base_url=self.api_url,
@@ -68,29 +66,38 @@ class LLMService:
         if dialect == "Oracle SQL":
             dialect_rules = """
 - ORACLE SQL SYNTAX RULES:
-  * NEVER use the 'AS' keyword for table aliases (write 'FROM EMPLOYEES T1', NOT 'FROM EMPLOYEES AS T1')
-  * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' to limit rows
-  * Use 'SELECT 1 FROM DUAL;' for constant queries
-  * String concatenation uses || (e.g. FIRST_NAME || ' ' || LAST_NAME)
-  * All non-aggregated SELECT expressions MUST be in the GROUP BY clause"""
+  * NEVER use the 'AS' keyword for table aliases (write 'FROM EMPLOYEES T1', NOT 'FROM EMPLOYEES AS T1').
+  * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' to limit rows.
+  * String concatenation uses || (e.g. FIRST_NAME || ' ' || LAST_NAME).
+  * In GROUP BY queries, every column in the SELECT clause that is not an aggregate function (SUM, AVG, COUNT, etc.) MUST appear in the GROUP BY clause."""
+        elif dialect == "SQL Server":
+            dialect_rules = """
+- SQL SERVER SYNTAX RULES:
+  * Use 'SELECT TOP n' to limit rows instead of LIMIT.
+  * String concatenation uses +."""
+        elif dialect == "PostgreSQL":
+            dialect_rules = """
+- POSTGRESQL SYNTAX RULES:
+  * String concatenation uses || or CONCAT().
+  * Use LIMIT n to limit rows."""
+        elif dialect == "MySQL":
+            dialect_rules = """
+- MYSQL SYNTAX RULES:
+  * String concatenation uses CONCAT().
+  * Use LIMIT n to limit rows."""
 
-        return f"""You are a SQL generation expert. Given a database schema and a user question, generate valid {dialect} SQL.
+        return f"""You are an expert SQL engineer. Given a database schema and a natural language user question, generate a single valid {dialect} query that accurately answers the question.
 
-DATABASE SCHEMA (only these tables and columns exist):
+DATABASE CONTEXT AND SCHEMA:
 {schema_context}
 
-CRITICAL RULES - YOU MUST FOLLOW:
-- ONLY use table names and column names that are listed in the schema above. NEVER guess column names or invent columns on tables where they do not exist.
-- When joining tables, join foreign keys to primary keys (e.g. SALES_RECORDS.SALES_REP_ID = EMPLOYEES.EMPLOYEE_ID).
-- NEVER self-join a table with itself when querying across entities (such as employee names and sales).
-- If you cannot find a matching table or column, respond with EXACTLY: ERROR: No matching table found for this question
-- Return ONLY the raw SQL query — no markdown fences, no backticks, no explanations
-- Use proper {dialect} syntax{dialect_rules}
-- Add LIMIT clause (or TOP for SQL Server, or FETCH FIRST n ROWS ONLY for Oracle) if the result could have many rows
-- Use table aliases where helpful
-- For MongoDB, generate valid MongoDB aggregation pipeline JSON, not SQL
-- If the question is ambiguous, choose the most reasonable interpretation
-- Do NOT query information_schema. Do NOT embed schema text in your output."""
+RULES:
+1. ONLY reference tables and columns that exist in the schema above.
+2. Join related tables using foreign keys and primary keys when answering questions spanning multiple entities.
+3. Ensure all non-aggregate selected columns are included in GROUP BY when computing aggregations.
+4. Use proper {dialect} syntax:{dialect_rules}
+5. Add a reasonable row limit clause (e.g. FETCH FIRST 20 ROWS ONLY for Oracle, TOP 20 for SQL Server, LIMIT 20 for PostgreSQL/MySQL) if querying multiple rows.
+6. Return ONLY the raw SQL query. Do NOT include markdown code blocks, backticks, or explanatory text."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
         if not raw or not raw.strip():
@@ -102,91 +109,20 @@ CRITICAL RULES - YOU MUST FOLLOW:
         raw = raw.rstrip(";") + ";"
 
         if dialect == "Oracle SQL":
-            # Remove AS keyword from table aliases (e.g. FROM table AS t -> FROM table t)
+            # Sanitize Oracle table aliases: Oracle does not accept 'FROM table AS alias'
             raw = re.sub(r"\b(FROM|JOIN)\s+([a-zA-Z0-9_]+)\s+AS\s+([a-zA-Z0-9_]+)\b", r"\1 \2 \3", raw, flags=re.IGNORECASE)
-            # Fix LIMIT in Oracle
+            # Replace LIMIT with FETCH FIRST n ROWS ONLY
             m_limit = re.search(r"\bLIMIT\s+(\d+)\s*;?$", raw, flags=re.IGNORECASE)
             if m_limit:
                 limit_num = m_limit.group(1)
                 raw = re.sub(r"\bLIMIT\s+\d+\s*;?$", f"FETCH FIRST {limit_num} ROWS ONLY;", raw, flags=re.IGNORECASE)
         return raw
 
-    def _is_sql_hallucinated(self, sql: str, schema_context: str) -> bool:
-        if not sql or sql.strip() in (";", ""):
-            return True
-        nl = sql.lower()
-        table_markers = ["table:", " tables ", " columns "]
-        marker_count = sum(1 for m in table_markers if m in nl)
-        ctx_markers = ["(character varying)", "(integer)", "(timestamp", "(jsonb)", "(boolean)"]
-        ctx_count = sum(1 for m in ctx_markers if m in nl)
-        if marker_count >= 2 or ctx_count >= 2:
-            return True
-
-        # Check against parsed schema tables and columns
-        schema_dict = self._parse_schema(schema_context)
-        if schema_dict:
-            schema_tables_upper = {t.upper(): {c[0].upper() for c in cols} for t, cols in schema_dict.items()}
-            
-            # Extract aliases e.g. FROM SALES_RECORDS T1 or JOIN EMPLOYEES E
-            alias_to_table = {}
-            for m in re.finditer(r"\b(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?", sql, re.IGNORECASE):
-                tbl = m.group(1).upper()
-                alias = (m.group(2) or m.group(1)).upper()
-                if tbl in schema_tables_upper:
-                    alias_to_table[alias] = tbl
-                    alias_to_table[tbl] = tbl
-                elif tbl not in ("DUAL", "RDB$DATABASE", "SYSTEM"):
-                    # Non-existent table referenced
-                    return True
-            
-            # Check column references like T1.FIRST_NAME or S.TOTAL_REVENUE
-            for m in re.finditer(r"\b([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\b", sql):
-                prefix = m.group(1).upper()
-                col = m.group(2).upper()
-                if prefix in alias_to_table:
-                    tbl = alias_to_table[prefix]
-                    valid_cols = schema_tables_upper.get(tbl, set())
-                    if valid_cols and col not in valid_cols and col not in ("*", "ROWNUM", "NEXTVAL", "CURRVAL"):
-                        return True
-        return False
-
-    def fix_sql(self, natural_language: str, sql: str, error: str, schema_context: str, connection_type: str) -> tuple[str, str, int]:
-        dialect = self._get_db_dialect(connection_type)
-        if self.use_mock:
-            return self._fallback_generate_sql(natural_language, dialect, schema_context)
-        system_prompt = self._build_schema_prompt(schema_context, dialect)
-        fix_prompt = (
-            f"The SQL query below failed with an error. Please fix it and return ONLY the corrected SQL.\n\n"
-            f"Original question: {natural_language}\n\n"
-            f"Failed SQL:\n{sql}\n\n"
-            f"Error:\n{error}\n\n"
-            f"IMPORTANT: Only use table and column names from the schema above. "
-            f"The most likely cause of this error is a wrong table or column name.\n\n"
-            f"Return ONLY the corrected raw SQL. No markdown, no explanations."
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": fix_prompt},
-        ]
-        raw = self._call_vllm(messages, temperature=0.1)
-        if raw is None or raw.startswith("ERROR:") or not raw.strip():
-            return self._fallback_generate_sql(natural_language, dialect, schema_context)
-        fixed_sql = self._fixup_sql(raw, dialect)
-        tokens = self._estimate_tokens(natural_language, fixed_sql)
-        explanation_messages = [
-            {"role": "system", "content": "Explain the SQL query briefly in 1-2 sentences. Be concise."},
-            {"role": "user", "content": f"Question: {natural_language}\nSQL: {fixed_sql}"},
-        ]
-        explanation_raw = self._call_vllm(explanation_messages, temperature=0, max_tokens=256)
-        explanation = explanation_raw if explanation_raw else self._fallback_explain(natural_language, fixed_sql)
-        return fixed_sql, explanation, tokens
+    def _estimate_tokens(self, nl: str, sql: str) -> int:
+        return len(nl.split()) * 3 + len(sql.split()) * 2
 
     def generate_sql(self, natural_language: str, schema_context: str, connection_type: str) -> tuple[str, str, int]:
         dialect = self._get_db_dialect(connection_type)
-
-        if self.use_mock:
-            return self._fallback_generate_sql(natural_language, dialect, schema_context)
-
         system_prompt = self._build_schema_prompt(schema_context, dialect)
         messages = [
             {"role": "system", "content": system_prompt},
@@ -194,60 +130,93 @@ CRITICAL RULES - YOU MUST FOLLOW:
         ]
 
         raw = self._call_vllm(messages, temperature=0.1)
-        if raw is None:
-            return self._fallback_generate_sql(natural_language, dialect, schema_context)
-
-        if raw.startswith("ERROR:"):
-            return self._fallback_generate_sql(natural_language, dialect, schema_context)
-
-        if not raw.strip():
-            return self._fallback_generate_sql(natural_language, dialect, schema_context)
+        if not raw or raw.strip().startswith("ERROR:"):
+            return "", "The AI model was unable to generate a SQL query for this question.", 0
 
         sql = self._fixup_sql(raw, dialect)
         tokens = self._estimate_tokens(natural_language, sql)
 
-        if self._is_sql_hallucinated(sql, schema_context):
-            return self._fallback_generate_sql(natural_language, dialect, schema_context)
-
+        # Ask the LLM to explain the generated SQL
         explanation_messages = [
-            {"role": "system", "content": "Explain the SQL query briefly in 1-2 sentences. Be concise."},
-            {"role": "user", "content": f"Question: {natural_language}\nSQL: {sql}"},
+            {"role": "system", "content": "You are a database assistant. Explain what the following SQL query does in 1-2 concise, clear sentences."},
+            {"role": "user", "content": f"User question: {natural_language}\nGenerated SQL:\n{sql}"},
         ]
-        explanation_raw = self._call_vllm(explanation_messages, temperature=0, max_tokens=256)
-        explanation = explanation_raw if explanation_raw else self._fallback_explain(natural_language, sql)
+        explanation_raw = self._call_vllm(explanation_messages, temperature=0.1, max_tokens=256)
+        explanation = explanation_raw.strip() if explanation_raw else f"Executes query for: {natural_language}"
 
         return sql, explanation, tokens
 
-    def explain_sql(self, sql: str, natural_language: str) -> str:
-        if self.use_mock:
-            return self._fallback_explain(natural_language, sql)
+    def fix_sql(self, natural_language: str, sql: str, error: str, schema_context: str, connection_type: str) -> tuple[str, str, int]:
+        dialect = self._get_db_dialect(connection_type)
+        system_prompt = self._build_schema_prompt(schema_context, dialect)
+        fix_prompt = (
+            f"The following {dialect} query failed with a database execution error.\n\n"
+            f"User Question: {natural_language}\n\n"
+            f"Failed SQL:\n{sql}\n\n"
+            f"Database Error:\n{error}\n\n"
+            f"Please correct the query using the available schema and return ONLY the corrected raw SQL query."
+        )
         messages = [
-            {"role": "system", "content": "Explain the SQL query briefly in 1-2 sentences. Be concise."},
-            {"role": "user", "content": f"Question: {natural_language}\nSQL: {sql}"},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": fix_prompt},
         ]
-        raw = self._call_vllm(messages, temperature=0, max_tokens=256)
-        return raw if raw else self._fallback_explain(natural_language, sql)
+        raw = self._call_vllm(messages, temperature=0.1)
+        if not raw or raw.strip().startswith("ERROR:"):
+            return sql, f"Query execution failed: {error}", 0
+
+        fixed_sql = self._fixup_sql(raw, dialect)
+        tokens = self._estimate_tokens(natural_language, fixed_sql)
+
+        explanation_messages = [
+            {"role": "system", "content": "Explain briefly in 1-2 sentences what correction was made to fix the query error."},
+            {"role": "user", "content": f"Question: {natural_language}\nFixed SQL:\n{fixed_sql}\nPrevious Error:\n{error}"},
+        ]
+        explanation_raw = self._call_vllm(explanation_messages, temperature=0.1, max_tokens=256)
+        explanation = explanation_raw.strip() if explanation_raw else f"Corrected SQL to resolve: {error}"
+
+        return fixed_sql, explanation, tokens
+
+    def explain_sql(self, sql: str, natural_language: str) -> str:
+        messages = [
+            {"role": "system", "content": "You are a database assistant. Explain what the SQL query does in 1-2 concise sentences."},
+            {"role": "user", "content": f"Question: {natural_language}\nSQL:\n{sql}"},
+        ]
+        raw = self._call_vllm(messages, temperature=0.1, max_tokens=256)
+        return raw.strip() if raw else "Executes the specified SQL query."
 
     def optimize_query(self, sql: str) -> list[dict]:
-        if self.use_mock:
-            return self._fallback_optimize(sql)
         messages = [
-            {"role": "system", "content": "You are a SQL optimization expert. Analyze the SQL and return a JSON array of optimization suggestions. Each suggestion has fields: type, description, impact (high/medium/low). Return valid JSON only, no markdown."},
-            {"role": "user", "content": f"Optimize this SQL:\n{sql}"},
+            {
+                "role": "system",
+                "content": (
+                    "You are a database performance expert. Analyze the SQL query and provide performance optimization suggestions. "
+                    "Return ONLY a valid JSON array of objects with keys: 'type' (string), 'description' (string), 'impact' ('high'|'medium'|'low'). "
+                    "Do NOT wrap with backticks or markdown."
+                ),
+            },
+            {"role": "user", "content": f"Analyze and optimize this SQL query:\n{sql}"},
         ]
-        raw = self._call_vllm(messages, temperature=0, max_tokens=512)
+        raw = self._call_vllm(messages, temperature=0.1, max_tokens=512)
         if raw:
             raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-            raw = re.sub(r"\s*```$", "", raw)
+            raw = re.sub(r"\s*```$", "", raw).strip()
             try:
                 suggestions = json.loads(raw)
                 if isinstance(suggestions, list):
                     return suggestions
             except (json.JSONDecodeError, TypeError):
                 pass
-        return self._fallback_optimize(sql)
+        return [{
+            "type": "general",
+            "description": "Ensure appropriate indexes exist on filtered and joined columns.",
+            "impact": "medium",
+        }]
 
     def suggest_visualizations(self, columns: list[str], rows: list[list] = None, natural_language: str = "") -> list[dict]:
+        """
+        Dynamically suggest appropriate visualizations based purely on data shape,
+        column types, and values (no hardcoded query rules).
+        """
         if not columns or not rows:
             return [{"type": "table", "title": "Data Table", "config": {}}]
 
@@ -255,53 +224,39 @@ CRITICAL RULES - YOU MUST FOLLOW:
 
         def is_col_numeric(idx: int) -> bool:
             num_count = 0
-            for r in rows[:15]:
+            sample = rows[:20]
+            for r in sample:
                 if idx < len(r) and r[idx] is not None:
                     try:
                         float(r[idx])
                         num_count += 1
                     except (ValueError, TypeError):
                         pass
-            return num_count >= min(len(rows), 2)
+            return num_count >= min(len(sample), 1)
 
         num_indices = [i for i in range(len(columns)) if is_col_numeric(i)]
         text_indices = [i for i in range(len(columns)) if i not in num_indices]
 
-        # 1. Single scalar number (e.g. COUNT(*), SUM(revenue))
+        # 1. Single scalar number (e.g. single aggregate metric)
         if row_count == 1 and len(columns) == 1 and len(num_indices) == 1:
             title_text = columns[0].replace("_", " ").title()
             return [
                 {"type": "kpi_card", "title": title_text, "config": {"metric": columns[0]}},
-                {"type": "table", "title": "Data Table", "config": {}}
+                {"type": "table", "title": "Data Table", "config": {}},
             ]
 
-        # 2. Single detail record with many fields (e.g. a specific project or employee)
+        # 2. Single detail record with multiple columns
         if row_count == 1:
             return [{"type": "table", "title": "Record Details", "config": {}}]
 
-        # 3. Pure text list (e.g. list of table names or employee names) -> No meaningful chart can be drawn
+        # 3. No numeric metrics (pure tabular text)
         if not num_indices:
             return [{"type": "table", "title": "Data Table", "config": {}}]
 
         # 4. Multi-row tabular dataset with numerical metrics
         suggestions = []
-
-        # Find the best numeric metric column (prefer real metric fields over ID numbers or years)
         metric_col = columns[num_indices[0]]
-        for ni in num_indices:
-            cn = columns[ni].lower()
-            if any(k in cn for k in ("revenue", "profit", "budget", "salary", "spent", "sales", "amount", "total", "cost", "units", "score", "margin", "headcount")):
-                metric_col = columns[ni]
-                break
-            elif not cn.endswith(("_id", "id", "_code", "year")):
-                metric_col = columns[ni]
-
-        # Find the best category / dimension column (prefer names/labels over IDs)
         dim_col = columns[text_indices[0]] if text_indices else columns[0]
-        for ti in text_indices:
-            if any(k in columns[ti].lower() for k in ("name", "title", "region", "status", "category", "quarter", "month", "year", "dept", "city")):
-                dim_col = columns[ti]
-                break
 
         is_time_series = any(k in dim_col.lower() for k in ("date", "time", "month", "quarter", "year", "day"))
         y_label = metric_col.replace("_", " ").title()
@@ -311,498 +266,27 @@ CRITICAL RULES - YOU MUST FOLLOW:
             suggestions.append({
                 "type": "line_chart",
                 "title": f"{y_label} Trend by {x_label}",
-                "config": {"x": dim_col, "y": metric_col, "sort": "asc"}
+                "config": {"x": dim_col, "y": metric_col, "sort": "asc"},
             })
             suggestions.append({
                 "type": "area_chart",
-                "title": f"{y_label} Growth Area ({x_label})",
-                "config": {"x": dim_col, "y": metric_col}
+                "title": f"{y_label} Area by {x_label}",
+                "config": {"x": dim_col, "y": metric_col},
             })
         else:
             suggestions.append({
                 "type": "bar_chart",
                 "title": f"{y_label} by {x_label}",
-                "config": {"x": dim_col, "y": metric_col, "sort": "desc"}
+                "config": {"x": dim_col, "y": metric_col, "sort": "desc"},
             })
-            if row_count <= 8:
+            if row_count <= 10:
                 suggestions.append({
                     "type": "pie_chart",
-                    "title": f"{y_label} Share by {x_label}",
-                    "config": {"label": dim_col, "value": metric_col}
+                    "title": f"{y_label} Distribution by {x_label}",
+                    "config": {"label": dim_col, "value": metric_col},
                 })
 
         suggestions.append({"type": "table", "title": "Data Table", "config": {}})
-        return suggestions
-
-    # -- fallback / mock methods (used when vLLM is unavailable) --
-
-    def _estimate_tokens(self, nl: str, sql: str) -> int:
-        return len(nl.split()) * 3 + len(sql.split()) * 2
-
-    def _date_trunc_day(self, col: str, dialect: str) -> str:
-        if dialect == "MySQL":
-            return f"DATE({col})"
-        if dialect == "SQL Server":
-            return f"CAST({col} AS DATE)"
-        if dialect == "Oracle SQL":
-            return f"TRUNC({col})"
-        return f"DATE_TRUNC('day', {col})"
-
-    def _date_trunc_month(self, col: str, dialect: str) -> str:
-        if dialect == "MySQL":
-            return f"DATE_FORMAT({col}, '%Y-%m-01')"
-        if dialect == "SQL Server":
-            return f"DATEFROMPARTS(YEAR({col}), MONTH({col}), 1)"
-        if dialect == "Oracle SQL":
-            return f"TRUNC({col}, 'MM')"
-        return f"DATE_TRUNC('month', {col})"
-
-    def _current_date(self, dialect: str) -> str:
-        if dialect == "MySQL":
-            return "CURDATE()"
-        if dialect == "SQL Server":
-            return "GETDATE()"
-        if dialect == "Oracle SQL":
-            return "SYSDATE"
-        return "CURRENT_DATE"
-
-    def _where_date_since(self, col: str, months: int, dialect: str) -> str:
-        if dialect == "MySQL":
-            return f"{col} >= {self._current_date(dialect)} - INTERVAL {months} MONTH"
-        if dialect == "SQL Server":
-            return f"{col} >= DATEADD(month, -{months}, GETDATE())"
-        if dialect == "Oracle SQL":
-            return f"{col} >= ADD_MONTHS(SYSDATE, -{months})"
-        return f"{col} >= {self._current_date(dialect)} - INTERVAL '{months} months'"
-
-    def _limit_clause(self, dialect: str) -> str:
-        return "" if dialect == "SQL Server" else "LIMIT"
-
-    def _apply_limit(self, sql: str, n: int, dialect: str) -> str:
-        sql = sql.rstrip(";")
-        if dialect == "SQL Server":
-            return re.sub(r"^SELECT\b", f"SELECT TOP {n}", sql, count=1) + ";"
-        if dialect == "Oracle SQL":
-            return f"{sql}\nFETCH FIRST {n} ROWS ONLY;"
-        if dialect == "MongoDB (NoSQL)":
-            return sql
-        return f"{sql}\nLIMIT {n};"
-
-    def _list_tables_sql(self, dialect: str, schema: str = "") -> str:
-        if dialect == "MySQL":
-            return "SHOW TABLES;"
-        if dialect == "SQL Server":
-            return "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME;"
-        if dialect == "Oracle SQL":
-            return "SELECT table_name FROM user_tables ORDER BY table_name;"
-        if dialect == "MongoDB (NoSQL)":
-            return '{"listCollections": 1}'
-        return "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;"
-
-    def _parse_schema(self, schema: str) -> dict[str, list[tuple[str, str]]]:
-        result: dict[str, list[tuple[str, str]]] = {}
-        current_table = None
-        for line in schema.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("Table:"):
-                t_name = line.replace("Table:", "").split("[")[0].strip()
-                current_table = t_name
-                result[current_table] = []
-                if "[" in line and "]" in line:
-                    cols_str = line[line.find("[")+1 : line.find("]")]
-                    for part in cols_str.split(","):
-                        part = part.strip()
-                        cm = re.match(r"(\S+)\s*\((.+?)\)", part)
-                        if cm:
-                            result[current_table].append((cm.group(1), cm.group(2)))
-                continue
-            if current_table and line.startswith("-"):
-                cm = re.match(r"-\s*([a-zA-Z0-9_]+)\s*(?:\((.+?)\))?", line)
-                if cm:
-                    cname = cm.group(1)
-                    ctype = cm.group(2) or "unknown"
-                    result[current_table].append((cname, ctype))
-        return result
-
-    def _find_date_col(self, cols: list[tuple[str, str]]) -> str:
-        date_types = {"date", "datetime", "timestamp", "timestamptz", "timestamp without time zone", "timestamp with time zone"}
-        for name, dtype in cols:
-            if any(t in dtype.lower() for t in {"date", "timestamp"}):
-                return name
-        for name, _ in cols:
-            if any(k in name.lower() for k in ("date", "time", "created", "updated", "login", "at")):
-                return name
-        return cols[0][0] if cols else "created_at"
-
-    def _find_numeric_col(self, cols: list[tuple[str, str]]) -> str:
-        num_types = {"int", "integer", "bigint", "smallint", "numeric", "decimal", "float", "double", "real", "money", "number"}
-        for name, dtype in cols:
-            dt = dtype.lower()
-            if any(t in dt for t in num_types):
-                return name
-        for name, _ in cols:
-            if name in ("total_amount", "amount", "total", "price", "revenue", "quantity", "cost"):
-                return name
-        return cols[0][0] if cols else "total_amount"
-
-    def _find_table_col(self, schema_dict: dict, table: str, hint_type: str) -> str:
-        for tname, cols in schema_dict.items():
-            if tname.lower() == table.lower():
-                if hint_type == "date":
-                    return self._find_date_col(cols)
-                if hint_type == "numeric":
-                    return self._find_numeric_col(cols)
-                return cols[0][0] if cols else "id"
-        return table
-
-    def _fallback_generate_sql(self, nl: str, dialect: str, schema: str) -> tuple[str, str, int]:
-        nl_lower = nl.lower()
-        trunc_day = self._date_trunc_day
-        trunc_month = self._date_trunc_month
-        since = self._where_date_since
-        schema_dict = self._parse_schema(schema) if schema else {}
-
-        # 1. Check for listing tables / schemas
-        if re.search(r"\b(what|show|list|tell|all|display|get|which)\b.*\b(table|tables|all tables|tables availab|tables exist|tabels)\b|\btables\b", nl_lower):
-            sql = self._list_tables_sql(dialect, schema)
-            return sql, f"Lists all accessible tables in the {dialect} database.", self._estimate_tokens(nl, sql)
-
-        # 2. Check for Aggregation & Analytical Join templates
-        is_agg = bool(re.search(r"\b(by each|by|per|each|every|highest|lowest|top|bottom|total|sum|average|avg|breakdown|distribution|trend|over time|group by)\b", nl_lower))
-
-        # 2a. Sales Representative Revenue Aggregation
-        if "sales" in nl_lower and ("rep" in nl_lower or "representative" in nl_lower) and "revenue" in nl_lower:
-            if dialect == "Oracle SQL":
-                sql = self._apply_limit(
-                    "SELECT E.FIRST_NAME || ' ' || E.LAST_NAME AS SALES_REP, SUM(S.TOTAL_REVENUE) AS TOTAL_REVENUE\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY TOTAL_REVENUE DESC",
-                    20, dialect
-                )
-            elif dialect == "SQL Server":
-                sql = self._apply_limit(
-                    "SELECT E.FIRST_NAME + ' ' + E.LAST_NAME AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
-                    20, dialect
-                )
-            else:
-                sql = self._apply_limit(
-                    "SELECT CONCAT(E.FIRST_NAME, ' ', E.LAST_NAME) AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM sales_records S\nJOIN employees E ON S.sales_rep_id = E.employee_id\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
-                    20, dialect
-                )
-            return sql, "Calculates total revenue generated by each sales representative, ordered by highest revenue.", self._estimate_tokens(nl, sql)
-
-        # 2b. Sales by Region Aggregation
-        if "region" in nl_lower and ("revenue" in nl_lower or "sale" in nl_lower or "sales" in nl_lower):
-            if dialect == "Oracle SQL":
-                sql = self._apply_limit(
-                    "SELECT REGION, SUM(TOTAL_REVENUE) AS TOTAL_REVENUE\nFROM SALES_RECORDS\nGROUP BY REGION\nORDER BY TOTAL_REVENUE DESC",
-                    20, dialect
-                )
-            else:
-                sql = self._apply_limit(
-                    "SELECT region, SUM(total_revenue) AS total_revenue\nFROM sales_records\nGROUP BY region\nORDER BY total_revenue DESC",
-                    20, dialect
-                )
-            return sql, "Calculates total revenue grouped by sales region.", self._estimate_tokens(nl, sql)
-
-        # 2c. Quarterly Financials Aggregation
-        if ("financial" in nl_lower or "quarter" in nl_lower or "profit" in nl_lower) and "revenue" in nl_lower:
-            if dialect == "Oracle SQL":
-                sql = self._apply_limit(
-                    "SELECT FISCAL_YEAR, QUARTER, REVENUE, OPERATING_EXPENSES, NET_PROFIT, PROFIT_MARGIN_PCT\nFROM COMPANY_FINANCIALS\nORDER BY FISCAL_YEAR, QUARTER",
-                    20, dialect
-                )
-            else:
-                sql = self._apply_limit(
-                    "SELECT fiscal_year, quarter, revenue, operating_expenses, net_profit, profit_margin_pct\nFROM company_financials\nORDER BY fiscal_year, quarter",
-                    20, dialect
-                )
-            return sql, "Retrieves company quarterly financial performance over time.", self._estimate_tokens(nl, sql)
-
-        # 3. Check for Entity / Literal Phrase queries (e.g. "Ai Analytics Core Engine budget", "Liam Chen salary", "Acme Global Corp")
-        if not is_agg:
-            stop_words = {
-                "i", "need", "you", "to", "show", "give", "me", "what", "is", "are", "the", "a", "an",
-                "name", "names", "of", "person", "persons", "people", "who", "whom", "whose", "which",
-                "where", "tell", "about", "for", "in", "with", "and", "please", "fetch", "find", "get",
-                "details", "info", "data", "how", "much", "many", "all", "each", "every", "list", "search",
-                "check", "want", "would", "like", "see", "can", "generated", "generating", "highest", "lowest"
-            }
-            metric_words = {"budget", "salary", "salaries", "revenue", "cost", "price", "spent", "profit", "expenses", "margin", "headcount", "performance", "rating"}
-            query_words = [w for w in re.findall(r"[a-zA-Z0-9]+", nl_lower) if w not in stop_words and len(w) > 1]
-            
-            dept_keywords = {"department", "dept", "departments", "engineering", "human", "resources", "hr", "operations"}
-            proj_keywords = {"project", "projects", "engine", "core", "migration", "cloud", "dashboard", "app", "mobile", "crm", "rollout", "sync", "portal", "talent", "erp", "module", "ai"}
-            emp_keywords = {"employee", "employees", "staff", "developer", "engineer", "scientist", "manager", "director", "recruiter", "specialist", "architect"}
-            sales_keywords = {"client", "customer", "customers", "license", "sale", "sales", "sold", "region", "territory", "acme", "starlight", "apex", "nordic", "pacific", "vertex", "quantum", "atlas", "zenith"}
-
-            structural_words = {
-                "department", "dept", "departments", "project", "projects", "sales", "sale",
-                "employee", "employees", "details", "info", "data", "record", "records", "table",
-                "tables", "list", "show", "count", "all", "total", "manager", "managers", "name",
-                "names", "person", "persons", "who", "are", "the", "of", "to", "you", "generated", "highest"
-            }
-            
-            entity_table = None
-            entity_where = None
-            best_entity_score = 0
-
-            for tname, cols in schema_dict.items():
-                tname_l = tname.lower()
-                text_cols = [c[0] for c in cols if not c[0].lower().endswith(("_id", "id")) and any(k in c[0].lower() for k in ("name", "title", "client", "product", "dept", "city", "location", "category", "quarter", "status", "first", "last", "email"))]
-                if not text_cols:
-                    text_cols = [c[0] for c in cols if any(t in c[1].lower() for t in ("char", "text", "str")) and not c[0].lower().endswith(("_id", "id"))]
-                col_names_lower = [c[0].lower() for c in cols]
-
-                has_first_last = any("first_name" in cn for cn in col_names_lower) and any("last_name" in cn for cn in col_names_lower)
-
-                for tcol in text_cols:
-                    col_l = tcol.lower()
-                    matched_words = [w for w in query_words if w not in metric_words and w not in structural_words]
-
-                    if matched_words:
-                        score = len(matched_words) * 10
-                        for mw in metric_words:
-                            if mw in query_words and any(mw in cn for cn in col_names_lower):
-                                score += 25
-                        
-                        if "project" in tname_l or "project" in col_l:
-                            if any(w in proj_keywords for w in query_words):
-                                score += 25
-                        if "department" in tname_l or "dept" in col_l:
-                            if any(w in dept_keywords for w in query_words):
-                                score += 25
-                        if "employee" in tname_l or "first_name" in col_l or "last_name" in col_l:
-                            if any(w in emp_keywords for w in query_words):
-                                score += 25
-                        if "sales" in tname_l or "client" in col_l:
-                            if any(w in sales_keywords for w in query_words):
-                                score += 25
-
-                        if any(k in col_l for k in ("project", "product", "client", "department", "name")):
-                            score += 5
-                        if any(w in tname_l for w in matched_words):
-                            score += 8
-                        
-                        if score > best_entity_score and score >= 15:
-                            best_entity_score = score
-                            entity_table = tname
-                            search_term = " ".join(matched_words[:4])
-                            if has_first_last and ("employee" in tname_l or "first" in col_l or "last" in col_l):
-                                fn = next(c[0] for c in cols if "first" in c[0].lower())
-                                ln = next(c[0] for c in cols if "last" in c[0].lower())
-                                if dialect in ("Oracle SQL", "PostgreSQL"):
-                                    entity_where = f"LOWER({fn} || ' ' || {ln}) LIKE '%{search_term}%'"
-                                elif dialect == "SQL Server":
-                                    entity_where = f"LOWER({fn} + ' ' + {ln}) LIKE '%{search_term}%'"
-                                else:
-                                    entity_where = f"LOWER(CONCAT({fn}, ' ', {ln})) LIKE '%{search_term}%'"
-                            else:
-                                entity_where = f"LOWER({tcol}) LIKE '%{search_term}%'"
-
-            if entity_table and entity_where:
-                base_sql = f"SELECT * FROM {entity_table}\nWHERE {entity_where}"
-                sql = self._apply_limit(base_sql, 20, dialect)
-                return sql, f"Retrieves matching records from '{entity_table}' for '{nl}'.", self._estimate_tokens(nl, sql)
-
-        # 3. Check for matching specific table names or keywords in schema
-        best_table = None
-        best_score = 0
-        best_cols = []
-        words = set(re.findall(r"\w+", nl_lower))
-
-        for tname, cols in schema_dict.items():
-            tname_lower = tname.lower()
-            score = 0
-            if tname_lower in nl_lower:
-                score += 15
-            t_parts = tname_lower.split("_")
-            for part in t_parts:
-                if len(part) > 2 and (part in words or any(part in w or (len(w) > 3 and w in part) for w in words)):
-                    score += 6
-            for col_name, _ in cols:
-                c_lower = col_name.lower()
-                c_parts = c_lower.split("_")
-                for cpart in c_parts:
-                    if len(cpart) > 2 and (cpart in words or any(cpart in w or (len(w) > 3 and w in cpart) for w in words)):
-                        score += 3
-            if score > best_score:
-                best_score = score
-                best_table = tname
-                best_cols = cols
-
-        if best_table and best_score >= 3:
-            tname = best_table
-            is_count = bool(re.search(r"\b(count|how many|total count|number of)\b", nl_lower))
-            is_sum = bool(re.search(r"\b(total|sum|revenue|sales|budget|spent|salary|salaries|profit)\b", nl_lower))
-            
-            group_col = None
-            for cname, _ in best_cols:
-                cn = cname.lower()
-                if any(part in words for part in cn.split("_") if len(part) > 2):
-                    if cn not in ("id", "salary", "budget", "spent", "revenue", "total_revenue", "net_profit", "operating_expenses", "units_sold", "unit_price"):
-                        group_col = cname
-                        break
-
-            num_col = None
-            for cname, dtype in best_cols:
-                cn = cname.lower()
-                if any(k in cn for k in ("revenue", "salary", "budget", "spent", "profit", "amount", "total", "cost")):
-                    num_col = cname
-                    break
-
-            if is_count and not is_sum and not group_col:
-                sql = f"SELECT COUNT(*) AS total_count FROM {tname};"
-                return sql, f"Counts total records in '{tname}'.", self._estimate_tokens(nl, sql)
-            elif is_sum and num_col and group_col:
-                sql = self._apply_limit(
-                    f"SELECT {group_col}, SUM({num_col}) AS total_{num_col.lower()}\nFROM {tname}\nGROUP BY {group_col}\nORDER BY total_{num_col.lower()} DESC",
-                    20, dialect
-                )
-                return sql, f"Calculates total {num_col} grouped by {group_col} from '{tname}'.", self._estimate_tokens(nl, sql)
-            else:
-                base_sql = f"SELECT * FROM {tname}"
-                sql = self._apply_limit(base_sql, 20, dialect)
-                return sql, f"Retrieves records from table '{tname}'.", self._estimate_tokens(nl, sql)
-
-        # 3. User activity / login templates
-        if re.search(r"this\s+month.*user|user.*this\s+month|current.*month.*user|user.*current.*month", nl_lower):
-            dc = self._find_table_col(schema_dict, "users", "date") or "created_at"
-            month_start = trunc_month(f"u.{dc}", dialect)
-            today = self._current_date(dialect)
-            this_month = trunc_month(today, dialect)
-            sql = self._apply_limit(
-                f"SELECT {month_start} AS signup_month, COUNT(u.id) AS user_count\nFROM users u\nWHERE {month_start} = {this_month}\nGROUP BY signup_month\nORDER BY signup_month DESC",
-                10, dialect,
-            )
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if re.search(r"last\s+(login|log\s+in|sign.in|access)", nl_lower):
-            sql = self._apply_limit(
-                "SELECT id, name, email, last_login\nFROM users\nWHERE last_login IS NOT NULL\nORDER BY last_login DESC",
-                10, dialect,
-            )
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if re.search(r"daily.*active|dau|user.*rate|active.*user.*today|login.*today|login.*rate|login.*per.*day|rate.*login", nl_lower):
-            lc = self._find_table_col(schema_dict, "users", "date") or "last_login"
-            day = trunc_day(f"u.{lc}", dialect)
-            sql = self._apply_limit(
-                f"SELECT {day} AS login_date, COUNT(DISTINCT u.id) AS active_users\nFROM users u\nWHERE u.{lc} IS NOT NULL\nGROUP BY login_date\nORDER BY login_date DESC",
-                30, dialect,
-            )
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if re.search(r"user.*signup|registration.*trend|sign.up.*over.time|new.*user.*month|user.*growth", nl_lower):
-            uc = self._find_table_col(schema_dict, "users", "date") or "created_at"
-            month = trunc_month(f"u.{uc}", dialect)
-            sql = self._apply_limit(
-                f"SELECT {month} AS signup_month, COUNT(u.id) AS new_users\nFROM users u\nGROUP BY signup_month\nORDER BY signup_month DESC",
-                12, dialect,
-            )
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if "count" in nl_lower and "user" in nl_lower:
-            sql = "SELECT COUNT(*) AS user_count FROM users;"
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if "top" in nl_lower and "customer" in nl_lower and "revenue" in nl_lower:
-            sql = self._apply_limit(
-                "SELECT c.customer_id, c.name, SUM(o.total_amount) AS revenue\nFROM customers c\nJOIN orders o ON c.customer_id = o.customer_id\nGROUP BY c.customer_id, c.name\nORDER BY revenue DESC",
-                10, dialect,
-            )
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if "month" in nl_lower and ("sale" in nl_lower or "order" in nl_lower or "revenue" in nl_lower):
-            od = self._find_table_col(schema_dict, "orders", "date") or "order_date"
-            ta = self._find_table_col(schema_dict, "orders", "numeric") or "total_amount"
-            month = trunc_month(f"o.{od}", dialect)
-            since12 = since(f"o.{od}", 12, dialect)
-            sql = f"SELECT {month} AS month, SUM(o.{ta}) AS total\nFROM orders o\nWHERE {since12}\nGROUP BY month\nORDER BY month;"
-            return sql, self._fallback_explain(nl, sql), self._estimate_tokens(nl, sql)
-
-        if "sales" in nl_lower and ("rep" in nl_lower or "representative" in nl_lower) and "revenue" in nl_lower:
-            if dialect == "Oracle SQL":
-                sql = self._apply_limit(
-                    "SELECT E.FIRST_NAME || ' ' || E.LAST_NAME AS SALES_REP, SUM(S.TOTAL_REVENUE) AS TOTAL_REVENUE\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY TOTAL_REVENUE DESC",
-                    20, dialect
-                )
-            elif dialect == "SQL Server":
-                sql = self._apply_limit(
-                    "SELECT E.FIRST_NAME + ' ' + E.LAST_NAME AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM SALES_RECORDS S\nJOIN EMPLOYEES E ON S.SALES_REP_ID = E.EMPLOYEE_ID\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
-                    20, dialect
-                )
-            else:
-                sql = self._apply_limit(
-                    "SELECT CONCAT(E.FIRST_NAME, ' ', E.LAST_NAME) AS sales_rep, SUM(S.TOTAL_REVENUE) AS total_revenue\nFROM sales_records S\nJOIN employees E ON S.sales_rep_id = E.employee_id\nGROUP BY E.FIRST_NAME, E.LAST_NAME\nORDER BY total_revenue DESC",
-                    20, dialect
-                )
-            return sql, "Calculates total revenue generated by each sales representative, ordered by highest revenue.", self._estimate_tokens(nl, sql)
-
-        valid_table_names = list(schema_dict.keys())
-        if valid_table_names:
-            first_table = valid_table_names[0]
-            base_sql = f"SELECT * FROM {first_table}"
-            sql = self._apply_limit(base_sql, 10, dialect)
-            return sql, f"Queries sample records from '{first_table}'. Available tables: {', '.join(valid_table_names[:10])}", self._estimate_tokens(nl, sql)
-
-        if dialect == "Oracle SQL":
-            fallback_sql = "SELECT 1 FROM DUAL;"
-        elif dialect == "MongoDB (NoSQL)":
-            fallback_sql = "{}"
-        else:
-            fallback_sql = "SELECT 1;"
-        return fallback_sql, self._fallback_explain(nl, fallback_sql), self._estimate_tokens(nl, fallback_sql)
-
-    def _fallback_explain(self, nl: str, sql: str) -> str:
-        nl_lower = nl.lower()
-        if re.search(r"this\s+month.*user|user.*this\s+month", nl_lower):
-            return "Shows how many users signed up this month by grouping users whose creation date falls in the current calendar month."
-        if re.search(r"daily.*active|dau|user.*rate", nl_lower):
-            return "Shows daily active user counts based on login activity."
-        if re.search(r"last\s+login|when.*last.*login", nl_lower):
-            return "Shows each user's last login timestamp, sorted with the most recent first."
-        if re.search(r"user.*signup|registration.*trend", nl_lower):
-            return "Groups users by signup month to show registration trends over time."
-        if "count" in nl_lower and "user" in nl_lower:
-            return "Counts the total number of users in the database."
-        if "top" in nl_lower:
-            return "Retrieves top results by aggregating and sorting in descending order."
-        if "month" in nl_lower:
-            return "Groups data by month, showing totals for each period."
-        return f"Executes the generated SQL to answer: \"{nl}\""
-
-    def _fallback_optimize(self, sql: str) -> list[dict]:
-        suggestions = []
-        if "SELECT *" in sql:
-            suggestions.append({
-                "type": "select_star",
-                "description": "Avoid SELECT *; specify only needed columns to reduce I/O.",
-                "impact": "medium",
-            })
-        if "WHERE" in sql.upper():
-            suggestions.append({
-                "type": "missing_index",
-                "description": "Consider indexes on WHERE columns for faster filtering.",
-                "impact": "high",
-            })
-        if " JOIN " in sql.upper():
-            suggestions.append({
-                "type": "join_condition",
-                "description": "Ensure join columns are indexed for better performance.",
-                "impact": "high",
-            })
-        if "ORDER BY" in sql.upper() and "LIMIT" not in sql.upper() and "TOP" not in sql.upper():
-            suggestions.append({
-                "type": "missing_limit",
-                "description": "Add LIMIT with ORDER BY to reduce sorting overhead.",
-                "impact": "low",
-            })
-        suggestions.append({
-            "type": "analyze",
-            "description": "Run EXPLAIN ANALYZE to identify bottlenecks.",
-            "impact": "medium",
-        })
         return suggestions
 
 

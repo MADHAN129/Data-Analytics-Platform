@@ -71,20 +71,34 @@ def _get_schema_context(db_conn: DatabaseConnection) -> str:
             "",
             "AVAILABLE TABLES & STRUCTURE:"
         ]
+        
+        pk_map = {}
         for table in schema.tables:
             col_lines = []
             for c in table.columns:
                 pk_tag = " [PRIMARY KEY]" if c.is_primary_key else ""
+                if c.is_primary_key:
+                    pk_map[c.name.upper()] = table.name.upper()
                 col_lines.append(f"  - {c.name} ({c.data_type}{pk_tag})")
             lines.append(f"Table: {table.name}")
             lines.extend(col_lines)
             lines.append("")
 
-        if any(t.name in ("EMPLOYEES", "DEPARTMENTS", "PROJECTS", "SALES_RECORDS") for t in schema.tables):
+        # Dynamically infer relationships between tables based on foreign key column matches
+        relationships = []
+        for table in schema.tables:
+            t_upper = table.name.upper()
+            for c in table.columns:
+                c_upper = c.name.upper()
+                if not c.is_primary_key and c_upper.endswith("_ID"):
+                    if c_upper in pk_map and pk_map[c_upper] != t_upper:
+                        relationships.append(f"- {t_upper}.{c_upper} relates to {pk_map[c_upper]}.{c_upper}")
+        
+        if relationships:
             lines.append("RELATIONSHIPS:")
-            lines.append("- EMPLOYEES.DEPARTMENT_ID relates to DEPARTMENTS.DEPARTMENT_ID")
-            lines.append("- PROJECTS.DEPARTMENT_ID relates to DEPARTMENTS.DEPARTMENT_ID")
-            lines.append("- SALES_RECORDS.SALES_REP_ID relates to EMPLOYEES.EMPLOYEE_ID")
+            lines.extend(sorted(set(relationships)))
+            lines.append("")
+
         return "\n".join(lines)
     except Exception:
         return f"Database Type: {db_conn.connection_type}. Schema unavailable."
