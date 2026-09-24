@@ -66,7 +66,7 @@ class LLMService:
         if dialect == "Oracle SQL":
             dialect_rules = """
 - ORACLE SQL SYNTAX RULES:
-  * NEVER use the 'AS' keyword for table aliases (write 'FROM EMPLOYEES T1', NOT 'FROM EMPLOYEES AS T1').
+  * NEVER use the 'AS' keyword for table aliases (write 'FROM EMPLOYEES E', NOT 'FROM EMPLOYEES AS E').
   * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' to limit rows.
   * String concatenation uses || (e.g. FIRST_NAME || ' ' || LAST_NAME).
   * In GROUP BY queries, every column in the SELECT clause that is not an aggregate function (SUM, AVG, COUNT, etc.) MUST appear in the GROUP BY clause."""
@@ -91,13 +91,14 @@ class LLMService:
 DATABASE CONTEXT AND SCHEMA:
 {schema_context}
 
-RULES:
-1. ONLY reference tables and columns that exist in the schema above.
-2. Join related tables using foreign keys and primary keys when answering questions spanning multiple entities.
-3. Ensure all non-aggregate selected columns are included in GROUP BY when computing aggregations.
-4. Use proper {dialect} syntax:{dialect_rules}
-5. Add a reasonable row limit clause (e.g. FETCH FIRST 20 ROWS ONLY for Oracle, TOP 20 for SQL Server, LIMIT 20 for PostgreSQL/MySQL) if querying multiple rows.
-6. Return ONLY the raw SQL query. Do NOT include markdown code blocks, backticks, or explanatory text."""
+CRITICAL RULES:
+1. STRICT COLUMN GROUNDING: Every column you reference in SELECT, JOIN, WHERE, GROUP BY, or ORDER BY MUST exist under that specific table in the schema above. NEVER invent or assume columns (e.g. do not guess CUSTOMER_ID, DEPARTMENT_ID, or STATUS on a table unless it is explicitly listed under that table in the schema).
+2. ONLY RELEVANT TABLES: Only include tables that are directly required to answer the user's question. Do not join unrelated tables.
+3. VALID JOINS ONLY: Join tables only when there is a valid primary key / foreign key relationship between them. Never join tables on columns that do not exist.
+4. AGGREGATIONS & GROUP BY: All non-aggregated columns in SELECT must appear in GROUP BY.
+5. SYNTAX & DIALECT:{dialect_rules}
+6. ROW LIMIT: Include a row limit clause (e.g. FETCH FIRST 20 ROWS ONLY for Oracle, TOP 20 for SQL Server, LIMIT 20 for PostgreSQL/MySQL) when returning multi-row results.
+7. OUTPUT FORMAT: Return ONLY the raw SQL query. Do not wrap in conversational sentences."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
         if not raw or not raw.strip():
@@ -170,11 +171,14 @@ RULES:
         dialect = self._get_db_dialect(connection_type)
         system_prompt = self._build_schema_prompt(schema_context, dialect)
         fix_prompt = (
-            f"The following {dialect} query failed with a database execution error.\n\n"
+            f"The following {dialect} query failed with a database error.\n\n"
             f"User Question: {natural_language}\n\n"
             f"Failed SQL:\n{sql}\n\n"
             f"Database Error:\n{error}\n\n"
-            f"Please correct the query using the available schema and return ONLY the corrected raw SQL query."
+            f"INSTRUCTIONS TO FIX:\n"
+            f"- If the error is 'invalid identifier' (e.g. ORA-00904 or missing column), check the schema for that table and replace or remove the non-existent column/join.\n"
+            f"- Ensure all columns and table joins strictly exist in the schema provided in the system prompt.\n"
+            f"- Return ONLY the corrected raw SQL query without conversational text."
         )
         messages = [
             {"role": "system", "content": system_prompt},
