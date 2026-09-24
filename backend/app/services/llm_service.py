@@ -64,6 +64,15 @@ class LLMService:
             return None
 
     def _build_schema_prompt(self, schema_context: str, dialect: str) -> str:
+        dialect_rules = ""
+        if dialect == "Oracle SQL":
+            dialect_rules = """
+- ORACLE SQL SYNTAX RULES:
+  * NEVER use the 'AS' keyword for table aliases (write 'FROM EMPLOYEES T1', NOT 'FROM EMPLOYEES AS T1')
+  * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' to limit rows
+  * Use 'SELECT 1 FROM DUAL;' for constant queries
+  * String concatenation uses || (e.g. FIRST_NAME || ' ' || LAST_NAME)"""
+
         return f"""You are a SQL generation expert. Given a database schema and a user question, generate valid {dialect} SQL.
 
 DATABASE SCHEMA (only these tables and columns exist):
@@ -73,17 +82,14 @@ CRITICAL RULES - YOU MUST FOLLOW:
 - ONLY use table names and column names that are listed in the schema above. NEVER guess column names.
 - If you cannot find a matching table or column, respond with EXACTLY: ERROR: No matching table found for this question
 - Return ONLY the raw SQL query — no markdown fences, no backticks, no explanations
-- Use proper {dialect} syntax
-- Add LIMIT clause (or TOP for SQL Server) if the result could have many rows
+- Use proper {dialect} syntax{dialect_rules}
+- Add LIMIT clause (or TOP for SQL Server, or FETCH FIRST n ROWS ONLY for Oracle) if the result could have many rows
 - Use table aliases where helpful
 - For MongoDB, generate valid MongoDB aggregation pipeline JSON, not SQL
 - If the question is ambiguous, choose the most reasonable interpretation
-- Do NOT query information_schema. Do NOT embed schema text in your output.
+- Do NOT query information_schema. Do NOT embed schema text in your output."""
 
-MULTI-STEP DECOMPOSITION:
-If the user's question requires multiple distinct pieces of information (e.g., "compare sales by region and show top products"), generate a single SQL query using UNION, subqueries, or CTEs (WITH clause) to answer all parts in one statement. Each part should have a clear label column so the results can be separated."""
-
-    def _fixup_sql(self, raw: str) -> str:
+    def _fixup_sql(self, raw: str, dialect: str = "") -> str:
         if not raw or not raw.strip():
             return ""
         raw = raw.strip()
@@ -91,6 +97,15 @@ If the user's question requires multiple distinct pieces of information (e.g., "
         raw = re.sub(r"\s*```$", "", raw)
         raw = re.sub(r"\n+", "\n", raw).strip()
         raw = raw.rstrip(";") + ";"
+
+        if dialect == "Oracle SQL":
+            # Remove AS keyword from table aliases (e.g. FROM table AS t -> FROM table t)
+            raw = re.sub(r"\b(FROM|JOIN)\s+([a-zA-Z0-9_]+)\s+AS\s+([a-zA-Z0-9_]+)\b", r"\1 \2 \3", raw, flags=re.IGNORECASE)
+            # Fix LIMIT in Oracle
+            m_limit = re.search(r"\bLIMIT\s+(\d+)\s*;?$", raw, flags=re.IGNORECASE)
+            if m_limit:
+                limit_num = m_limit.group(1)
+                raw = re.sub(r"\bLIMIT\s+\d+\s*;?$", f"FETCH FIRST {limit_num} ROWS ONLY;", raw, flags=re.IGNORECASE)
         return raw
 
     def _is_sql_hallucinated(self, sql: str, schema_context: str) -> bool:
@@ -126,7 +141,7 @@ If the user's question requires multiple distinct pieces of information (e.g., "
         raw = self._call_vllm(messages, temperature=0.1)
         if raw is None or raw.startswith("ERROR:") or not raw.strip():
             return self._fallback_generate_sql(natural_language, dialect, schema_context)
-        fixed_sql = self._fixup_sql(raw)
+        fixed_sql = self._fixup_sql(raw, dialect)
         tokens = self._estimate_tokens(natural_language, fixed_sql)
         explanation_messages = [
             {"role": "system", "content": "Explain the SQL query briefly in 1-2 sentences. Be concise."},
@@ -158,7 +173,7 @@ If the user's question requires multiple distinct pieces of information (e.g., "
         if not raw.strip():
             return self._fallback_generate_sql(natural_language, dialect, schema_context)
 
-        sql = self._fixup_sql(raw)
+        sql = self._fixup_sql(raw, dialect)
         tokens = self._estimate_tokens(natural_language, sql)
 
         if self._is_sql_hallucinated(sql, schema_context):
@@ -349,7 +364,13 @@ If the user's question requires multiple distinct pieces of information (e.g., "
             return sql, f"Lists all accessible tables in the {dialect} database.", self._estimate_tokens(nl, sql)
 
         # 2. Check for Entity / Phrase queries (e.g. "Ai Analytics Core Engine budget", "Liam Chen salary", "Acme Global Corp")
-        stop_words = {"i", "need", "a", "an", "the", "show", "give", "me", "what", "is", "are", "tell", "about", "for", "in", "of", "with", "and", "please", "fetch", "find", "get", "details", "info", "data", "how", "much", "many"}
+        stop_words = {
+            "i", "need", "you", "to", "show", "give", "me", "what", "is", "are", "the", "a", "an",
+            "name", "names", "of", "person", "persons", "people", "who", "whom", "whose", "which",
+            "where", "tell", "about", "for", "in", "with", "and", "please", "fetch", "find", "get",
+            "details", "info", "data", "how", "much", "many", "all", "each", "every", "list", "search",
+            "check", "want", "would", "like", "see", "can"
+        }
         metric_words = {"budget", "salary", "salaries", "revenue", "cost", "price", "spent", "profit", "expenses", "margin", "headcount", "performance", "rating"}
         query_words = [w for w in re.findall(r"[a-zA-Z0-9]+", nl_lower) if w not in stop_words and len(w) > 1]
         
@@ -358,7 +379,12 @@ If the user's question requires multiple distinct pieces of information (e.g., "
         emp_keywords = {"employee", "employees", "staff", "developer", "engineer", "scientist", "manager", "director", "recruiter", "specialist", "architect"}
         sales_keywords = {"client", "customer", "customers", "license", "sale", "sales", "sold", "region", "territory", "acme", "starlight", "apex", "nordic", "pacific", "vertex", "quantum", "atlas", "zenith"}
 
-        structural_words = {"department", "dept", "departments", "project", "projects", "sales", "sale", "employee", "employees", "details", "info", "data", "record", "records", "table", "tables", "list", "show", "count", "all", "total"}
+        structural_words = {
+            "department", "dept", "departments", "project", "projects", "sales", "sale",
+            "employee", "employees", "details", "info", "data", "record", "records", "table",
+            "tables", "list", "show", "count", "all", "total", "manager", "managers", "name",
+            "names", "person", "persons", "who", "are", "the", "of", "to", "you"
+        }
         
         entity_table = None
         entity_where = None
