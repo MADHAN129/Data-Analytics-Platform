@@ -103,20 +103,40 @@ RULES:
         if not raw or not raw.strip():
             return ""
         raw = raw.strip()
-        raw = re.sub(r"^```(?:sql|json)?\s*", "", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\s*```$", "", raw)
-        raw = re.sub(r"\n+", "\n", raw).strip()
-        raw = raw.rstrip(";") + ";"
+
+        # 1. Search for markdown code block anywhere in the text
+        match = re.search(r"```(?:sql|json)?\s*([\s\S]*?)\s*```", raw, flags=re.IGNORECASE)
+        if match:
+            sql = match.group(1).strip()
+        else:
+            # 2. Extract starting from the first SQL keyword
+            sql_match = re.search(
+                r"\b(WITH\s+[a-zA-Z0-9_]+\s+AS|SELECT\b|INSERT\s+INTO|UPDATE\b|DELETE\s+FROM|SHOW\b|DESCRIBE\b)[\s\S]*",
+                raw,
+                flags=re.IGNORECASE,
+            )
+            sql = sql_match.group(0).strip() if sql_match else raw
+
+        # 3. Strip any conversational text after the ending semicolon
+        if ";" in sql:
+            parts = sql.split(";")
+            for p in parts:
+                if p.strip():
+                    sql = p.strip()
+                    break
+
+        sql = re.sub(r"\n+", "\n", sql).strip()
+        sql = sql.rstrip(";") + ";"
 
         if dialect == "Oracle SQL":
             # Sanitize Oracle table aliases: Oracle does not accept 'FROM table AS alias'
-            raw = re.sub(r"\b(FROM|JOIN)\s+([a-zA-Z0-9_]+)\s+AS\s+([a-zA-Z0-9_]+)\b", r"\1 \2 \3", raw, flags=re.IGNORECASE)
+            sql = re.sub(r"\b(FROM|JOIN)\s+([a-zA-Z0-9_]+)\s+AS\s+([a-zA-Z0-9_]+)\b", r"\1 \2 \3", sql, flags=re.IGNORECASE)
             # Replace LIMIT with FETCH FIRST n ROWS ONLY
-            m_limit = re.search(r"\bLIMIT\s+(\d+)\s*;?$", raw, flags=re.IGNORECASE)
+            m_limit = re.search(r"\bLIMIT\s+(\d+)\s*;?$", sql, flags=re.IGNORECASE)
             if m_limit:
                 limit_num = m_limit.group(1)
-                raw = re.sub(r"\bLIMIT\s+\d+\s*;?$", f"FETCH FIRST {limit_num} ROWS ONLY;", raw, flags=re.IGNORECASE)
-        return raw
+                sql = re.sub(r"\bLIMIT\s+\d+\s*;?$", f"FETCH FIRST {limit_num} ROWS ONLY;", sql, flags=re.IGNORECASE)
+        return sql
 
     def _estimate_tokens(self, nl: str, sql: str) -> int:
         return len(nl.split()) * 3 + len(sql.split()) * 2
