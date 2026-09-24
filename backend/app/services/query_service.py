@@ -178,10 +178,10 @@ def execute_natural_language_query(
             query_record.row_count = row_count
             query_record.execution_time_ms = elapsed
 
-            # Synthesize executive data insights from the returned dataset
+            # Synthesize executive data insights and visualization label assessment
             if rows and columns:
                 summary_explanation = llm_service.synthesize_data_summary(
-                    data.natural_language, columns, rows
+                    data.natural_language, sql, columns, rows
                 )
                 if summary_explanation:
                     query_record.explanation = summary_explanation

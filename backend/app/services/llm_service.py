@@ -274,11 +274,22 @@ CRITICAL RULES:
                 {"type": "table", "title": "Data Table", "config": {}},
             ]
 
-        # 2. Single detail record with multiple columns
+        # 2. Single detail record with label dimension and metric
+        if row_count == 1 and num_indices and text_indices:
+            dim_col = columns[text_indices[0]]
+            metric_col = columns[num_indices[0]]
+            y_label = metric_col.replace("_", " ").title()
+            x_label = dim_col.replace("_", " ").title()
+            return [
+                {"type": "bar_chart", "title": f"{y_label} by {x_label}", "config": {"x": dim_col, "y": metric_col}},
+                {"type": "table", "title": "Data Table", "config": {}},
+            ]
+
+        # 3. Single record with no numeric metrics
         if row_count == 1:
             return [{"type": "table", "title": "Record Details", "config": {}}]
 
-        # 3. No numeric metrics (pure tabular text)
+        # 4. No numeric metrics (pure tabular text)
         if not num_indices:
             return [{"type": "table", "title": "Data Table", "config": {}}]
 
@@ -318,33 +329,45 @@ CRITICAL RULES:
         suggestions.append({"type": "table", "title": "Data Table", "config": {}})
         return suggestions
 
-    def synthesize_data_summary(self, natural_language: str, columns: list[str], rows: list[list]) -> str:
+    def synthesize_data_summary(self, natural_language: str, sql: str, columns: list[str], rows: list[list]) -> str:
         """
-        Synthesize rich, executive data insights directly from the executed query dataset.
+        Synthesize rich data insights and visualization label assessment directly from the executed query.
         """
         if not rows or not columns:
-            return f"Query returned no records for: {natural_language}"
+            return f"Query executed successfully, but returned 0 rows for question: '{natural_language}'."
 
         sample_rows = rows[:10]
-        data_preview = f"Columns: {', '.join(columns)}\nSample Rows:\n" + "\n".join(str(r) for r in sample_rows)
+        data_preview = f"Columns: {', '.join(columns)}\nTotal Rows: {len(rows)}\nSample Rows:\n" + "\n".join(str(r) for r in sample_rows)
 
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are an executive AI data analyst. Given the user question and the query results, "
-                    "provide a clear, structured, and insightful summary answering the user question with the exact figures and metrics. "
-                    "Use clean bullet points and format numbers cleanly (e.g. currency $, percentages %, commas for thousands). "
-                    "Be concise, direct, and professional. Do NOT include raw SQL or code blocks."
+                    "You are an expert AI Database Agent with direct database tool access. "
+                    "Analyze the query results returned from the database to answer the user's question. "
+                    "Provide your response in the following clear, structured sections:\n\n"
+                    "### 📊 Key Findings & Insights\n"
+                    "Summarize the direct answers to the user's question using the exact values from the data. "
+                    "Use clean bullet points and format numbers (e.g. $ currency, % percentages, commas).\n\n"
+                    "### 📈 Visualization & Labels Assessment\n"
+                    "- **Visualizable**: State clearly whether this data can/should be visualized as a chart (Yes / No / Single Metric).\n"
+                    "- **Dimension Labels**: State which column(s) serve as category or time labels (or explain that no labels are present if it is a single scalar or multi-metric row).\n"
+                    "- **Label Presence**: Explicitly declare whether chartable labels are present in the dataset.\n"
+                    "- **Recommended Visual**: Specify the best visual representation (e.g., Bar Chart, Line Chart, Pie Chart, KPI Card, or Data Table) and why."
                 ),
             },
             {
                 "role": "user",
-                "content": f"User Question: {natural_language}\n\nQuery Results Data:\n{data_preview}\n\nPlease provide the executive analysis summary based on this data:",
+                "content": (
+                    f"User Request: {natural_language}\n\n"
+                    f"Executed SQL Query:\n{sql}\n\n"
+                    f"Database Results Data:\n{data_preview}\n\n"
+                    "Please provide the complete analysis and label assessment:"
+                ),
             },
         ]
-        summary = self._call_vllm(messages, temperature=0.2, max_tokens=512)
-        return summary.strip() if summary else f"Query completed with {len(rows)} result rows."
+        summary = self._call_vllm(messages, temperature=0.2, max_tokens=700)
+        return summary.strip() if summary else f"Query executed successfully ({len(rows)} rows returned)."
 
 
 llm_service = LLMService()

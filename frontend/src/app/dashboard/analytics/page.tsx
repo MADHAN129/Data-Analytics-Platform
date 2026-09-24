@@ -346,8 +346,8 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {currentQuery.explanation && (
-                <div className="rounded-lg bg-muted p-4 text-sm">
-                  <p>{currentQuery.explanation}</p>
+                <div className="rounded-lg bg-muted/60 border p-4 text-sm whitespace-pre-wrap leading-relaxed">
+                  <div className="space-y-1">{currentQuery.explanation}</div>
                 </div>
               )}
 
