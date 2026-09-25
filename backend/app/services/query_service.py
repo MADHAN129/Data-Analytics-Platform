@@ -365,31 +365,25 @@ def _find_best_column_match(col_name: str, valid_cols: set[str] | list[str], tab
     if col_upper in valid_upper:
         return col_upper
 
+    # Check without table prefix or common aggregate prefixes
     core_col = col_upper
     if table_name:
         t_prefix = table_name.rstrip("S").upper() + "_"
         if core_col.startswith(t_prefix):
             core_col = core_col[len(t_prefix):]
-    for pfx in ("TOTAL_", "AVG_", "SUM_", "MAX_", "MIN_"):
+    for pfx in ("TOTAL_", "AVG_", "SUM_", "MAX_", "MIN_", "COUNT_", "IS_", "HAS_"):
         if core_col.startswith(pfx):
             core_col = core_col[len(pfx):]
 
-    synonym_map = {
-        ("SPEND", "SPENDING", "COST", "EXPENSE"): "SPENT",
-        ("SALARY", "COMPENSATION", "PAY", "SALARY_COST"): "SALARY",
-        ("PROFIT", "EARNING", "NET"): "NET_PROFIT",
-        ("REVENUE", "SALES_AMOUNT", "SALES", "TURNOVER"): "TOTAL_REVENUE",
-        ("QUARTER_ID", "QTR"): "QUARTER",
-        ("NAME", "EMP_NAME", "EMPLOYEE_NAME", "FULLNAME"): "FIRST_NAME",
-    }
-    for syn_keys, target_col in synonym_map.items():
-        if any(sk in core_col for sk in syn_keys):
-            if target_col in valid_upper:
-                return target_col
-            for vc in valid_upper:
-                if target_col in vc or vc in target_col:
-                    return vc
+    if core_col in valid_upper:
+        return core_col
 
+    # Substring match against actual columns in this table
+    for vc in valid_upper:
+        if core_col in vc or vc in core_col:
+            return vc
+
+    # Fuzzy string matching against verified columns of this table
     close = difflib.get_close_matches(core_col, valid_upper, n=1, cutoff=0.5)
     if close:
         return close[0]

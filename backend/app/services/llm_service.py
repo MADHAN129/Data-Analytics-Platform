@@ -687,12 +687,12 @@ DATABASE CONTEXT AND SCHEMA:
 
     def analyze_intent_and_clarify(self, natural_language: str, schema_context: str, dialect: str = "SQL") -> dict:
         """
-        Agentic Intent Analyzer & Clarification Generator:
-        1. Inspects the schema to see if relevant tables/entities exist.
-        2. Determines if the question is broad/ambiguous vs already specific.
-        3. If broad (e.g. 'what is the sales'), generates interactive requirement options (Daily, Monthly, Today, By Category, Overall).
-        4. If specific, returns {"status": "direct"}.
-        5. If unrelated to the schema, returns helpful guidance with available tables.
+        Dynamic Agentic Intent Analyzer:
+        1. Inspects the connected database's live schema dynamically without hardcoded table names.
+        2. If the user asks to explore or list tables/schema in the database, returns dynamic exploration cards for the actual tables.
+        3. If the user asks any question (specific, broad, analytical, aggregations, filters), returns {"status": "direct"}
+           so the system immediately translates the sentence into executable SQL against the verified schema and executes it.
+        4. If the question is completely unrelated to any table or column in the database, returns the actual database tables to guide the user.
         """
         if not schema_context or not schema_context.strip():
             return {"status": "direct"}
@@ -730,170 +730,17 @@ DATABASE CONTEXT AND SCHEMA:
                 ],
             }
 
-        # Check if already specific:
-        # Check for specific timeframe / specific grouping / specific filter keywords
-        specific_time_markers = [
-            "today", "yesterday", "this month", "last month", "this year", "last year",
-            "last 7 days", "past 7 days", "last 30 days", "past 30 days", "last week", "this week",
-            "january", "february", "march", "april", "may", "june", "july", "august",
-            "september", "october", "november", "december",
-            "2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027",
-            "daily", "monthly", "yearly", "hourly", "weekly",
-            "group by", "order by", "top ", "bottom ", "limit ", "highest", "lowest",
-            "most", "least", "where ", "between ", "greater than", "less than"
-        ]
-        has_specific_time = any(marker in prompt_clean for marker in specific_time_markers)
-
-        specific_dimensions = [
-            "by item", "by category", "by product", "by customer", "by user",
-            "by status", "by payment", "by role", "by table", "by date", "per day", "per month"
-        ]
-        has_specific_dim = any(dim in prompt_clean for dim in specific_dimensions)
-
-        # If user gave a specific detailed question, proceed directly
-        if (has_specific_time or has_specific_dim) and len(prompt_clean.split()) > 3:
-            return {"status": "direct"}
-
-        # Check if question is very short / broad e.g. "what is the sales", "show sales", "revenue", "orders", "sales data", "how much sales"
-        broad_keywords = [
-            "sales", "revenue", "order", "orders", "income", "earning", "earnings",
-            "customer", "customers", "user", "users", "product", "products", "item", "items",
-            "transaction", "transactions", "payment", "payments", "booking", "bookings",
-            "data", "summary", "report", "analytics", "overview"
-        ]
-        is_broad = (
-            len(prompt_clean.split()) <= 6
-            and any(kw in prompt_clean for kw in broad_keywords)
-            and not (has_specific_time and has_specific_dim)
-        )
-
-        # Detect relevant tables in schema
-        sales_tables = [t for t in all_table_names if any(k in t.lower() for k in ("order", "sale", "payment", "bill", "invoice", "transaction", "revenue"))]
-        item_tables = [t for t in all_table_names if any(k in t.lower() for k in ("item", "product", "menu", "food", "dish", "category"))]
-        user_tables = [t for t in all_table_names if any(k in t.lower() for k in ("user", "customer", "member", "client", "staff", "employee"))]
-
-        # Check if prompt matches sales/revenue concepts
-        is_sales_prompt = any(k in prompt_clean for k in ("sale", "sales", "revenue", "earning", "income", "order", "orders", "spent", "amount", "money"))
-        is_user_prompt = any(k in prompt_clean for k in ("user", "users", "customer", "customers", "member", "client", "employee", "staff"))
-        is_item_prompt = any(k in prompt_clean for k in ("item", "items", "product", "products", "menu", "dish", "category", "food"))
-
-        if is_sales_prompt and sales_tables and (is_broad or not has_specific_time):
-            primary_table = sales_tables[0]
-            options = [
-                {
-                    "id": "today",
-                    "label": "📅 Today's Sales",
-                    "prompt": f"Show today's total sales and order count from {primary_table}",
-                    "description": "Total sales revenue and orders placed today",
-                },
-                {
-                    "id": "daily_7d",
-                    "label": "📆 Daily (Last 7 Days)",
-                    "prompt": f"Show daily sales revenue and orders for the last 7 days from {primary_table}",
-                    "description": "Day-by-day sales trend and order volume",
-                },
-                {
-                    "id": "monthly",
-                    "label": "📊 Monthly Breakdown",
-                    "prompt": f"Show monthly total sales revenue and orders count from {primary_table}",
-                    "description": "Monthly revenue performance over time",
-                },
-            ]
-            if item_tables:
-                options.append({
-                    "id": "top_items",
-                    "label": "🍔 Top Items & Categories",
-                    "prompt": "Show sales breakdown by top selling items and categories",
-                    "description": "Most popular items ranked by total revenue",
-                })
-            options.append({
-                "id": "overall_total",
-                "label": "💰 Overall Total Revenue",
-                "prompt": f"Show overall total sales revenue, order count, and average order value from {primary_table}",
-                "description": "All-time total sales summary and KPIs",
-            })
-
-            return {
-                "status": "clarify",
-                "message": (
-                    f"I found sales and order data in the `{primary_table}` table. "
-                    f"How would you like to view the sales data?"
-                ),
-                "options": options,
-            }
-
-        if is_user_prompt and user_tables and (is_broad or not has_specific_dim):
-            primary_table = user_tables[0]
-            options = [
-                {
-                    "id": "total_users",
-                    "label": "👥 Total Count & Growth",
-                    "prompt": f"Show total count of users and recent signups from {primary_table}",
-                    "description": "Total registered users and latest additions",
-                },
-                {
-                    "id": "users_by_role",
-                    "label": "🛡️ Breakdown by Role / Status",
-                    "prompt": f"Show user distribution grouped by role or status from {primary_table}",
-                    "description": "Active vs inactive users and role assignments",
-                },
-                {
-                    "id": "top_active_users",
-                    "label": "⭐ Most Active Customers",
-                    "prompt": "Show top customers with the highest orders or activity",
-                    "description": "Top customers ranked by total spend or orders",
-                },
-            ]
-            return {
-                "status": "clarify",
-                "message": (
-                    f"I found user and customer records in `{primary_table}`. "
-                    f"What aspect of user data would you like to explore?"
-                ),
-                "options": options,
-            }
-
-        if is_item_prompt and item_tables and is_broad:
-            primary_table = item_tables[0]
-            options = [
-                {
-                    "id": "all_items_summary",
-                    "label": "📋 Items & Categories List",
-                    "prompt": f"Show all items with category and pricing from {primary_table}",
-                    "description": "Complete list of items and prices",
-                },
-                {
-                    "id": "top_selling_items",
-                    "label": "🏆 Top Selling Items",
-                    "prompt": "Show top 10 best selling items by revenue and quantity",
-                    "description": "Highest revenue generating items",
-                },
-                {
-                    "id": "items_by_category",
-                    "label": "📂 Items Count by Category",
-                    "prompt": "Show number of items and average price grouped by category",
-                    "description": "Category distribution and average price",
-                },
-            ]
-            return {
-                "status": "clarify",
-                "message": (
-                    f"I found menu and catalog items in `{primary_table}`. "
-                    f"How would you like to inspect the items?"
-                ),
-                "options": options,
-            }
-
-        # Check if question is completely unrelated to the connected database
-        if not any(t.lower() in prompt_clean for t in all_table_names) and len(prompt_clean.split()) <= 5:
-            matches_any_column = any(c in prompt_clean for c in all_columns)
-            matches_any_table = any(t.lower() in prompt_clean for t in all_table_names)
-            if not matches_any_column and not matches_any_table and all_table_names:
+        # Check if question is completely unrelated (less than 4 words, no match with any table or column)
+        words = set(re.findall(r"\b[a-zA-Z]{3,}\b", prompt_clean))
+        if len(prompt_clean.split()) <= 3 and all_table_names:
+            matches_table = any(t.lower() in prompt_clean or any(w in t.lower() for w in words) for t in all_table_names)
+            matches_col = any(c.lower() in prompt_clean or any(w in c.lower() for w in words) for c in all_columns)
+            if not matches_table and not matches_col and not any(kw in prompt_clean for kw in ("count", "show", "find", "get", "list", "select", "which", "what", "how", "top", "best", "total")):
                 table_list_str = ", ".join(f"`{t}`" for t in all_table_names[:8])
                 return {
                     "status": "unrelated",
                     "message": (
-                        f"I searched your connected database, but couldn't find data directly matching '{natural_language}'.\n\n"
+                        f"I searched your connected database, but couldn't find data matching '{natural_language}'.\n\n"
                         f"Your database contains the following tables: {table_list_str}.\n"
                         f"You can choose one of the suggestions below or ask about any of these tables:"
                     ),
@@ -903,41 +750,54 @@ DATABASE CONTEXT AND SCHEMA:
                             "label": f"📊 Explore {t.replace('_', ' ').title()}",
                             "prompt": f"Show summary and top records from {t}",
                             "description": f"Overview of data in {t}",
+                            "icon": "📊",
                         }
                         for t in all_table_names[:4]
                     ],
                 }
 
+        # Proceed directly to sentence analysis, SQL generation, and live execution
         return {"status": "direct"}
 
     def generate_follow_up_suggestions(
         self, natural_language: str, sql: str, columns: list[str], rows: list[list]
     ) -> list[str]:
-        """Generate 3-4 insightful follow-up suggestion prompts based on the executed query."""
+        """Generate dynamic, column-driven follow-up suggestions based on the query results."""
         suggestions = []
         nl_lower = natural_language.lower()
-        cols_lower = [c.lower() for c in (columns or [])]
+        cols = columns or []
 
-        if "today" in nl_lower or "daily" in nl_lower:
-            suggestions.append("Compare this with the previous week")
-            suggestions.append("Show monthly breakdown for this year")
-        elif "month" in nl_lower:
-            suggestions.append("Show daily trend for the highest performing month")
-            suggestions.append("Compare month-over-month growth rate")
-        else:
-            suggestions.append("Show daily trend for the last 7 days")
+        numeric_cols = []
+        text_cols = []
+        date_cols = []
 
-        if any("item" in c or "product" in c or "menu" in c for c in cols_lower):
-            suggestions.append("Show top 5 items by total revenue")
-            suggestions.append("Break down sales by category")
-        elif any("user" in c or "customer" in c for c in cols_lower):
-            suggestions.append("Show top customers by total spending")
-        else:
-            suggestions.append("Break down results by category or item")
+        for c in cols:
+            c_low = c.lower()
+            if any(k in c_low for k in ("date", "time", "year", "month", "day", "quarter", "created", "updated", "period")):
+                date_cols.append(c)
+            elif any(k in c_low for k in ("id", "code", "num", "no")):
+                pass
+            elif any(k in c_low for k in ("amount", "sum", "total", "avg", "count", "revenue", "profit", "price", "cost", "salary", "expense", "rate", "pct", "margin", "qty", "quantity", "val", "value", "balance", "score")):
+                numeric_cols.append(c)
+            else:
+                text_cols.append(c)
 
-        if any("revenue" in c or "total" in c or "amount" in c or "price" in c for c in cols_lower):
-            suggestions.append("What is the average order value?")
-            suggestions.append("Show the highest and lowest single orders")
+        if numeric_cols and text_cols:
+            suggestions.append(f"Show {numeric_cols[0]} breakdown by {text_cols[0]}")
+            suggestions.append(f"Show top 5 {text_cols[0]} ranked by {numeric_cols[0]}")
+        elif numeric_cols:
+            suggestions.append(f"Show highest and lowest records by {numeric_cols[0]}")
+            suggestions.append(f"Show summary statistics for {numeric_cols[0]}")
+
+        if date_cols:
+            suggestions.append(f"Show trend over time by {date_cols[0]}")
+
+        if text_cols and len(text_cols) >= 2:
+            suggestions.append(f"Group records by {text_cols[0]} and {text_cols[1]}")
+
+        if not suggestions:
+            suggestions.append("Show summary breakdown for these results")
+            suggestions.append("Show top records ranked by key metric")
 
         unique_suggestions = []
         for s in suggestions:

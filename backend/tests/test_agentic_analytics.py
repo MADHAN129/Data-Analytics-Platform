@@ -95,35 +95,24 @@ def test_sql_validation_custom_database_tables():
     assert "Available tables are: MENU_ITEMS, RESTAURANTS" in err
 
 
-def test_intent_analysis_broad_sales_query():
-    """Test that a broad sales query returns clarify status with rich option cards."""
+def test_intent_analysis_direct_sentence_parsing():
+    """Test that analytical queries proceed directly to sentence-to-SQL translation without hardcoded intercepts."""
     schema_context = "Table: sales [id (INTEGER), order_date (TIMESTAMP), total_amount (NUMERIC), category (VARCHAR)]"
     res = llm_service.analyze_intent_and_clarify("what is the sales", schema_context)
-    assert res["status"] == "clarify"
-    assert "sales" in res["message"].lower()
-    assert len(res["options"]) >= 3
-    assert any("Today" in opt["label"] for opt in res["options"])
-    assert any("Monthly" in opt["label"] for opt in res["options"])
-
-
-def test_intent_analysis_specific_query():
-    """Test that a specific and targeted query proceeds directly to execution without unnecessary clarification."""
-    schema_context = "Table: sales [id (INTEGER), order_date (TIMESTAMP), total_amount (NUMERIC)]"
-    res = llm_service.analyze_intent_and_clarify("show total sales revenue for today", schema_context)
     assert res["status"] == "direct"
 
 
-def test_intent_analysis_unrelated_query():
-    """Test that an unrelated query provides helpful guidance with available tables."""
+def test_intent_analysis_schema_listing():
+    """Test that asking for tables or schema dynamically lists the connected database tables."""
     schema_context = "Table: employees [id (INTEGER), first_name (VARCHAR), salary (NUMERIC)]"
-    res = llm_service.analyze_intent_and_clarify("what is the weather", schema_context)
-    assert res["status"] == "unrelated"
+    res = llm_service.analyze_intent_and_clarify("what tables are available", schema_context)
+    assert res["status"] == "clarify"
     assert "employees" in res["message"].lower()
     assert len(res["options"]) >= 1
 
 
 def test_follow_up_suggestions_generation():
-    """Test generating insightful follow-up suggestion pills based on executed query."""
+    """Test generating dynamic follow-up suggestion pills based on executed query columns."""
     suggestions = llm_service.generate_follow_up_suggestions(
         natural_language="Show total sales today",
         sql="SELECT SUM(total_amount) FROM sales WHERE order_date = CURRENT_DATE",
@@ -132,7 +121,7 @@ def test_follow_up_suggestions_generation():
     )
     assert len(suggestions) > 0
     assert len(suggestions) <= 4
-    assert any("week" in s.lower() or "month" in s.lower() or "category" in s.lower() for s in suggestions)
+    assert any("total_amount" in s or "order_date" in s for s in suggestions)
 
 
 def test_conversation_clarification_message_schema():
