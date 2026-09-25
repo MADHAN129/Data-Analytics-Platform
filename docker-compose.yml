@@ -39,6 +39,8 @@ services:
   backend:
     build: ./backend
     container_name: agentic-backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8090:8090"
     environment:
