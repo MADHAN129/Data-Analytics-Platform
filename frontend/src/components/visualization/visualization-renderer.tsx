@@ -205,7 +205,7 @@ function fixPieConfig(results: QueryResult, config?: Record<string, unknown>) {
 function BarChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, x, y } = fixBarConfig(results, config)
   return (
-    <div className="w-full h-[320px]">
+    <div className="w-full h-full min-h-[240px]">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 10, right: 10, bottom: 25, left: 10 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
@@ -248,7 +248,7 @@ function PieChartView({ results, config }: { results: QueryResult; config?: Reco
   }
 
   return (
-    <div className="w-full h-[340px] flex flex-col items-center justify-center">
+    <div className="w-full h-full min-h-[240px] flex flex-col items-center justify-center">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart margin={{ top: 15, right: 15, bottom: 15, left: 15 }}>
           <Pie
@@ -290,7 +290,7 @@ function PieChartView({ results, config }: { results: QueryResult; config?: Reco
 function LineChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, x, y } = fixBarConfig(results, config)
   return (
-    <div className="w-full h-[320px]">
+    <div className="w-full h-full min-h-[240px]">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 10, right: 10, bottom: 25, left: 10 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
@@ -316,7 +316,7 @@ function LineChartView({ results, config }: { results: QueryResult; config?: Rec
 function AreaChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, x, y } = fixBarConfig(results, config)
   return (
-    <div className="w-full h-[320px]">
+    <div className="w-full h-full min-h-[240px]">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 10, right: 10, bottom: 25, left: 10 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
@@ -356,28 +356,35 @@ function KpiView({ results }: { results: QueryResult }) {
 function TableView({ results }: { results: QueryResult }) {
   if (!results.columns || results.columns.length === 0) return null
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-muted/50">
+    <div className="w-full h-full max-h-[360px] min-h-0 overflow-auto rounded-lg border bg-background/50 shadow-inner">
+      <table className="w-full text-sm border-collapse">
+        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm shadow-xs border-b">
+          <tr className="border-b bg-muted/60">
             {results.columns.map((col, i) => (
-              <th key={i} className="px-4 py-2 text-left font-medium text-muted-foreground">{col}</th>
+              <th
+                key={i}
+                className="px-4 py-2.5 text-left font-semibold text-xs tracking-wide text-muted-foreground whitespace-nowrap"
+              >
+                {col}
+              </th>
             ))}
           </tr>
         </thead>
-        <tbody>
-          {results.rows.slice(0, 50).map((row, i) => (
-            <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+        <tbody className="divide-y divide-border/30">
+          {results.rows.map((row, i) => (
+            <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/40 transition-colors">
               {row.map((cell, j) => (
-                <td key={j} className="px-4 py-2">{String(cell ?? "—")}</td>
+                <td key={j} className="px-4 py-2 text-sm whitespace-nowrap">
+                  {cell !== null && cell !== undefined ? String(cell) : "—"}
+                </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
-      {results.row_count > 50 && (
-        <div className="border-t bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-          Showing 50 of {results.row_count} rows
+      {results.row_count > results.rows.length && (
+        <div className="sticky bottom-0 z-10 border-t bg-muted/95 backdrop-blur-sm px-4 py-1.5 text-xs text-muted-foreground">
+          Showing {results.rows.length} of {results.row_count} rows
         </div>
       )}
     </div>
@@ -396,54 +403,68 @@ export function VisualizationRenderer({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="w-full h-full min-h-0 flex-1 flex flex-col space-y-3">
       {suggestions.map((v, i) => {
         const config = v.config || {}
         switch (v.type) {
           case "bar_chart":
             return (
-              <div key={i}>
-                <p className="mb-2 text-sm font-medium">{v.title || "Bar Chart"}</p>
-                <BarChartView results={results} config={config} />
+              <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col">
+                {v.title && <p className="mb-2 text-sm font-medium">{v.title}</p>}
+                <div className="flex-1 min-h-[220px] w-full">
+                  <BarChartView results={results} config={config} />
+                </div>
               </div>
             )
           case "pie_chart":
             return (
-              <div key={i}>
-                <p className="mb-2 text-sm font-medium">{v.title || "Pie Chart"}</p>
-                <PieChartView results={results} config={config} />
+              <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col">
+                {v.title && <p className="mb-2 text-sm font-medium">{v.title}</p>}
+                <div className="flex-1 min-h-[220px] w-full">
+                  <PieChartView results={results} config={config} />
+                </div>
               </div>
             )
           case "line_chart":
             return (
-              <div key={i}>
-                <p className="mb-2 text-sm font-medium">{v.title || "Line Chart"}</p>
-                <LineChartView results={results} config={config} />
+              <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col">
+                {v.title && <p className="mb-2 text-sm font-medium">{v.title}</p>}
+                <div className="flex-1 min-h-[220px] w-full">
+                  <LineChartView results={results} config={config} />
+                </div>
               </div>
             )
           case "area_chart":
             return (
-              <div key={i}>
-                <p className="mb-2 text-sm font-medium">{v.title || "Area Chart"}</p>
-                <AreaChartView results={results} config={config} />
+              <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col">
+                {v.title && <p className="mb-2 text-sm font-medium">{v.title}</p>}
+                <div className="flex-1 min-h-[220px] w-full">
+                  <AreaChartView results={results} config={config} />
+                </div>
               </div>
             )
           case "kpi":
             return (
-              <div key={i}>
-                <p className="mb-1 text-sm font-medium">{v.title || "KPI"}</p>
+              <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col justify-center">
+                {v.title && <p className="mb-1 text-sm font-medium">{v.title}</p>}
                 <KpiView results={results} />
               </div>
             )
           case "table":
             return (
-              <div key={i}>
+              <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col overflow-hidden">
                 {v.title && <p className="mb-2 text-sm font-medium">{v.title}</p>}
-                <TableView results={results} />
+                <div className="flex-1 min-h-0 h-full overflow-hidden">
+                  <TableView results={results} />
+                </div>
               </div>
             )
           default:
-            return <TableView key={i} results={results} />
+            return (
+              <div key={i} className="w-full h-full min-h-0 flex-1 flex flex-col overflow-hidden">
+                <TableView results={results} />
+              </div>
+            )
         }
       })}
     </div>

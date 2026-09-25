@@ -440,8 +440,8 @@ export default function DashboardDetailPage() {
             onLayoutChange={handleLayoutChange}
           >
             {dash.widgets.map((widget) => (
-              <Card key={widget.id} className="overflow-hidden">
-                <CardHeader className="flex flex-row items-center justify-between py-2 px-4">
+              <Card key={widget.id} className="overflow-hidden flex flex-col h-full">
+                <CardHeader className="flex flex-row items-center justify-between py-2 px-4 shrink-0">
                   <div className="flex items-center gap-2">
                     <div className="drag-handle cursor-grab active:cursor-grabbing">
                       <GripVertical className="h-4 w-4 text-muted-foreground" />
@@ -489,7 +489,7 @@ export default function DashboardDetailPage() {
                     </Button>
                   </div>
                 </CardHeader>
-                <CardContent className="p-4 pt-0" style={{ height: `calc(100% - 40px)` }}>
+                <CardContent className="p-4 pt-0 flex-1 min-h-0 overflow-hidden flex flex-col" style={{ height: `calc(100% - 40px)` }}>
                   <WidgetContent
                     widget={widget}
                     liveData={liveData.get(widget.id)}
@@ -743,7 +743,11 @@ function WidgetChartRenderer({
     } as VisualizationSuggestion
   }, [widget, suggestions, results])
 
-  return <VisualizationRenderer results={results} suggestions={[targetSuggestion]} />
+  return (
+    <div className="w-full h-full min-h-0 flex-1 flex flex-col overflow-hidden">
+      <VisualizationRenderer results={results} suggestions={[targetSuggestion]} />
+    </div>
+  )
 }
 
 function QueryPicker({
