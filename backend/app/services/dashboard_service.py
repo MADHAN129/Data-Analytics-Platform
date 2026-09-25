@@ -214,8 +214,8 @@ def auto_generate_from_query(
 
     schema_context = _run_with_timeout(_build_schema, 12) or "Schema unavailable"
 
-    # 1) Decompose the user's request into a set of widget specs.
-    specs = _plan_widgets(query_text, schema_context)
+    # 1) Decompose the request or automatically analyze schema into a set of widget specs.
+    specs = _plan_widgets(query_text, schema_context, db_conn.name if db_conn else "")
 
     # 2) Derive a readable dashboard title from the request.
     if query_text and query_text.strip():
@@ -223,13 +223,14 @@ def auto_generate_from_query(
         if not title.endswith(("?", ".", "!")):
             title += "…" if len(query_text.strip()) > 60 else ""
     else:
-        title = "Auto-generated Dashboard"
+        title = f"{db_conn.name} Analytics Dashboard" if db_conn else "Auto-generated Dashboard"
 
     dash = Dashboard(
         user_id=user_id or 0,
         title=title,
         description="Automatically generated dashboard based on your request."
-        if query_text else "Automatically generated dashboard based on query analysis",
+        if (query_text and query_text.strip())
+        else f"AI-generated analytics dashboard analyzing {db_conn.name} database with pie charts, bar charts, and data tables.",
         auto_generated=True,
     )
     db.add(dash)
@@ -251,12 +252,12 @@ def auto_generate_from_query(
             generated = None
         if not generated:
             sql = _heuristic_sql(natural_language, schema_context, db_conn.connection_type)
-            explanation = "Generated from your request (LLM unavailable)."
+            explanation = "Generated from database schema analysis (LLM unavailable)."
         else:
             sql, explanation, _ = generated
         if not sql or sql.strip() in (";", ""):
-            sql = _get_empty_query_response(db_conn.connection_type)
-            explanation = "Could not generate a valid SQL query."
+            sql = _heuristic_sql(natural_language, schema_context, db_conn.connection_type)
+            explanation = "Generated from database schema analysis."
 
         status = "completed"
         result_columns = None
@@ -322,36 +323,45 @@ def auto_generate_from_query(
     return dash
 
 
-def _plan_widgets(query_text: str | None, schema_context: str) -> list[dict]:
-    """Turn a free-form request into a list of widget specs.
+def _plan_widgets(query_text: str | None, schema_context: str, db_name: str = "") -> list[dict]:
+    """Turn a request or automatic schema analysis into a rich list of widget specs.
 
-    Each spec: {"title", "question", "chart_type"}. Prefers the LLM to split the
-    request into multiple charts; falls back to a heuristic split when the LLM
-    is unavailable (mock mode) or returns nothing usable.
+    If query_text is empty, analyzes schema_context to automatically produce a 
+    comprehensive executive dashboard containing Pie Charts, Bar Charts, and Data Tables.
     """
     import json
     import re
-
-    default = {
-        "title": "Query Results",
-        "question": query_text or "Show me an overview of the data",
-        "chart_type": "table",
-    }
-
-    if not query_text or not query_text.strip():
-        return [default]
-
     from app.services.llm_service import llm_service
 
-    prompt = (
-        "You are a BI dashboard assistant. Given a user's request, break it into "
-        "separate visualization widgets. For each widget return a JSON object with: "
-        "title (short), question (a single natural-language query), and chart_type "
-        "(one of: bar_chart, line_chart, pie_chart, area_chart, kpi, table).\n"
-        "Respond with a JSON array ONLY, no markdown.\n\n"
-        f"User request: {query_text}\n"
-        f"Database schema:\n{schema_context[:2000]}"
-    )
+    is_auto_analysis = not query_text or not query_text.strip()
+
+    if is_auto_analysis:
+        prompt = (
+            "You are an expert BI data architect. Analyze the provided database schema and design a comprehensive "
+            "executive analytics dashboard with 4 distinct visualization widgets. "
+            "You MUST include:\n"
+            "1. At least one 'pie_chart' for categorical distribution/proportions (e.g. by status, category, department, role).\n"
+            "2. At least one 'bar_chart' for metric comparisons/rankings across entities or departments.\n"
+            "3. At least one 'table' for top records, details, or overview data.\n"
+            "4. An additional relevant chart ('bar_chart', 'pie_chart', or 'table') highlighting key metrics.\n\n"
+            "For each widget return a JSON object with:\n"
+            "- title: Short descriptive title (e.g. 'Department Headcount', 'Average Salary by Role', 'Top 10 Transactions')\n"
+            "- question: Clear natural language question referencing actual tables/columns from schema\n"
+            "- chart_type: exactly one of 'pie_chart', 'bar_chart', 'line_chart', 'table', 'kpi'\n\n"
+            "Respond with a valid JSON array of objects ONLY, no markdown, no explanation.\n\n"
+            f"Database Schema:\n{schema_context[:3000]}"
+        )
+    else:
+        prompt = (
+            "You are a BI dashboard assistant. Given a user's request and database schema, break it into "
+            "a set of 3 to 5 separate visualization widgets. Ensure a rich mix of widget types ('bar_chart', 'pie_chart', 'table', 'line_chart'). "
+            "For each widget return a JSON object with: title (short), question (a single natural-language query), "
+            "and chart_type (one of: bar_chart, line_chart, pie_chart, area_chart, kpi, table).\n"
+            "Respond with a JSON array ONLY, no markdown.\n\n"
+            f"User request: {query_text}\n"
+            f"Database schema:\n{schema_context[:2500]}"
+        )
+
     raw = None
     if not llm_service.use_mock:
         try:
@@ -371,7 +381,7 @@ def _plan_widgets(query_text: str | None, schema_context: str) -> list[dict]:
         cleaned = re.sub(r"\s*```$", "", cleaned)
         try:
             parsed = json.loads(cleaned)
-            if isinstance(parsed, list) and parsed:
+            if isinstance(parsed, list) and len(parsed) >= 2:
                 specs = []
                 for item in parsed[:6]:
                     if not isinstance(item, dict):
@@ -384,47 +394,124 @@ def _plan_widgets(query_text: str | None, schema_context: str) -> list[dict]:
                         "question": q,
                         "chart_type": _normalize_chart_type(item.get("chart_type")),
                     })
-                if specs:
+                if len(specs) >= 2:
+                    if is_auto_analysis:
+                        types = {s["chart_type"] for s in specs}
+                        if "pie_chart" not in types and len(specs) > 0:
+                            specs[0]["chart_type"] = "pie_chart"
+                        if "bar_chart" not in types and len(specs) > 1:
+                            specs[1]["chart_type"] = "bar_chart"
+                        if "table" not in types and len(specs) > 2:
+                            specs[2]["chart_type"] = "table"
                     return specs
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Heuristic fallback: split the request into clauses and map obvious
-    # keywords to chart types. Guarantees multiple widgets even without the LLM.
-    clauses = re.split(r"(?i)\b(and|,|;|then|\.|\bl\.?\b)", query_text)
-    clauses = [c.strip(" .,;") for c in clauses if c and c.strip(" .,") and len(c.strip()) > 3]
-    if not clauses:
-        clauses = [query_text.strip()]
+    # Heuristic fallback: dynamically extract schema tables and columns
+    return _heuristic_schema_plan(schema_context, query_text)
 
-    # Drop clauses that are meta-instructions rather than data requests
-    # (e.g. "i need it in the three different graphs", "please show this").
-    instruction_markers = (
-        "i need", "i want", "please", "in the", "different", "graph", "chart",
-        "dashboard", "visualization", "widgets", "separate", "display",
-    )
-    data_clauses = []
-    for c in clauses:
-        low = c.lower()
-        if any(m in low for m in instruction_markers) and not any(
-            k in low for k in ("per ", "total", "count", "sum", "amount", "number of", "no of", "sales", "users", "by ")
-        ):
-            continue
-        data_clauses.append(c)
+
+def _heuristic_schema_plan(schema_context: str, query_text: str | None = None) -> list[dict]:
+    """Dynamically parse schema_context to build Pie Chart, Bar Chart, and Data Table widgets."""
+    import re
+
+    table_matches = re.findall(r"Table:\s*(\w+)\s*\[([^\]]*)\]", schema_context)
+    tables_info = []
+    for t_name, cols_raw in table_matches:
+        col_list = []
+        for c in cols_raw.split(","):
+            c_clean = c.strip()
+            if not c_clean:
+                continue
+            parts = c_clean.split(" ")
+            c_name = parts[0]
+            c_type = parts[1] if len(parts) > 1 else ""
+            col_list.append((c_name, c_type))
+        tables_info.append((t_name, col_list))
+
+    if not tables_info:
+        return [
+            {"title": "Overview", "question": query_text or "Show overview data", "chart_type": "table"}
+        ]
+
+    # Pick the primary / most interesting table
+    primary_table, primary_cols = tables_info[0]
+    for t_name, cols in tables_info:
+        t_low = t_name.lower()
+        if any(k in t_low for k in ("employee", "sale", "order", "product", "user", "customer", "transaction", "item")):
+            primary_table, primary_cols = t_name, cols
+            break
+
+    col_names = [c[0] for c in primary_cols]
+
+    # 1. Numeric / Metric columns
+    num_col = next((c for c in col_names if any(k in c.lower() for k in ("salary", "amount", "price", "total", "revenue", "sales", "qty", "quantity", "cost", "balance", "rate", "score"))), None)
+    if not num_col:
+        num_col = next((c for c in col_names if any(k in c.lower() for k in ("id", "count", "num")) and not c.lower().endswith("_id")), None)
+
+    # 2. Category columns for Pie Chart & Bar Chart
+    cat_col = next((c for c in col_names if any(k in c.lower() for k in ("department", "dept", "category", "status", "role", "type", "gender", "country", "city", "brand", "state"))), None)
+    if not cat_col:
+        cat_col = next((c for c in col_names if c.lower().endswith("_id") or "name" in c.lower()), col_names[0] if col_names else "CATEGORY")
+
+    # 3. Secondary category or status column
+    secondary_cat = next((c for c in col_names if c != cat_col and any(k in c.lower() for k in ("status", "type", "role", "department", "city", "country", "name"))), None)
 
     specs = []
-    for clause in data_clauses[:6]:
-        chart = _infer_chart_type(clause)
+
+    # 1. PIE CHART - Category / Status Distribution
+    pie_cat = secondary_cat or cat_col
+    specs.append({
+        "title": f"{primary_table} by {pie_cat}".replace("_", " ").title(),
+        "question": f"Show the distribution and breakdown of {primary_table} by {pie_cat} as a pie chart",
+        "chart_type": "pie_chart",
+    })
+
+    # 2. BAR CHART - Metric comparison by Category
+    if num_col and cat_col:
         specs.append({
-            "title": clause[:40].capitalize(),
-            "question": clause.strip(),
-            "chart_type": chart,
+            "title": f"{num_col} by {cat_col}".replace("_", " ").title(),
+            "question": f"Show {num_col} by {cat_col} in {primary_table} as a bar chart",
+            "chart_type": "bar_chart",
         })
-    if not specs:
-        specs = [{
-            "title": query_text[:40].capitalize(),
-            "question": query_text.strip(),
+    else:
+        specs.append({
+            "title": f"{primary_table} Volume Comparison".replace("_", " ").title(),
+            "question": f"Show count of {primary_table} grouped by {cat_col} as a bar chart",
+            "chart_type": "bar_chart",
+        })
+
+    # 3. SECOND BAR / DISTRIBUTION CHART
+    if len(tables_info) > 1 and tables_info[1][0] != primary_table:
+        sec_table, sec_cols = tables_info[1]
+        sec_col_names = [c[0] for c in sec_cols]
+        sec_cat = next((c for c in sec_col_names if any(k in c.lower() for k in ("name", "status", "category", "type"))), sec_col_names[0] if sec_col_names else "ID")
+        specs.append({
+            "title": f"{sec_table} Breakdown".replace("_", " ").title(),
+            "question": f"Show count of records in {sec_table} grouped by {sec_cat} as a bar chart",
+            "chart_type": "bar_chart",
+        })
+    elif num_col:
+        specs.append({
+            "title": f"Top {num_col} Ranking".replace("_", " ").title(),
+            "question": f"Show highest {num_col} values in {primary_table} as a bar chart",
+            "chart_type": "bar_chart",
+        })
+
+    # 4. DATA TABLE - Detailed top records
+    if num_col:
+        specs.append({
+            "title": f"Top 10 {primary_table} by {num_col}".replace("_", " ").title(),
+            "question": f"Show top 10 rows from {primary_table} ordered by {num_col} descending",
             "chart_type": "table",
-        }]
+        })
+    else:
+        specs.append({
+            "title": f"{primary_table} Overview Table".replace("_", " ").title(),
+            "question": f"Show recent rows from {primary_table} table",
+            "chart_type": "table",
+        })
+
     return specs
 
 
@@ -437,9 +524,11 @@ def _normalize_chart_type(value: str | None) -> str:
 
 def _infer_chart_type(text: str) -> str:
     t = text.lower()
+    if any(k in t for k in ["pie", "share", "proportion"]):
+        return "pie_chart"
     if any(k in t for k in ["per day", "over time", "trend", "daily", "monthly", "timeline", "by date"]):
         return "line_chart"
-    if any(k in t for k in ["distribution", "share", "percentage", "breakdown", "by", "per ", "per role", "per category"]):
+    if any(k in t for k in ["distribution", "percentage", "breakdown", "by", "per ", "per role", "per category", "ranking", "compare"]):
         return "bar_chart"
     if any(k in t for k in ["total", "sum", "count", "number of", "no of", "amount", "revenue"]):
         return "kpi"
@@ -455,44 +544,70 @@ def _get_empty_query_response(connection_type: str = "postgresql") -> str:
 
 
 def _heuristic_sql(question: str, schema_context: str, connection_type: str = "postgresql") -> str:
-    """Best-effort SQL when the LLM is unavailable or times out.
-
-    Picks the most likely single table from the schema and builds a GROUP BY
-    aggregation matching the request. Always read-only.
-    """
+    """Best-effort SQL when the LLM is unavailable or times out."""
     import re
 
-    tables = re.findall(r"Table:\s*(\w+)", schema_context)
-    if not tables:
-        return _get_empty_query_response(connection_type)
-    table = tables[0]
+    c_type = (connection_type or "").lower()
+    is_oracle = "oracle" in c_type
+    is_sqlserver = "sqlserver" in c_type or "mssql" in c_type
+
+    table_matches = re.findall(r"Table:\s*(\w+)\s*\[([^\]]*)\]", schema_context)
+    if not table_matches:
+        tables = re.findall(r"Table:\s*(\w+)", schema_context)
+        if not tables:
+            return _get_empty_query_response(connection_type)
+        table = tables[0]
+        all_cols = []
+    else:
+        table = table_matches[0][0]
+        # Check if question mentions a specific table
+        for t_name, cols_raw in table_matches:
+            if t_name.lower() in question.lower():
+                table = t_name
+                break
+        cols_raw = next((c for t, c in table_matches if t == table), table_matches[0][1])
+        all_cols = [c.strip().split(" ")[0] for c in cols_raw.split(",") if c.strip()]
 
     q = question.lower()
-    cols = re.findall(r"\(([^)]+)\)", schema_context)
-    all_cols: list[str] = []
-    for group in cols:
-        for c in group.split(","):
-            name = c.strip().split(" ")[0]
-            if name:
-                all_cols.append(name)
 
-    date_col = next((c for c in all_cols if any(k in c for k in ("date", "time", "created", "at"))), None)
-    amount_col = next((c for c in all_cols if any(k in c for k in ("amount", "price", "total", "revenue", "value", "sum"))), None)
-    cat_col = next((c for c in all_cols if any(k in c for k in ("role", "status", "category", "type", "name"))), None)
+    date_col = next((c for c in all_cols if any(k in c.lower() for k in ("date", "time", "created", "at", "hire"))), None)
+    amount_col = next((c for c in all_cols if any(k in c.lower() for k in ("salary", "amount", "price", "total", "revenue", "value", "sum", "cost", "sales", "qty"))), None)
+    cat_col = next((c for c in all_cols if any(k in c.lower() for k in ("department", "dept", "category", "role", "status", "type", "gender", "city", "country", "brand", "state"))), None)
+    if not cat_col and all_cols:
+        cat_col = next((c for c in all_cols if "name" in c.lower() or c.lower().endswith("_id")), all_cols[0])
 
+    # 1. Timeline / Trend queries
     if any(k in q for k in ["per day", "daily", "over time", "trend", "by date", "timeline"]) and date_col:
         return f"SELECT {date_col}, COUNT(*) AS count FROM {table} GROUP BY {date_col} ORDER BY {date_col}"
-    if any(k in q for k in ["total", "sum", "amount", "revenue"]) and amount_col:
+
+    # 2. Metric aggregate by Category (Bar Chart / Distribution)
+    if ("by" in q or "per" in q) and cat_col:
+        if amount_col:
+            if "avg" in q or "average" in q:
+                return f"SELECT {cat_col}, ROUND(AVG({amount_col}), 2) AS avg_{amount_col.lower()} FROM {table} GROUP BY {cat_col} ORDER BY avg_{amount_col.lower()} DESC"
+            elif "max" in q or "highest" in q:
+                return f"SELECT {cat_col}, MAX({amount_col}) AS highest_{amount_col.lower()} FROM {table} GROUP BY {cat_col} ORDER BY highest_{amount_col.lower()} DESC"
+            return f"SELECT {cat_col}, SUM({amount_col}) AS total_{amount_col.lower()} FROM {table} GROUP BY {cat_col} ORDER BY total_{amount_col.lower()} DESC"
+        return f"SELECT {cat_col}, COUNT(*) AS total_count FROM {table} GROUP BY {cat_col} ORDER BY total_count DESC"
+
+    # 3. Pie Chart / Distribution
+    if any(k in q for k in ["pie", "distribution", "breakdown", "proportion", "share"]) and cat_col:
+        return f"SELECT {cat_col}, COUNT(*) AS total_count FROM {table} GROUP BY {cat_col} ORDER BY total_count DESC"
+
+    # 4. Total / KPI queries
+    if any(k in q for k in ["total", "sum", "amount", "revenue", "average", "avg"]) and amount_col:
+        if "avg" in q or "average" in q:
+            return f"SELECT ROUND(AVG({amount_col}), 2) AS avg_{amount_col.lower()} FROM {table}"
         return f"SELECT SUM({amount_col}) AS total FROM {table}"
-    if any(k in q for k in ["per role", "per category", "per status", "per type", "breakdown", "distribution"]) and cat_col:
-        return f"SELECT {cat_col}, COUNT(*) AS count FROM {table} GROUP BY {cat_col} ORDER BY count DESC"
+
     if "count" in q or "number of" in q or "no of" in q:
         return f"SELECT COUNT(*) AS count FROM {table}"
 
-    c_type = (connection_type or "").lower()
-    if "oracle" in c_type:
-        return f"SELECT * FROM {table} FETCH FIRST 100 ROWS ONLY"
-    elif "sqlserver" in c_type or "mssql" in c_type:
-        return f"SELECT TOP 100 * FROM {table}"
-    return f"SELECT * FROM {table} LIMIT 100"
+    # 5. Top N / Table queries / Default fallback
+    limit_num = 10 if "top 10" in q else 100
+    if is_sqlserver:
+        return f"SELECT TOP {limit_num} * FROM {table}"
+    elif is_oracle:
+        return f"SELECT * FROM {table} FETCH FIRST {limit_num} ROWS ONLY"
+    return f"SELECT * FROM {table} LIMIT {limit_num}"
 
