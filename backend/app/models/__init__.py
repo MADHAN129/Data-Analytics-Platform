@@ -1,3 +1,4 @@
+from app.models.company import Company
 from app.models.user import User, UserRole
 from app.models.role import Role, RolePermission
 from app.models.permission import Permission
@@ -8,6 +9,7 @@ from app.models.conversation import Conversation, ConversationMessage
 from app.models.template import QueryTemplate
 
 __all__ = [
+    "Company",
     "User", "UserRole", "Role", "RolePermission", "Permission",
     "AuditLog", "DatabaseConnection",
     "Query", "Conversation", "ConversationMessage", "QueryTemplate",

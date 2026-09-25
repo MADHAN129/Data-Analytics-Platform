@@ -13,17 +13,41 @@ from app.utils.security import get_password_hash
 
 def _ensure_columns():
     """Add columns that may be missing on existing tables."""
-    inspector = inspect(engine)
-    existing = {c["name"] for c in inspector.get_columns("users")}
     with engine.connect() as conn:
-        if "reset_token" not in existing:
-            conn.execute(text("ALTER TABLE users ADD COLUMN reset_token VARCHAR(255)"))
-        if "reset_token_expires" not in existing:
-            conn.execute(text("ALTER TABLE users ADD COLUMN reset_token_expires TIMESTAMP WITH TIME ZONE"))
-        if "bio" not in existing:
-            conn.execute(text("ALTER TABLE users ADD COLUMN bio TEXT"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS companies (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                description VARCHAR(500),
+                owner_id INTEGER,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+            );
+        """))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(255)"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP WITH TIME ZONE"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id INTEGER"))
         conn.execute(text("ALTER TABLE users ALTER COLUMN avatar_url TYPE TEXT"))
+        conn.execute(text("ALTER TABLE database_connections ADD COLUMN IF NOT EXISTS company_id INTEGER"))
+        conn.execute(text("ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS company_id INTEGER"))
+        conn.execute(text("ALTER TABLE queries ADD COLUMN IF NOT EXISTS company_id INTEGER"))
+        conn.execute(text("ALTER TABLE query_templates ADD COLUMN IF NOT EXISTS company_id INTEGER"))
+        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS company_id INTEGER"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS company_id INTEGER"))
         conn.commit()
+
+        # If any companies don't exist yet, seed a default company for legacy users
+        res = conn.execute(text("SELECT id FROM companies LIMIT 1")).fetchone()
+        if not res:
+            conn.execute(text("INSERT INTO companies (name, description, owner_id) VALUES ('Default Company', 'Primary organization', 1)"))
+            conn.commit()
+            default_company_id = conn.execute(text("SELECT id FROM companies LIMIT 1")).scalar()
+            conn.execute(text(f"UPDATE users SET company_id = {default_company_id} WHERE company_id IS NULL"))
+            conn.execute(text(f"UPDATE database_connections SET company_id = {default_company_id} WHERE company_id IS NULL"))
+            conn.execute(text(f"UPDATE dashboards SET company_id = {default_company_id} WHERE company_id IS NULL"))
+            conn.execute(text(f"UPDATE queries SET company_id = {default_company_id} WHERE company_id IS NULL"))
+            conn.commit()
 
 
 def seed():

@@ -7,6 +7,7 @@ export interface RegisterRequest {
   password: string
   full_name: string
   phone?: string
+  company_name?: string
 }
 
 export interface LoginRequest {
@@ -52,6 +53,8 @@ export interface UserResponse {
   phone: string | null
   avatar_url: string | null
   bio?: string | null
+  company_id?: number | null
+  company_name?: string | null
   auth_provider: "local" | "azure_ad" | "google"
   is_active: boolean
   mfa_enabled: boolean

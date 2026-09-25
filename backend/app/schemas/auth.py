@@ -10,6 +10,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8)
     full_name: str = Field(min_length=2)
     phone: Optional[str] = None
+    company_name: Optional[str] = None
 
 
 class LoginRequest(BaseModel):

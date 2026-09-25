@@ -27,9 +27,17 @@ def get_user_response(db: Session, user: User) -> UserResponse:
         )
         for r in user_roles
     ]
+    company_name = None
+    if user.company_id:
+        from app.models.company import Company
+        c = db.query(Company).filter(Company.id == user.company_id).first()
+        if c:
+            company_name = c.name
+
     return UserResponse(
         id=user.id, email=user.email, full_name=user.full_name,
         phone=user.phone, avatar_url=user.avatar_url, bio=user.bio,
+        company_id=user.company_id, company_name=company_name,
         auth_provider=user.auth_provider, is_active=user.is_active,
         mfa_enabled=user.mfa_enabled, roles=roles,
         created_at=user.created_at, updated_at=user.updated_at,
@@ -45,8 +53,12 @@ def list_users(
     role_id: Optional[int] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    company_id: Optional[int] = None,
 ):
     query = db.query(User)
+
+    if company_id is not None:
+        query = query.filter(User.company_id == company_id)
 
     if search:
         query = query.filter(
@@ -120,11 +132,15 @@ def create_user(db: Session, data, current_user_id: int) -> UserResponse:
             detail="User with this email already exists",
         )
 
+    creator = db.query(User).filter(User.id == current_user_id).first()
+    creator_company_id = creator.company_id if creator else None
+
     user = User(
         email=data.email,
         password_hash=get_password_hash(data.password),
         full_name=data.full_name,
         phone=data.phone,
+        company_id=creator_company_id,
         is_active=True,
     )
     db.add(user)

@@ -59,6 +59,7 @@ def _dashboard_to_list(dash) -> DashboardResponse:
 def _get_owned_dashboard(db: Session, dashboard_id: int, user: User):
     dash = dashboard_service.get_dashboard(
         db, dashboard_id, user_id=user.id,
+        company_id=user.company_id,
         include_all=_manage_all(db, user),
     )
     if not dash:
@@ -75,6 +76,7 @@ def list_dashboards(
 ):
     dashboards, total = dashboard_service.list_dashboards(
         db, skip, limit, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     items = [_dashboard_to_list(d) for d in dashboards]
@@ -97,7 +99,9 @@ def create_dashboard(
     current_user: User = Depends(require_permission("dashboard.create")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.create_dashboard(db, data, user_id=current_user.id)
+    dash = dashboard_service.create_dashboard(
+        db, data, user_id=current_user.id, company_id=current_user.company_id,
+    )
     return _dashboard_to_detail(dash)
 
 

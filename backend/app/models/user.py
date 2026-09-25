@@ -10,6 +10,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     phone = Column(String(50), nullable=True)
+    company_id = Column(Integer, nullable=True, index=True)
     avatar_url = Column(Text, nullable=True)
     bio = Column(Text, nullable=True)
     auth_provider = Column(String(50), default="local")

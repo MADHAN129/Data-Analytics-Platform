@@ -26,15 +26,27 @@ def register_user(db: Session, data: RegisterRequest, ip_address: str = None):
             detail="Email already registered",
         )
 
+    from app.models.company import Company
+
+    company_name = (getattr(data, "company_name", None) or "").strip() or f"{data.full_name}'s Company"
+    company = Company(name=company_name)
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+
     user = User(
         email=data.email,
         password_hash=get_password_hash(data.password),
         full_name=data.full_name,
         phone=data.phone,
+        company_id=company.id,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    company.owner_id = user.id
+    db.commit()
 
     # Assign role: SuperAdmin (System Administrator) on signup
     from app.models.role import Role
@@ -52,7 +64,7 @@ def register_user(db: Session, data: RegisterRequest, ip_address: str = None):
 
     create_audit_log(
         db, user.id, "register", "auth", str(user.id),
-        {"email": user.email}, ip_address=ip_address,
+        {"email": user.email, "company_id": company.id, "company_name": company.name}, ip_address=ip_address,
     )
 
     return build_token_response(db, user)
@@ -167,9 +179,17 @@ def build_token_response(db: Session, user: User):
         for r in user_roles
     ]
 
+    company_name = None
+    if user.company_id:
+        from app.models.company import Company
+        comp = db.query(Company).filter(Company.id == user.company_id).first()
+        if comp:
+            company_name = comp.name
+
     user_data = UserResponse(
         id=user.id, email=user.email, full_name=user.full_name,
-        phone=user.phone, avatar_url=user.avatar_url,
+        phone=user.phone, avatar_url=user.avatar_url, bio=user.bio,
+        company_id=user.company_id, company_name=company_name,
         auth_provider=user.auth_provider, is_active=user.is_active,
         mfa_enabled=user.mfa_enabled, roles=roles,
         created_at=user.created_at, updated_at=user.updated_at,

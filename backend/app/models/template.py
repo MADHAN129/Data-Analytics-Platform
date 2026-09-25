@@ -11,6 +11,7 @@ class QueryTemplate(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    company_id = Column(Integer, nullable=True, index=True)
     database_id = Column(Integer, ForeignKey("database_connections.id"), nullable=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)

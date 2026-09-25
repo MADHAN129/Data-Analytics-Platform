@@ -9,6 +9,7 @@ class Conversation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    company_id = Column(Integer, nullable=True, index=True)
     title = Column(String(255), nullable=True)
     database_id = Column(Integer, ForeignKey("database_connections.id"), nullable=True)
     context = Column(JSON, default={})

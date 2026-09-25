@@ -43,6 +43,7 @@ def list_users(
 ):
     users, total = user_service.list_users(
         db, page, per_page, search, is_active, role_id, sort_by, sort_order,
+        company_id=current_user.company_id,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return UserListResponse(users=users, total=total, page=page, per_page=per_page, pages=pages)

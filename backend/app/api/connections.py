@@ -33,6 +33,7 @@ def list_databases(
     databases, total = connection_service.list_databases(
         db, page, per_page, search, type_filter, is_active,
         user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     return DatabaseListResponse(connections=databases, total=total)
@@ -57,6 +58,7 @@ def get_database(
 ):
     conn = connection_service.get_database(
         db, database_id, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if not conn:
@@ -73,6 +75,7 @@ def update_database(
 ):
     result = connection_service.update_database(
         db, database_id, data, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if not result:
@@ -89,6 +92,7 @@ def delete_database(
 ):
     deleted = connection_service.delete_database(
         db, database_id, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if not deleted:
@@ -105,6 +109,7 @@ def test_database_connection(
 ):
     result = connection_service.test_connection(
         db, database_id, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if result is None:
@@ -119,7 +124,9 @@ def batch_connection_health(
     db: Session = Depends(get_db),
 ):
     return connection_service.check_all_health(
-        db, user_id=current_user.id, include_all=_manage_all(db, current_user),
+        db, user_id=current_user.id,
+        company_id=current_user.company_id,
+        include_all=_manage_all(db, current_user),
     )
 
 
@@ -131,6 +138,7 @@ def get_connection_health(
 ):
     result = connection_service.check_health(
         db, database_id, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if result is None:
@@ -146,6 +154,7 @@ def sync_database_schema(
 ):
     result = connection_service.sync_schema(
         db, database_id, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if result is None:
@@ -162,6 +171,7 @@ def get_database_schema(
 ):
     schema = connection_service.get_schema(
         db, database_id, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if schema is None:
@@ -177,6 +187,7 @@ def list_tables(
 ):
     tables = connection_service.get_tables(
         db, database_id, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if tables is None:
@@ -193,6 +204,7 @@ def get_table_schema(
 ):
     table = connection_service.get_table_details(
         db, database_id, table_name, user_id=current_user.id,
+        company_id=current_user.company_id,
         include_all=_manage_all(db, current_user),
     )
     if table is None:

@@ -16,6 +16,7 @@ import { Loader2, Eye, EyeOff } from "lucide-react"
 
 const registerSchema = z.object({
   full_name: z.string().min(2, "Name must be at least 2 characters"),
+  company_name: z.string().optional(),
   email: z.string().email("Invalid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
   confirm_password: z.string(),
@@ -39,7 +40,7 @@ export function RegisterForm() {
     formState: { errors },
   } = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { full_name: "", email: "", password: "", confirm_password: "" },
+    defaultValues: { full_name: "", company_name: "", email: "", password: "", confirm_password: "" },
   })
 
   const onSubmit = async (data: RegisterFormData) => {
@@ -49,6 +50,7 @@ export function RegisterForm() {
         email: data.email,
         password: data.password,
         full_name: data.full_name,
+        company_name: data.company_name?.trim() || undefined,
       })
       setUser(response.user)
       toast({ title: "Account created successfully!", variant: "success" })
@@ -70,20 +72,24 @@ export function RegisterForm() {
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl font-bold">Create an account</CardTitle>
         <CardDescription>
-          Enter your information to get started
+          Enter your details to create your company workspace
         </CardDescription>
       </CardHeader>
       <form onSubmit={handleSubmit(onSubmit)}>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="full_name">Full Name</Label>
+            <Label htmlFor="full_name">Full Name *</Label>
             <Input id="full_name" placeholder="John Doe" {...register("full_name")} />
             {errors.full_name && (
               <p className="text-sm text-destructive">{errors.full_name.message}</p>
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="company_name">Company / Organization Name (optional)</Label>
+            <Input id="company_name" placeholder="Acme Analytics Inc." {...register("company_name")} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="email">Email *</Label>
             <Input
               id="email"
               type="email"

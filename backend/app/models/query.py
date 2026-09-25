@@ -11,6 +11,7 @@ class Query(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    company_id = Column(Integer, nullable=True, index=True)
     database_id = Column(Integer, ForeignKey("database_connections.id"), nullable=False)
     natural_language = Column(Text, nullable=False)
     generated_sql = Column(Text, nullable=True)
