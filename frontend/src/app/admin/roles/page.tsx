@@ -28,6 +28,8 @@ export default function AdminRolesPage() {
   const [selectedPermissionIds, setSelectedPermissionIds] = useState<number[]>([])
   const [newRoleName, setNewRoleName] = useState("")
   const [newRoleDesc, setNewRoleDesc] = useState("")
+  const [editRoleName, setEditRoleName] = useState("")
+  const [editRoleDesc, setEditRoleDesc] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const { toast } = useToast()
 
@@ -96,6 +98,28 @@ export default function AdminRolesPage() {
     }
   }
 
+  const handleUpdateRole = async () => {
+    if (!selectedRole || !editRoleName.trim()) return
+    setIsSubmitting(true)
+    try {
+      await api.updateRole(selectedRole.id, {
+        name: editRoleName.trim(),
+        description: editRoleDesc.trim() || undefined,
+        permission_ids: selectedPermissionIds,
+      })
+      apiCache.invalidate("roles")
+      toast({ title: "Role updated", variant: "success" })
+      setEditDialogOpen(false)
+      setSelectedRole(null)
+      fetchRoles(true)
+    } catch (err: unknown) {
+      const error = err as { detail?: string }
+      toast({ title: "Error", description: error.detail || "Failed to update role", variant: "destructive" })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const handleDeleteRole = async (role: RoleResponse) => {
     if (role.is_system) {
       toast({ title: "Cannot delete system role", variant: "destructive" })
@@ -114,6 +138,8 @@ export default function AdminRolesPage() {
 
   const openEditDialog = async (role: RoleResponse) => {
     setSelectedRole(role)
+    setEditRoleName(role.name)
+    setEditRoleDesc(role.description || "")
     setSelectedPermissionIds(role.permissions.map((p) => p.id))
     await fetchPermissions()
     setEditDialogOpen(true)
@@ -283,6 +309,86 @@ export default function AdminRolesPage() {
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleCreateRole} disabled={isSubmitting || !newRoleName.trim()}>
               {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...</> : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Role</DialogTitle>
+            <DialogDescription>
+              {selectedRole?.name === "SuperAdmin"
+                ? "Manage SuperAdmin role description and system permissions."
+                : `Update role details and permissions for "${selectedRole?.name}".`}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedRole && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="edit-role-name">Role Name</Label>
+                  {selectedRole.name === "SuperAdmin" ? (
+                    <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-700 border-purple-200">
+                      System Owner
+                    </Badge>
+                  ) : selectedRole.is_system ? (
+                    <Badge variant="secondary" className="text-[10px]">
+                      System Role (Name locked)
+                    </Badge>
+                  ) : null}
+                </div>
+                <Input
+                  id="edit-role-name"
+                  value={editRoleName}
+                  onChange={(e) => setEditRoleName(e.target.value)}
+                  placeholder="Role name"
+                  disabled={selectedRole.is_system}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-role-desc">Description</Label>
+                <Textarea
+                  id="edit-role-desc"
+                  value={editRoleDesc}
+                  onChange={(e) => setEditRoleDesc(e.target.value)}
+                  placeholder="Role description"
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Permissions</Label>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedPermissionIds.length} selected
+                  </span>
+                </div>
+                <div className="max-h-56 overflow-y-auto space-y-2 rounded-md border p-3">
+                  {permissions.map((perm) => (
+                    <label key={perm.id} className="flex items-center gap-3 cursor-pointer hover:bg-muted/50 p-1.5 rounded">
+                      <input
+                        type="checkbox"
+                        checked={selectedPermissionIds.includes(perm.id)}
+                        onChange={() => togglePermission(perm.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-primary"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium leading-none">{perm.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{perm.description}</p>
+                      </div>
+                    </label>
+                  ))}
+                  {permissions.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No permissions available</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleUpdateRole} disabled={isSubmitting || !editRoleName.trim()}>
+              {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
