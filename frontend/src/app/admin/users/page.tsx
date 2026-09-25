@@ -58,7 +58,8 @@ const defaultNewUserForm: NewUserFormData = {
 }
 
 export default function AdminUsersPage() {
-  const { user: currentUser } = useAuthStore()
+  const { user: currentUser, setUser } = useAuthStore()
+  const [me, setMe] = useState<UserResponse | null>(currentUser)
   const [users, setUsers] = useState<UserResponse[]>([])
   const [availableRoles, setAvailableRoles] = useState<RoleResponse[]>([])
   const [total, setTotal] = useState(0)
@@ -66,6 +67,35 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [selectedUser, setSelectedUser] = useState<UserResponse | null>(null)
+
+  useEffect(() => {
+    if (currentUser) {
+      setMe(currentUser)
+    } else {
+      api.getCurrentUser()
+        .then((u) => {
+          setMe(u)
+          setUser(u)
+        })
+        .catch(() => {})
+    }
+  }, [currentUser, setUser])
+
+  const isUserSelf = useCallback((targetUser: UserResponse) => {
+    const effectiveMe = me || currentUser
+    if (!effectiveMe) return false
+    const matchId = Boolean(
+      effectiveMe.id !== undefined &&
+      targetUser.id !== undefined &&
+      String(effectiveMe.id) === String(targetUser.id)
+    )
+    const matchEmail = Boolean(
+      effectiveMe.email &&
+      targetUser.email &&
+      effectiveMe.email.trim().toLowerCase() === targetUser.email.trim().toLowerCase()
+    )
+    return matchId || matchEmail
+  }, [me, currentUser])
   
   // Dialogs
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -149,8 +179,7 @@ export default function AdminUsersPage() {
   }
 
   const handleToggleStatus = async (user: UserResponse) => {
-    const isSelf = currentUser && (currentUser.id === user.id || currentUser.email.toLowerCase() === user.email.toLowerCase())
-    if (isSelf) {
+    if (isUserSelf(user)) {
       toast({
         title: "Action Not Allowed",
         description: "You cannot deactivate or modify the status of your own account.",
@@ -179,8 +208,7 @@ export default function AdminUsersPage() {
 
   const handleDeleteUser = async () => {
     if (!selectedUser) return
-    const isSelf = currentUser && (currentUser.id === selectedUser.id || currentUser.email.toLowerCase() === selectedUser.email.toLowerCase())
-    if (isSelf) {
+    if (isUserSelf(selectedUser)) {
       toast({
         title: "Action Not Allowed",
         description: "You cannot delete your own account.",
@@ -243,10 +271,7 @@ export default function AdminUsersPage() {
       key: "user",
       header: "User",
       cell: (user) => {
-        const isSelf = Boolean(
-          currentUser &&
-          (currentUser.id === user.id || currentUser.email.toLowerCase() === user.email.toLowerCase())
-        )
+        const isSelf = isUserSelf(user)
         return (
           <div className="flex items-center gap-3">
             <Avatar className="h-9 w-9">
@@ -323,10 +348,7 @@ export default function AdminUsersPage() {
       key: "actions",
       header: "",
       cell: (user) => {
-        const isSelf = Boolean(
-          currentUser &&
-          (currentUser.id === user.id || currentUser.email.toLowerCase() === user.email.toLowerCase())
-        )
+        const isSelf = isUserSelf(user)
 
         return (
           <DropdownMenu>

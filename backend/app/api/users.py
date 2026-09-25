@@ -129,16 +129,16 @@ def deactivate_user(
     current_user: User = Depends(require_permission("user.update")),
     db: Session = Depends(get_db),
 ):
-    if current_user.id == user_id:
+    user = user_service.get_user_by_id(db, user_id)
+    if not user:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if int(current_user.id) == int(user_id) or (current_user.email and current_user.email.lower() == user.email.lower()):
         from fastapi import HTTPException, status
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You cannot deactivate your own account",
         )
-    user = user_service.get_user_by_id(db, user_id)
-    if not user:
-        from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if current_user.company_id and user.company_id != current_user.company_id:
         from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
