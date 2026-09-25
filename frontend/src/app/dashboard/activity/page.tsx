@@ -44,24 +44,39 @@ export default function ActivityPage() {
   const { toast } = useToast()
   const [data, setData] = useState<ActivityOverviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [search, setSearch] = useState("")
   const [selectedDbFilter, setSelectedDbFilter] = useState("all")
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("all")
   const [selectedQueryForSql, setSelectedQueryForSql] = useState<ActivityQueryItem | null>(null)
 
   const fetchActivity = useCallback(async (forceFresh = false) => {
+    if (forceFresh) {
+      setIsRefreshing(true)
+      apiCache.invalidate("activity")
+    }
     try {
-      const { data: res } = await apiCache.swr(
-        "activity:overview:30",
-        () => api.getActivityOverview(30),
-        {
-          ttlMs: 20000,
-          forceFresh,
-          onRevalidate: (fresh) => setData(fresh),
-        }
-      )
-      setData(res)
-      setLoading(false)
+      if (forceFresh) {
+        const fresh = await api.getActivityOverview(30)
+        setData(fresh)
+        apiCache.set("activity:overview:30", fresh, 20000)
+        toast({
+          title: "Activity Refreshed",
+          description: "Telemetry and query history updated.",
+          variant: "success",
+        })
+      } else {
+        const { data: res } = await apiCache.swr(
+          "activity:overview:30",
+          () => api.getActivityOverview(30),
+          {
+            ttlMs: 20000,
+            forceFresh,
+            onRevalidate: (fresh) => setData(fresh),
+          }
+        )
+        setData(res)
+      }
     } catch (err: unknown) {
       const errorObj = err as { detail?: string }
       toast({
@@ -69,7 +84,9 @@ export default function ActivityPage() {
         description: errorObj?.detail || "Could not fetch platform activity logs.",
         variant: "destructive",
       })
+    } finally {
       setLoading(false)
+      setIsRefreshing(false)
     }
   }, [toast])
 
@@ -150,11 +167,11 @@ export default function ActivityPage() {
             variant="outline"
             size="sm"
             onClick={() => fetchActivity(true)}
-            disabled={loading}
-            className="flex items-center gap-2 shadow-sm"
+            disabled={loading || isRefreshing}
+            className="flex items-center gap-2 shadow-sm hover:bg-muted"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin text-blue-600" : ""}`} />
-            Refresh
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
+            {isRefreshing ? "Refreshing..." : "Refresh"}
           </Button>
         </div>
       </div>
