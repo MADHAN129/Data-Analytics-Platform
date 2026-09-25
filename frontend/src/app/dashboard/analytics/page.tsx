@@ -172,26 +172,27 @@ export default function AnalyticsPage() {
       }
       fetchHistory()
 
-      const dbObj = connections.find((c) => String(c.id) === selectedDbId)
-      const parsedTrace = extractTraceDetails(result.explanation)
-      const traceInfo = {
-        intent: parsedTrace?.intent || result.natural_language || "",
-        metricsVerified: parsedTrace?.metricsVerified || result.results?.columns?.join(", ") || "",
-        rawTrace: parsedTrace?.rawTrace || "",
-        question: result.natural_language || nlInput,
-        rowCount: result.results?.row_count ?? 0,
-        executionTimeMs: result.results?.execution_time_ms,
-        dbName: dbObj?.name || "Connected Database",
-      }
-      setTraceData(traceInfo)
-
-      if (result.status === "completed") {
-        setShowTraceModal(true)
-        toast({
-          title: "Execution Trace Verified",
-          description: traceInfo.intent ? `Intent: ${traceInfo.intent}` : "Execution trace and database records verified.",
-          variant: "success",
-        })
+      if (!result.is_security_violation) {
+        const dbObj = connections.find((c) => String(c.id) === selectedDbId)
+        const parsedTrace = extractTraceDetails(result.explanation)
+        if (parsedTrace && result.status === "completed" && Boolean(result.generated_sql)) {
+          const traceInfo = {
+            intent: parsedTrace.intent || result.natural_language || "",
+            metricsVerified: parsedTrace.metricsVerified || result.results?.columns?.join(", ") || "",
+            rawTrace: parsedTrace.rawTrace || "",
+            question: result.natural_language || nlInput,
+            rowCount: result.results?.row_count ?? 0,
+            executionTimeMs: result.results?.execution_time_ms,
+            dbName: dbObj?.name || "Connected Database",
+          }
+          setTraceData(traceInfo)
+          setShowTraceModal(true)
+          toast({
+            title: "Execution Trace Verified",
+            description: traceInfo.intent ? `Intent: ${traceInfo.intent}` : "Execution trace and database records verified.",
+            variant: "success",
+          })
+        }
       }
 
       setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
@@ -219,26 +220,27 @@ export default function AnalyticsPage() {
       }
       setNlInput("")
 
-      const dbObj = connections.find((c) => String(c.id) === selectedDbId)
-      const parsedTrace = extractTraceDetails(result.explanation)
-      const traceInfo = {
-        intent: parsedTrace?.intent || result.natural_language || "",
-        metricsVerified: parsedTrace?.metricsVerified || result.results?.columns?.join(", ") || "",
-        rawTrace: parsedTrace?.rawTrace || "",
-        question: result.natural_language || nlInput,
-        rowCount: result.results?.row_count ?? 0,
-        executionTimeMs: result.results?.execution_time_ms,
-        dbName: dbObj?.name || "Connected Database",
-      }
-      setTraceData(traceInfo)
-
-      if (result.status === "completed") {
-        setShowTraceModal(true)
-        toast({
-          title: "Execution Trace Verified",
-          description: traceInfo.intent ? `Intent: ${traceInfo.intent}` : "Execution trace verified for follow-up query.",
-          variant: "success",
-        })
+      if (!result.is_security_violation) {
+        const dbObj = connections.find((c) => String(c.id) === selectedDbId)
+        const parsedTrace = extractTraceDetails(result.explanation)
+        if (parsedTrace && result.status === "completed" && Boolean(result.generated_sql)) {
+          const traceInfo = {
+            intent: parsedTrace.intent || result.natural_language || "",
+            metricsVerified: parsedTrace.metricsVerified || result.results?.columns?.join(", ") || "",
+            rawTrace: parsedTrace.rawTrace || "",
+            question: result.natural_language || nlInput,
+            rowCount: result.results?.row_count ?? 0,
+            executionTimeMs: result.results?.execution_time_ms,
+            dbName: dbObj?.name || "Connected Database",
+          }
+          setTraceData(traceInfo)
+          setShowTraceModal(true)
+          toast({
+            title: "Execution Trace Verified",
+            description: traceInfo.intent ? `Intent: ${traceInfo.intent}` : "Execution trace verified for follow-up query.",
+            variant: "success",
+          })
+        }
       }
 
       setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
