@@ -603,32 +603,35 @@ function QueryResultsTable({ results }: { results: QueryResult }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-muted/50">
+    <div className="w-full max-h-[420px] overflow-auto rounded-lg border bg-background/50 shadow-inner">
+      <table className="w-full text-sm border-collapse">
+        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm shadow-xs border-b">
+          <tr className="border-b bg-muted/60">
             {results.columns.map((col, i) => (
-              <th key={i} className="px-4 py-2 text-left font-medium text-muted-foreground">
+              <th
+                key={i}
+                className="px-4 py-2.5 text-left font-semibold text-xs tracking-wide text-muted-foreground whitespace-nowrap"
+              >
                 {col}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody>
-          {results.rows.slice(0, 50).map((row, i) => (
-            <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+        <tbody className="divide-y divide-border/30">
+          {results.rows.map((row, i) => (
+            <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/40 transition-colors">
               {row.map((cell, j) => (
-                <td key={j} className="px-4 py-2">
-                  {String(cell ?? "—")}
+                <td key={j} className="px-4 py-2 text-sm whitespace-nowrap">
+                  {cell !== null && cell !== undefined ? String(cell) : "—"}
                 </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
-      {results.row_count > 50 && (
-        <div className="border-t bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-          Showing 50 of {results.row_count} rows
+      {results.row_count > results.rows.length && (
+        <div className="sticky bottom-0 z-10 border-t bg-muted/95 backdrop-blur-sm px-4 py-1.5 text-xs text-muted-foreground">
+          Showing {results.rows.length} of {results.row_count} rows
         </div>
       )}
     </div>
