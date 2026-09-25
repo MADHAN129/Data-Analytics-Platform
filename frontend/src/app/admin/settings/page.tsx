@@ -190,121 +190,101 @@ export default function SettingsPage() {
         <TabsContent value="appearance" className="space-y-6">
           {/* Theme Mode Selector Card */}
           <Card>
-            <CardHeader>
+            <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-primary" />
-                <CardTitle>Theme & Display Mode</CardTitle>
+                <CardTitle className="text-base">Theme & Display Mode</CardTitle>
               </div>
-              <CardDescription>
+              <CardDescription className="text-xs">
                 Choose between Light mode, Night / Dark mode, or follow your operating system preferences.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 sm:grid-cols-3">
-                {/* Light Mode */}
-                <button
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Light Mode Button */}
+                <Button
                   type="button"
+                  size="sm"
+                  variant={mode === "light" ? "default" : "outline"}
                   onClick={() => setMode("light")}
-                  className={`group relative flex flex-col items-center rounded-xl border-2 p-5 text-left transition-all ${
+                  className={`h-9 px-3.5 text-xs font-medium gap-2 transition-all ${
                     mode === "light"
-                      ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary"
-                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/30"
+                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm ring-2 ring-blue-600/30"
+                      : "hover:bg-muted"
                   }`}
                 >
-                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-500 transition-transform group-hover:scale-110">
-                    <Sun className="h-6 w-6" />
-                  </div>
-                  <span className="font-semibold">Light Mode</span>
-                  <span className="mt-1 text-center text-xs text-muted-foreground">
-                    Bright, crisp interface for daylight environments
-                  </span>
-                  {mode === "light" && (
-                    <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                      <Check className="h-3 w-3" />
-                    </div>
-                  )}
-                </button>
+                  <Sun className="h-4 w-4 text-amber-500" />
+                  <span>Light Mode</span>
+                  {mode === "light" && <Check className="h-3.5 w-3.5 ml-1" />}
+                </Button>
 
-                {/* Night / Dark Mode */}
-                <button
+                {/* Night / Dark Mode Button */}
+                <Button
                   type="button"
+                  size="sm"
+                  variant={mode === "dark" ? "default" : "outline"}
                   onClick={() => setMode("dark")}
-                  className={`group relative flex flex-col items-center rounded-xl border-2 p-5 text-left transition-all ${
+                  className={`h-9 px-3.5 text-xs font-medium gap-2 transition-all ${
                     mode === "dark"
-                      ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary"
-                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/30"
+                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm ring-2 ring-blue-600/30"
+                      : "hover:bg-muted"
                   }`}
                 >
-                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-500/10 text-indigo-400 transition-transform group-hover:scale-110">
-                    <Moon className="h-6 w-6" />
-                  </div>
-                  <span className="font-semibold">Night / Dark Mode</span>
-                  <span className="mt-1 text-center text-xs text-muted-foreground">
-                    Deep high-contrast palette to reduce eye fatigue
-                  </span>
-                  {mode === "dark" && (
-                    <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                      <Check className="h-3 w-3" />
-                    </div>
-                  )}
-                </button>
+                  <Moon className="h-4 w-4 text-indigo-400" />
+                  <span>Night / Dark Mode</span>
+                  {mode === "dark" && <Check className="h-3.5 w-3.5 ml-1" />}
+                </Button>
 
-                {/* System Default */}
-                <button
+                {/* System Default Button */}
+                <Button
                   type="button"
+                  size="sm"
+                  variant={mode === "system" ? "default" : "outline"}
                   onClick={() => setMode("system")}
-                  className={`group relative flex flex-col items-center rounded-xl border-2 p-5 text-left transition-all ${
+                  className={`h-9 px-3.5 text-xs font-medium gap-2 transition-all ${
                     mode === "system"
-                      ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary"
-                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/30"
+                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm ring-2 ring-blue-600/30"
+                      : "hover:bg-muted"
                   }`}
                 >
-                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 transition-transform group-hover:scale-110">
-                    <Laptop className="h-6 w-6" />
-                  </div>
-                  <span className="font-semibold">System Default</span>
-                  <span className="mt-1 text-center text-xs text-muted-foreground">
-                    Automatically synchronize with OS color theme
-                  </span>
-                  {mode === "system" && (
-                    <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                      <Check className="h-3 w-3" />
-                    </div>
-                  )}
-                </button>
+                  <Laptop className="h-4 w-4 text-slate-400" />
+                  <span>System Default</span>
+                  {mode === "system" && <Check className="h-3.5 w-3.5 ml-1" />}
+                </Button>
               </div>
             </CardContent>
           </Card>
 
           {/* Color Accent Themes Card */}
           <Card>
-            <CardHeader>
+            <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <Palette className="h-5 w-5 text-primary" />
-                <CardTitle>Accent Color Palette</CardTitle>
+                <CardTitle className="text-base">Accent Color Palette</CardTitle>
               </div>
-              <CardDescription>
+              <CardDescription className="text-xs">
                 Select your preferred accent color for buttons, badges, navigation highlights, and active elements.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-3 sm:grid-cols-5">
+              <div className="flex flex-wrap items-center gap-2">
                 {accentOptions.map((opt) => (
-                  <button
+                  <Button
                     key={opt.id}
                     type="button"
+                    size="sm"
+                    variant={accent === opt.id ? "default" : "outline"}
                     onClick={() => setAccent(opt.id)}
-                    className={`flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all ${
+                    className={`h-9 px-3 text-xs font-medium gap-2 transition-all ${
                       accent === opt.id
-                        ? "border-primary bg-primary/5 ring-1 ring-primary"
-                        : "border-border hover:border-muted-foreground/30 hover:bg-muted/20"
+                        ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm ring-2 ring-primary/40"
+                        : "hover:bg-muted"
                     }`}
                   >
-                    <span className={`h-6 w-6 rounded-full ${opt.bgClass} shadow-inner flex items-center justify-center text-white`}>
-                      {accent === opt.id && <Check className="h-3.5 w-3.5" />}
-                    </span>
-                    <span className="text-xs font-semibold">{opt.name}</span>
-                  </button>
+                    <span className={`h-2.5 w-2.5 rounded-full ${opt.bgClass} shadow-inner`} />
+                    <span>{opt.name}</span>
+                    {accent === opt.id && <Check className="h-3.5 w-3.5 ml-0.5" />}
+                  </Button>
                 ))}
               </div>
             </CardContent>
