@@ -55,6 +55,20 @@ export function Sidebar({ userRoles }: SidebarProps) {
   const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)
   const isAdmin = userRoles?.some((r) => r === "Admin" || r === "SuperAdmin")
+  const hasElevatedAccess = userRoles?.some((r) => r === "SuperAdmin" || r === "Admin" || r === "Analyst")
+  const isViewer = !hasElevatedAccess || (userRoles?.includes("Viewer") && !hasElevatedAccess)
+
+  const visibleNavItems = navItems.filter((item) => {
+    if (isViewer) {
+      // Viewer role ONLY sees Home, Dashboards, and Reports
+      return (
+        item.href === "/dashboard" ||
+        item.href === "/dashboard/dashboards" ||
+        item.href === "/dashboard/reports"
+      )
+    }
+    return true
+  })
 
   const handlePrefetch = (href: string) => {
     try {
@@ -92,7 +106,7 @@ export function Sidebar({ userRoles }: SidebarProps) {
 
       <ScrollArea className="flex-1 px-3 py-2">
         <nav className="flex flex-col gap-1">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}

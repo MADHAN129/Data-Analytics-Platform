@@ -129,7 +129,13 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [refreshOverviewStats])
 
-  const stats = [
+  const userRoles = user?.roles?.map((r) => r.name)
+  const hasElevatedAccess = userRoles?.some(
+    (r) => r === "SuperAdmin" || r === "Admin" || r === "Analyst"
+  )
+  const isViewer = !hasElevatedAccess || (userRoles?.includes("Viewer") && !hasElevatedAccess)
+
+  const allStats = [
     {
       title: "Connected Databases",
       value: loading ? "—" : String(totalConnections ?? 0),
@@ -140,6 +146,7 @@ export default function DashboardPage() {
       icon: Database,
       href: "/dashboard/databases",
       highlight: healthyCount > 0,
+      hideForViewer: true,
     },
     {
       title: "Queries Today",
@@ -153,6 +160,7 @@ export default function DashboardPage() {
       icon: MessageSquare,
       href: "/dashboard/analytics",
       highlight: queriesToday > 0,
+      hideForViewer: true,
     },
     {
       title: "Active Dashboards",
@@ -160,23 +168,39 @@ export default function DashboardPage() {
       description:
         totalDashboards > 0
           ? `${totalDashboards} dashboard${totalDashboards > 1 ? "s" : ""} (${totalWidgets} widget${totalWidgets !== 1 ? "s" : ""})`
-          : "Create your first dashboard",
+          : "Explore dashboards",
       icon: BarChart3,
       href: "/dashboard/dashboards",
       highlight: totalDashboards > 0,
     },
     {
-      title: "Insights Generated",
+      title: "Executive Reports",
       value: loading ? "—" : String(insightsGenerated),
       description:
         insightsGenerated > 0
-          ? `${insightsGenerated} AI-powered insights & analytics`
-          : "AI-powered insights pending",
+          ? `${insightsGenerated} reports and analytical insights`
+          : "View executive reports",
       icon: TrendingUp,
       href: "/dashboard/reports",
       highlight: insightsGenerated > 0,
     },
   ]
+
+  const stats = allStats.filter((s) => !isViewer || !s.hideForViewer)
+
+  const quickActions = isViewer
+    ? [
+        { label: "Browse shared dashboards", href: "/dashboard/dashboards", badge: "Popular" },
+        { label: "View executive reports", href: "/dashboard/reports", badge: "New" },
+        { label: "Update profile & settings", href: "/dashboard/profile", badge: null },
+      ]
+    : [
+        { label: "Connect a database", href: "/dashboard/databases", badge: "New" },
+        { label: "Ask a question about your data", href: "/dashboard/analytics", badge: "Popular" },
+        { label: "Create a new dashboard", href: "/dashboard/dashboards", badge: null },
+        { label: "Generate executive reports", href: "/dashboard/reports", badge: "New" },
+        { label: "View recent activity", href: "/dashboard/activity", badge: null },
+      ]
 
   return (
     <div className="space-y-6">
@@ -191,7 +215,7 @@ export default function DashboardPage() {
       </div>
 
       {/* DYNAMIC TOP STAT CARDS */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className={`grid gap-4 md:grid-cols-2 ${isViewer ? "lg:grid-cols-2" : "lg:grid-cols-4"}`}>
         {stats.map((stat) => (
           <Card
             key={stat.title}
@@ -229,13 +253,7 @@ export default function DashboardPage() {
             <CardTitle>Quick Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {[
-              { label: "Connect a database", href: "/dashboard/databases", badge: "New" },
-              { label: "Ask a question about your data", href: "/dashboard/analytics", badge: "Popular" },
-              { label: "Create a new dashboard", href: "/dashboard/dashboards", badge: null },
-              { label: "Generate executive reports", href: "/dashboard/reports", badge: "New" },
-              { label: "View recent activity", href: "/dashboard/activity", badge: null },
-            ].map((action) => (
+            {quickActions.map((action) => (
               <a
                 key={action.label}
                 href={action.href}
