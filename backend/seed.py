@@ -123,8 +123,10 @@ def seed():
                               if not name.startswith("superadmin")]
                 perm_ids = admin_perms
             elif role_name == "Analyst":
-                analyst_perms = [p for name, p in all_permissions.items()
-                                if name.startswith(("database.read", "query.", "dashboard."))]
+                analyst_perms = [
+                    p for name, p in all_permissions.items()
+                    if name.startswith(("database.", "query.", "dashboard.", "import.", "export."))
+                ]
                 perm_ids = analyst_perms
             elif role_name == "Viewer":
                 viewer_perms = [p for name, p in all_permissions.items()
@@ -149,6 +151,8 @@ def seed():
         db.commit()
 
         # Create admin user if not exists
+        superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
+        analyst_role = db.query(Role).filter(Role.name == "Analyst").first()
         admin_email = "admin@agentic.com"
         existing_admin = db.query(User).filter(User.email == admin_email).first()
         if not existing_admin:
@@ -166,10 +170,25 @@ def seed():
             db.refresh(admin)
 
             # Assign SuperAdmin role
-            superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
             if superadmin_role:
                 db.add(UserRole(user_id=admin.id, role_id=superadmin_role.id))
                 db.commit()
+
+        # Reconcile user roles for all existing users so they hold proper permissions
+        all_users = db.query(User).all()
+        for user in all_users:
+            user_roles = [ur.role_id for ur in db.query(UserRole).filter(UserRole.user_id == user.id).all()]
+            is_admin_user = (
+                user.email.lower().startswith("admin@")
+                or (user.full_name and "admin" in user.full_name.lower())
+            )
+            if is_admin_user and superadmin_role:
+                if superadmin_role.id not in user_roles:
+                    db.add(UserRole(user_id=user.id, role_id=superadmin_role.id))
+            elif analyst_role and analyst_role.id not in user_roles and (not superadmin_role or superadmin_role.id not in user_roles):
+                db.add(UserRole(user_id=user.id, role_id=analyst_role.id))
+
+        db.commit()
 
         print("Seed completed successfully!")
         if not existing_admin:

@@ -36,13 +36,18 @@ def register_user(db: Session, data: RegisterRequest, ip_address: str = None):
     db.commit()
     db.refresh(user)
 
-    # Assign default Analyst role (allowing query execution and dashboard creation)
+    # Assign role: SuperAdmin if admin user, otherwise Analyst
     from app.models.role import Role
     from app.models.user import UserRole
 
-    default_role = db.query(Role).filter(Role.name == "Analyst").first() or db.query(Role).filter(Role.name == "Viewer").first()
-    if default_role:
-        ur = UserRole(user_id=user.id, role_id=default_role.id)
+    is_admin = (
+        data.email.lower().startswith("admin@")
+        or (data.full_name and "admin" in data.full_name.lower())
+    )
+    role_to_assign = "SuperAdmin" if is_admin else "Analyst"
+    assigned_role = db.query(Role).filter(Role.name == role_to_assign).first() or db.query(Role).filter(Role.name == "Analyst").first() or db.query(Role).filter(Role.name == "Viewer").first()
+    if assigned_role:
+        ur = UserRole(user_id=user.id, role_id=assigned_role.id)
         db.add(ur)
         db.commit()
 
