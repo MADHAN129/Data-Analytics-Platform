@@ -27,10 +27,12 @@ import {
 import { DataTable, type Column } from "@/components/ui/data-table"
 import { formatDate } from "@/lib/utils"
 import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
+import { SecurityAlertModal } from "@/components/security/security-alert-modal"
 import type {
   DatabaseConnectionResponse,
   QueryResponse,
   QueryResult,
+  SecurityAlert,
 } from "@/types/api"
 import {
   MessageSquare,
@@ -96,6 +98,8 @@ export default function AnalyticsPage() {
     executionTimeMs?: number | null
     dbName?: string
   } | null>(null)
+  const [securityAlert, setSecurityAlert] = useState<SecurityAlert | null>(null)
+  const [showSecurityModal, setShowSecurityModal] = useState(false)
   const resultsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -139,7 +143,10 @@ export default function AnalyticsPage() {
         conversation_id: activeConversationId || undefined,
       })
       setCurrentQuery(result)
-      if (activeConversationId) {
+      if (result.is_security_violation && result.security_alert) {
+        setSecurityAlert(result.security_alert)
+        setShowSecurityModal(true)
+      } else if (activeConversationId) {
         await api.sendMessage(activeConversationId, { content: nlInput })
       }
       fetchHistory()
@@ -185,6 +192,10 @@ export default function AnalyticsPage() {
     try {
       const result = await api.queryFollowUp(queryId, { natural_language: nlInput })
       setCurrentQuery(result)
+      if (result.is_security_violation && result.security_alert) {
+        setSecurityAlert(result.security_alert)
+        setShowSecurityModal(true)
+      }
       setNlInput("")
 
       const dbObj = connections.find((c) => String(c.id) === selectedDbId)
@@ -575,6 +586,13 @@ export default function AnalyticsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* High-Priority Security Alert Modal */}
+      <SecurityAlertModal
+        open={showSecurityModal}
+        onOpenChange={setShowSecurityModal}
+        alert={securityAlert}
+      />
     </div>
   )
 }

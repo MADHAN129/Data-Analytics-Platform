@@ -16,11 +16,17 @@ from app.schemas.query import (
     QueryRequest, SQLExecutionRequest, FollowUpRequest,
     QueryResponse, QueryResult, VisualizationSuggestion,
     ExplainResponse, OptimizeResponse, OptimizeSuggestion,
-    VisualizeResponse,
+    VisualizeResponse, SecurityAlert,
 )
 from app.schemas.conversation import MessageResponse
 from app.services.llm_service import llm_service
 from app.services.connection_service import get_connector, get_database
+from app.services.security_guard_service import (
+    inspect_query_safety,
+    inspect_sql_safety,
+    inspect_prompt_injection,
+    trigger_security_incident,
+)
 from app.config import settings
 from app.utils.error_messages import friendly_error
 
@@ -63,7 +69,11 @@ def _serialize_rows(rows):
     return [[_make_json_safe(cell) for cell in row] for row in rows]
 
 
-def _db_conn_to_query_response(q: Query) -> QueryResponse:
+def _db_conn_to_query_response(
+    q: Query,
+    is_security_violation: bool = False,
+    security_alert: Optional[SecurityAlert | dict] = None,
+) -> QueryResponse:
     results = None
     if q.result_columns and q.result_rows:
         results = QueryResult(
@@ -72,6 +82,14 @@ def _db_conn_to_query_response(q: Query) -> QueryResponse:
             row_count=q.row_count,
             execution_time_ms=q.execution_time_ms,
         )
+    
+    alert_obj = None
+    if security_alert:
+        if isinstance(security_alert, dict):
+            alert_obj = SecurityAlert(**security_alert)
+        else:
+            alert_obj = security_alert
+
     return QueryResponse(
         id=q.id,
         status=q.status,
@@ -83,6 +101,8 @@ def _db_conn_to_query_response(q: Query) -> QueryResponse:
         conversation_id=q.conversation_id,
         parent_query_id=q.parent_query_id,
         error_message=q.error_message,
+        is_security_violation=is_security_violation,
+        security_alert=alert_obj,
         created_at=q.created_at,
     )
 
@@ -505,6 +525,11 @@ def _validate_sql_before_execution(
 
     sanitized = sql.strip().rstrip(";") + ";"
 
+    # Pre-execution Security Guard Check
+    is_safe_sql, v_type, reason = inspect_sql_safety(sanitized)
+    if not is_safe_sql:
+        return False, sanitized, f"SECURITY VIOLATION BLOCKED: {reason}"
+
     # Allow direct metadata inspection commands (e.g. SHOW TABLES, DESCRIBE ...)
     if re.match(r"^\s*(SHOW\s+|DESCRIBE\s+|DESC\s+)", sanitized, flags=re.IGNORECASE):
         return True, sanitized, None
@@ -844,6 +869,39 @@ def execute_natural_language_query(
     user = db.query(User).filter(User.id == user_id).first()
     company_id = db_conn.company_id or (user.company_id if user else None)
 
+    # Pre-execution Security Guard Check on Natural Language Prompt
+    is_safe_nl, v_type, reason = inspect_prompt_injection(data.natural_language)
+    if not is_safe_nl:
+        alert = trigger_security_incident(
+            db=db,
+            user_id=user_id,
+            company_id=company_id,
+            natural_language=data.natural_language,
+            attempted_sql=None,
+            violation_type=v_type or "PROMPT_INJECTION",
+            reason=reason or "Prompt injection or destructive instruction detected.",
+            source="Analytics Workspace (NLP Prompt)",
+        )
+        query_record = Query(
+            user_id=user_id,
+            company_id=company_id,
+            database_id=data.database_id,
+            natural_language=data.natural_language,
+            generated_sql=None,
+            explanation="Execution blocked by security guardrails.",
+            status="failed",
+            error_message=f"SECURITY VIOLATION BLOCKED: {reason}",
+            tokens_used=0,
+            conversation_id=data.conversation_id,
+            result_columns=[],
+            result_rows=[],
+            row_count=0,
+        )
+        db.add(query_record)
+        db.commit()
+        db.refresh(query_record)
+        return _db_conn_to_query_response(query_record, is_security_violation=True, security_alert=alert)
+
     # Check if we should use MCP tools
     if use_mcp_tools is None:
         use_mcp_tools = getattr(settings, 'USE_MCP_TOOLS', False)
@@ -1026,6 +1084,24 @@ def execute_natural_language_query(
         try:
             is_valid, exec_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language, schema_metadata)
             if not is_valid:
+                if "SECURITY VIOLATION BLOCKED" in (val_err or ""):
+                    is_s, v_t, r_s = inspect_sql_safety(exec_sql or sql)
+                    alert = trigger_security_incident(
+                        db=db,
+                        user_id=user_id,
+                        company_id=company_id,
+                        natural_language=data.natural_language,
+                        attempted_sql=exec_sql or sql,
+                        violation_type=v_t or "DESTRUCTIVE_SQL",
+                        reason=r_s or "Prohibited SQL operation detected.",
+                        source="Analytics Workspace (Generated SQL)",
+                    )
+                    query_record.status = "failed"
+                    query_record.error_message = val_err
+                    db.commit()
+                    db.refresh(query_record)
+                    return _db_conn_to_query_response(query_record, is_security_violation=True, security_alert=alert)
+
                 if attempt < max_retries:
                     sql, explanation, retry_tokens = llm_service.fix_sql(
                         prompt_nl, sql, val_err, schema_context, db_conn.connection_type,
@@ -1141,6 +1217,33 @@ def execute_raw_sql(
     )
     user = db.query(User).filter(User.id == user_id).first()
     company_id = db_conn.company_id or (user.company_id if user else None)
+
+    # Pre-execution Security Guard Check on Raw SQL
+    is_safe_sql, v_type_sql, reason_sql = inspect_sql_safety(data.sql)
+    if not is_safe_sql:
+        alert = trigger_security_incident(
+            db=db,
+            user_id=user_id,
+            company_id=company_id,
+            natural_language=f"Execute raw SQL: {data.sql[:100]}",
+            attempted_sql=data.sql,
+            violation_type=v_type_sql or "DESTRUCTIVE_SQL",
+            reason=reason_sql or "Destructive or prohibited SQL operation detected.",
+            source="API / Raw SQL Execution",
+        )
+        query_record = Query(
+            user_id=user_id,
+            company_id=company_id,
+            database_id=data.database_id,
+            natural_language=f"Execute raw SQL: {data.sql[:100]}",
+            generated_sql=data.sql,
+            status="failed",
+            error_message=f"SECURITY VIOLATION BLOCKED: {reason_sql}",
+        )
+        db.add(query_record)
+        db.commit()
+        db.refresh(query_record)
+        return _db_conn_to_query_response(query_record, is_security_violation=True, security_alert=alert)
 
     query_record = Query(
         user_id=user_id,

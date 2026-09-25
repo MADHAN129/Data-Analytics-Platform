@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 
-from app.schemas.query import QueryResult
+from app.schemas.query import QueryResult, SecurityAlert
 
 
 class ConversationResponse(BaseModel):
@@ -45,6 +45,8 @@ class ConversationMessageResponse(BaseModel):
     error_message: Optional[str] = None
     tokens_used: Optional[int] = None
     model_used: Optional[str] = None
+    is_security_violation: Optional[bool] = False
+    security_alert: Optional[SecurityAlert] = None
     created_at: datetime
 
     class Config:

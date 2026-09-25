@@ -378,6 +378,21 @@ export interface QueryResult {
   execution_time_ms?: number
 }
 
+export interface SecurityAlert {
+  is_violation: boolean
+  violation_type: string
+  reason: string
+  attempted_sql?: string
+  natural_language?: string
+  timestamp: string
+  user_name?: string
+  user_email?: string
+  user_id?: number
+  company_id?: number | null
+  source?: string
+  superadmin_notified: boolean
+}
+
 export interface QueryResponse {
   id: number
   status: "pending" | "executing" | "completed" | "failed" | "cancelled"
@@ -390,6 +405,8 @@ export interface QueryResponse {
   conversation_id?: number
   parent_query_id?: number
   error_message?: string
+  is_security_violation?: boolean
+  security_alert?: SecurityAlert
   created_at: string
 }
 
@@ -461,6 +478,8 @@ export interface ConversationMessageResponse {
   error_message?: string
   tokens_used?: number
   model_used?: string
+  is_security_violation?: boolean
+  security_alert?: SecurityAlert
   created_at: string
 }
 

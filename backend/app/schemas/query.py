@@ -33,6 +33,21 @@ class QueryResult(BaseModel):
     execution_time_ms: Optional[int] = None
 
 
+class SecurityAlert(BaseModel):
+    is_violation: bool = True
+    violation_type: str
+    reason: str
+    attempted_sql: Optional[str] = None
+    natural_language: Optional[str] = None
+    timestamp: str
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_id: Optional[int] = None
+    company_id: Optional[int] = None
+    source: Optional[str] = None
+    superadmin_notified: bool = True
+
+
 class QueryResponse(BaseModel):
     id: int
     status: str
@@ -45,6 +60,8 @@ class QueryResponse(BaseModel):
     conversation_id: Optional[int] = None
     parent_query_id: Optional[int] = None
     error_message: Optional[str] = None
+    is_security_violation: Optional[bool] = False
+    security_alert: Optional[SecurityAlert] = None
     created_at: datetime
 
     class Config:

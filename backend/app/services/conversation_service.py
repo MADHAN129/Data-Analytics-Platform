@@ -12,9 +12,15 @@ from app.schemas.conversation import (
     UpdateConversationRequest,
     SendMessageRequest,
 )
+from app.schemas.query import SecurityAlert
 from app.services.llm_service import llm_service
 from app.services.connection_service import get_connector
 from app.services.query_service import _serialize_rows
+from app.services.security_guard_service import (
+    inspect_prompt_injection,
+    inspect_sql_safety,
+    trigger_security_incident,
+)
 from app.api.deps import user_has_permission_by_id
 
 
@@ -140,6 +146,13 @@ def get_messages(
                 resp.quick_options = m.tool_results["quick_options"]
             if "error" in m.tool_results:
                 resp.error_message = m.tool_results["error"]
+            if "is_security_violation" in m.tool_results:
+                resp.is_security_violation = m.tool_results["is_security_violation"]
+            if "security_alert" in m.tool_results:
+                if isinstance(m.tool_results["security_alert"], dict):
+                    resp.security_alert = SecurityAlert(**m.tool_results["security_alert"])
+                else:
+                    resp.security_alert = m.tool_results["security_alert"]
 
         if m.tool_calls and isinstance(m.tool_calls, list):
             for tc in m.tool_calls:
@@ -177,14 +190,57 @@ def send_message(
     db.commit()
     db.refresh(user_msg)
 
+    user_obj = db.query(User).filter(User.id == user_id).first()
+    company_id = user_obj.company_id if user_obj else None
+
+    # Pre-execution Security Guard Check on User Prompt
+    is_safe_nl, v_type_nl, reason_nl = inspect_prompt_injection(data.content)
+    if not is_safe_nl:
+        alert = trigger_security_incident(
+            db=db,
+            user_id=user_id,
+            company_id=company_id,
+            natural_language=data.content,
+            attempted_sql=None,
+            violation_type=v_type_nl or "PROMPT_INJECTION",
+            reason=reason_nl or "Prompt injection / destructive instruction detected.",
+            source="Chat Conversation (User Prompt)",
+        )
+        sec_msg = (
+            f"⚠️ **Security Violation Intercepted**\n\n"
+            f"Your prompt was identified as a prohibited security violation ({reason_nl}). "
+            f"Execution has been blocked and a high-priority incident notification has been dispatched to the SuperAdmin."
+        )
+        assistant_msg = ConversationMessage(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=sec_msg,
+            tool_calls=None,
+            tool_results={
+                "is_security_violation": True,
+                "security_alert": alert,
+                "error": f"SECURITY VIOLATION BLOCKED: {reason_nl}",
+            },
+            tokens_used=0,
+            model_used=llm_service.model_name,
+        )
+        db.add(assistant_msg)
+        conv.message_count = (conv.message_count or 0) + 2
+        conv.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(assistant_msg)
+
+        resp = ConversationMessageResponse.model_validate(assistant_msg)
+        resp.is_security_violation = True
+        resp.security_alert = SecurityAlert(**alert)
+        resp.error_message = f"SECURITY VIOLATION BLOCKED: {reason_nl}"
+        return resp
+
     schema_context = ""
     db_conn = None
 
     if conv.database_id:
         from app.models.connection import DatabaseConnection
-
-        user_obj = db.query(User).filter(User.id == user_id).first()
-        company_id = user_obj.company_id if user_obj else None
 
         query = db.query(DatabaseConnection).filter(DatabaseConnection.id == conv.database_id)
         if company_id is not None:
@@ -245,8 +301,27 @@ def send_message(
     generated_sql = sql
     results = None
     error_message = None
+    is_violation = False
+    security_alert_data = None
 
-    if db_conn and sql and not sql.startswith("ERROR:") and sql not in ("UNRELATED", "AMBIGUOUS"):
+    # Pre-execution Security Guard Check on Generated SQL
+    if sql:
+        is_safe_sql, v_type_sql, reason_sql = inspect_sql_safety(sql)
+        if not is_safe_sql:
+            is_violation = True
+            security_alert_data = trigger_security_incident(
+                db=db,
+                user_id=user_id,
+                company_id=company_id,
+                natural_language=data.content,
+                attempted_sql=sql,
+                violation_type=v_type_sql or "DESTRUCTIVE_SQL",
+                reason=reason_sql or "Destructive or prohibited SQL operation detected.",
+                source="Chat Conversation (Generated SQL)",
+            )
+            error_message = f"SECURITY VIOLATION BLOCKED: {reason_sql}"
+
+    if db_conn and sql and not is_violation and not sql.startswith("ERROR:") and sql not in ("UNRELATED", "AMBIGUOUS"):
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
@@ -271,6 +346,22 @@ def send_message(
                     sql, explanation, retry_tokens = llm_service.fix_sql(
                         data.content, sql, error_message, schema_context, dialect,
                     )
+                    # Re-validate fixed SQL with security guard
+                    is_safe_fix, v_fix, r_fix = inspect_sql_safety(sql)
+                    if not is_safe_fix:
+                        is_violation = True
+                        security_alert_data = trigger_security_incident(
+                            db=db,
+                            user_id=user_id,
+                            company_id=company_id,
+                            natural_language=data.content,
+                            attempted_sql=sql,
+                            violation_type=v_fix or "DESTRUCTIVE_SQL",
+                            reason=r_fix or "Destructive SQL detected in query fix.",
+                            source="Chat Conversation (Fixed SQL)",
+                        )
+                        error_message = f"SECURITY VIOLATION BLOCKED: {r_fix}"
+                        break
                     generated_sql = sql
                     tokens_used = (tokens_used or 0) + (retry_tokens or 0)
                     if sql.startswith("ERROR:"):
@@ -278,7 +369,13 @@ def send_message(
 
     # Phase 4: Rich Multi-Modal Reporting (Summary, Labels, Data, Quick Options)
     quick_options = []
-    if results and results.get("rows"):
+    if is_violation:
+        response_content = (
+            f"⚠️ **Security Violation Intercepted**\n\n"
+            f"{error_message}\n\n"
+            f"Execution has been blocked to protect database integrity. A high-priority incident notification has been dispatched to the SuperAdmin."
+        )
+    elif results and results.get("rows"):
         try:
             summary = llm_service.synthesize_data_summary(
                 data.content, sql, results.get("columns", []), results.get("rows", [])
@@ -304,6 +401,8 @@ def send_message(
         "generated_sql": generated_sql,
         "quick_options": quick_options,
         "error": error_message,
+        "is_security_violation": is_violation,
+        "security_alert": security_alert_data,
     }
 
     assistant_msg = ConversationMessage(
@@ -331,4 +430,7 @@ def send_message(
     resp.results = results
     resp.quick_options = quick_options
     resp.error_message = error_message
+    resp.is_security_violation = is_violation
+    if security_alert_data:
+        resp.security_alert = SecurityAlert(**security_alert_data)
     return resp

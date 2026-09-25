@@ -12,7 +12,8 @@ import { VisualizationRenderer } from "@/components/visualization/visualization-
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import type { ConversationMessageResponse, DatabaseConnectionResponse } from "@/types/api"
+import { SecurityAlertModal } from "@/components/security/security-alert-modal"
+import type { ConversationMessageResponse, DatabaseConnectionResponse, SecurityAlert } from "@/types/api"
 import {
   MessageSquare,
   Send,
@@ -49,6 +50,8 @@ function ConversationDetailPage() {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [selectedSuggestion, setSelectedSuggestion] = useState(-1)
   const [openSqlMsgIds, setOpenSqlMsgIds] = useState<Record<number, boolean>>({})
+  const [securityAlert, setSecurityAlert] = useState<SecurityAlert | null>(null)
+  const [showSecurityModal, setShowSecurityModal] = useState(false)
   const suggestRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const suggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -160,6 +163,10 @@ function ConversationDetailPage() {
 
       const result = await api.sendMessage(conversationId, { content: promptText })
       setMessages((prev) => [...prev, result])
+      if (result.is_security_violation && result.security_alert) {
+        setSecurityAlert(result.security_alert)
+        setShowSecurityModal(true)
+      }
       scrollToBottom()
     } catch (err: unknown) {
       const error = err as { detail?: string }
@@ -483,6 +490,13 @@ function ConversationDetailPage() {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">Press Ctrl+Enter to send</p>
       </div>
+
+      {/* High-Priority Security Alert Modal */}
+      <SecurityAlertModal
+        open={showSecurityModal}
+        onOpenChange={setShowSecurityModal}
+        alert={securityAlert}
+      />
     </div>
   )
 }

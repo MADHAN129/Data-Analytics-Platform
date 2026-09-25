@@ -133,12 +133,38 @@ def get_table_details(db_id: int, table_name: str) -> list[dict]:
         db.close()
 
 
+from app.services.security_guard_service import (
+    inspect_sql_safety,
+    inspect_prompt_injection,
+    trigger_security_incident,
+)
+
+
 # ── Query Tools ─────────────────────────────────────────────────────────────
 
 @mcp.tool(description="Execute a raw SQL query against a database and return the results.")
 def execute_sql(db_id: int, sql: str) -> dict:
     db = SessionLocal()
     try:
+        # Pre-execution Security Guard Check
+        is_safe, v_type, reason = inspect_sql_safety(sql)
+        if not is_safe:
+            alert = trigger_security_incident(
+                db=db,
+                user_id=0,
+                company_id=None,
+                natural_language=None,
+                attempted_sql=sql,
+                violation_type=v_type or "SECURITY_VIOLATION",
+                reason=reason or "Destructive or prohibited SQL operation detected.",
+                source="MCP Server (execute_sql)",
+            )
+            return {
+                "error": f"SECURITY VIOLATION BLOCKED: {reason}",
+                "is_security_violation": True,
+                "security_alert": alert,
+            }
+
         db_conn = get_database(db, db_id, user_id=0, include_all=True)
         if not db_conn:
             return {"error": f"Database with id {db_id} not found"}
@@ -160,10 +186,28 @@ def execute_sql(db_id: int, sql: str) -> dict:
 def query_data(db_id: int, question: str) -> str:
     db = SessionLocal()
     try:
+        # Pre-execution Security Guard Check on Natural Language Prompt
+        is_safe, v_type, reason = inspect_prompt_injection(question)
+        if not is_safe:
+            trigger_security_incident(
+                db=db,
+                user_id=0,
+                company_id=None,
+                natural_language=question,
+                attempted_sql=None,
+                violation_type=v_type or "PROMPT_INJECTION",
+                reason=reason or "Prompt injection or destructive instruction detected.",
+                source="MCP Server (query_data)",
+            )
+            return f"SECURITY VIOLATION BLOCKED: {reason}. A high-priority incident notification has been dispatched to the SuperAdmin."
+
         req = QueryRequest(database_id=db_id, natural_language=question)
         result = query_service.execute_natural_language_query(
             db, req, user_id=0, include_all=True, use_mcp_tools=False,
         )
+        if result.is_security_violation:
+            return f"SECURITY VIOLATION BLOCKED: {result.error_message}. A high-priority incident notification has been dispatched to the SuperAdmin."
+
         if result.status == "failed":
             return f"Query failed: {result.error_message}"
 
