@@ -7,12 +7,20 @@ import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { formatDate } from "@/lib/utils"
-import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { SecurityAlertModal } from "@/components/security/security-alert-modal"
+import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
+import { formatDate } from "@/lib/utils"
 import type { ConversationMessageResponse, DatabaseConnectionResponse, SecurityAlert } from "@/types/api"
 import {
   MessageSquare,
@@ -38,6 +46,8 @@ function ConversationDetailPage() {
 
   const [messages, setMessages] = useState<ConversationMessageResponse[]>([])
   const [title, setTitle] = useState("Conversation")
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [databaseId, setDatabaseId] = useState<number | null>(null)
   const [input, setInput] = useState("")
   const [isSending, setIsSending] = useState(false)
@@ -194,13 +204,17 @@ function ConversationDetailPage() {
   }
 
   const handleDelete = async () => {
+    setIsDeleting(true)
     try {
       await api.deleteConversation(conversationId)
       toast({ title: "Conversation deleted", variant: "success" })
+      setDeleteConfirmOpen(false)
       router.push("/dashboard/conversations")
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to delete", variant: "destructive" })
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -265,7 +279,13 @@ function ConversationDetailPage() {
             </div>
           </div>
         </div>
-        <Button variant="ghost" size="icon" className="text-destructive" onClick={handleDelete}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-destructive"
+          title="Delete conversation"
+          onClick={() => setDeleteConfirmOpen(true)}
+        >
           <Trash2 className="h-4 w-4" />
         </Button>
       </div>
@@ -497,6 +517,27 @@ function ConversationDetailPage() {
         onOpenChange={setShowSecurityModal}
         alert={securityAlert}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Conversation</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{title}&quot;? All messages in this conversation will be permanently removed. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

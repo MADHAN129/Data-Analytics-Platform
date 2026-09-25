@@ -24,6 +24,8 @@ export default function AdminRolesPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedRole, setSelectedRole] = useState<RoleResponse | null>(null)
+  const [deleteRoleTarget, setDeleteRoleTarget] = useState<RoleResponse | null>(null)
+  const [isDeletingRole, setIsDeletingRole] = useState(false)
   const [permissions, setPermissions] = useState<PermissionResponse[]>([])
   const [selectedPermissionIds, setSelectedPermissionIds] = useState<number[]>([])
   const [newRoleName, setNewRoleName] = useState("")
@@ -120,19 +122,24 @@ export default function AdminRolesPage() {
     }
   }
 
-  const handleDeleteRole = async (role: RoleResponse) => {
-    if (role.is_system) {
+  const handleDeleteRole = async () => {
+    if (!deleteRoleTarget) return
+    if (deleteRoleTarget.is_system) {
       toast({ title: "Cannot delete system role", variant: "destructive" })
       return
     }
+    setIsDeletingRole(true)
     try {
-      await api.deleteRole(role.id)
+      await api.deleteRole(deleteRoleTarget.id)
       apiCache.invalidate("roles")
       toast({ title: "Role deleted", variant: "success" })
+      setDeleteRoleTarget(null)
       fetchRoles(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to delete role", variant: "destructive" })
+    } finally {
+      setIsDeletingRole(false)
     }
   }
 
@@ -231,7 +238,13 @@ export default function AdminRolesPage() {
             Edit
           </Button>
           {!role.is_system && (
-            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDeleteRole(role)}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-destructive"
+              title="Delete role"
+              onClick={() => setDeleteRoleTarget(role)}
+            >
               <Trash2 className="h-4 w-4" />
             </Button>
           )}
@@ -389,6 +402,27 @@ export default function AdminRolesPage() {
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleUpdateRole} disabled={isSubmitting || !editRoleName.trim()}>
               {isSubmitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Role Confirmation Dialog */}
+      <Dialog open={!!deleteRoleTarget} onOpenChange={(o) => { if (!o) setDeleteRoleTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Role</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the role &quot;{deleteRoleTarget?.name}&quot;? Users assigned to this role will lose its permissions. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteRoleTarget(null)} disabled={isDeletingRole}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteRole} disabled={isDeletingRole}>
+              {isDeletingRole ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Delete Role
             </Button>
           </DialogFooter>
         </DialogContent>

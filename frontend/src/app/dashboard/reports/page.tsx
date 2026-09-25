@@ -144,6 +144,8 @@ export default function ReportsPage() {
     fetchDashboards()
   }, [fetchReports, fetchDashboards])
 
+  const [deleteReportTarget, setDeleteReportTarget] = useState<GeneratedReport | null>(null)
+
   const saveReports = (updated: GeneratedReport[]) => {
     setReports(updated)
     const key = getStorageKey()
@@ -152,12 +154,15 @@ export default function ReportsPage() {
     }
   }
 
-  const handleDelete = (id: number) => {
+  const handleDelete = () => {
+    if (!deleteReportTarget) return
+    const id = deleteReportTarget.id
     saveReports(reports.filter((r) => r.id !== id))
     toast({ title: "Report deleted", variant: "success" })
     if (previewReport?.id === id) {
       setPreviewReport(null)
     }
+    setDeleteReportTarget(null)
   }
 
   // Generate / Regenerate a report by fetching live dashboard and widget queries
@@ -774,7 +779,7 @@ export default function ReportsPage() {
                       size="icon"
                       className="h-8 w-8 text-muted-foreground hover:text-destructive"
                       title="Delete report"
-                      onClick={() => handleDelete(report.id)}
+                      onClick={() => setDeleteReportTarget(report)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -815,6 +820,27 @@ export default function ReportsPage() {
           isRegenerating={isRegeneratingId === previewReport.id}
         />
       )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      <Dialog open={!!deleteReportTarget} onOpenChange={(o) => { if (!o) setDeleteReportTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Report</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{deleteReportTarget?.title || "this report"}&quot;? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteReportTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete Report
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

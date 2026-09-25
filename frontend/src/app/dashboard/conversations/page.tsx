@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DataTable, type Column } from "@/components/ui/data-table"
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -33,6 +33,8 @@ function ConversationsPage() {
   const [page, setPage] = useState(1)
   const [isLoading, setIsLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [deleteConv, setDeleteConv] = useState<ConversationResponse | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [databases, setDatabases] = useState<DatabaseConnectionResponse[]>([])
   const [selectedDb, setSelectedDb] = useState<string>("")
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -84,14 +86,19 @@ function ConversationsPage() {
     }
   }
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async () => {
+    if (!deleteConv) return
+    setIsDeleting(true)
     try {
-      await api.deleteConversation(id)
+      await api.deleteConversation(deleteConv.id)
       toast({ title: "Conversation deleted", variant: "success" })
+      setDeleteConv(null)
       fetchConversations()
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to delete", variant: "destructive" })
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -149,8 +156,8 @@ function ConversationsPage() {
           variant="ghost"
           size="icon"
           className="text-destructive"
-          title="Delete"
-          onClick={(e) => { e.stopPropagation(); handleDelete(c.id) }}
+          title="Delete conversation"
+          onClick={(e) => { e.stopPropagation(); setDeleteConv(c) }}
         >
           <Trash2 className="h-4 w-4" />
         </Button>
@@ -221,6 +228,27 @@ function ConversationsPage() {
           />
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConv} onOpenChange={(o) => { if (!o) setDeleteConv(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Conversation</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{deleteConv?.title || "this conversation"}&quot;? All messages and analysis history will be permanently deleted. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteConv(null)} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

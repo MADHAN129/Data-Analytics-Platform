@@ -7,6 +7,14 @@ import type { UserResponse } from "@/types/api"
 import { useToast } from "@/components/ui/use-toast"
 import { useAuthStore } from "@/store/auth-store"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -38,6 +46,8 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true)
   const [savingProfile, setSavingProfile] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [removePhotoDialogOpen, setRemovePhotoDialogOpen] = useState(false)
+  const [removingPhoto, setRemovingPhoto] = useState(false)
 
   // Profile Form States
   const [fullName, setFullName] = useState("")
@@ -140,15 +150,17 @@ export default function ProfilePage() {
     reader.readAsDataURL(file)
   }
 
-  const handleRemovePhoto = async () => {
-    setAvatarUrl("")
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ""
-    }
+  const handleConfirmRemovePhoto = async () => {
+    setRemovingPhoto(true)
     try {
+      setAvatarUrl("")
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
       const updated = await api.updateProfile({ avatar_url: "" })
       setUser(updated)
       setAuthUser(updated)
+      setRemovePhotoDialogOpen(false)
       toast({
         title: "Profile photo removed",
         description: "Your avatar has been reset to default initials.",
@@ -159,6 +171,8 @@ export default function ProfilePage() {
         description: "Could not remove profile picture. Please try again.",
         variant: "destructive",
       })
+    } finally {
+      setRemovingPhoto(false)
     }
   }
 
@@ -295,7 +309,7 @@ export default function ProfilePage() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={handleRemovePhoto}
+                    onClick={() => setRemovePhotoDialogOpen(true)}
                     className="text-xs text-destructive hover:bg-destructive/10"
                   >
                     <Trash2 className="mr-1 h-3.5 w-3.5" />
@@ -443,6 +457,27 @@ export default function ProfilePage() {
           </Card>
         </div>
       </div>
+
+      {/* Delete/Remove Profile Photo Confirmation Dialog */}
+      <Dialog open={removePhotoDialogOpen} onOpenChange={setRemovePhotoDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove Profile Photo</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove your profile photo? Your avatar will be reset to default initials.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setRemovePhotoDialogOpen(false)} disabled={removingPhoto}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmRemovePhoto} disabled={removingPhoto}>
+              {removingPhoto ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Remove Photo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
