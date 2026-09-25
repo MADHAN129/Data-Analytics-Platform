@@ -104,7 +104,7 @@ def refresh_token(db: Session, token: str):
 def change_password(db: Session, user_id: int, current_password: str, new_password: str):
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not verify_password(current_password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
     user.password_hash = get_password_hash(new_password)
     db.commit()

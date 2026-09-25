@@ -157,8 +157,8 @@ export default function ProfilePage() {
     }
     if (newPassword !== confirmPassword) {
       toast({
-        title: "Validation Error",
-        description: "New password and confirmation do not match.",
+        title: "Password Mismatch",
+        description: "New password and confirm password do not match. Please ensure both passwords match.",
         variant: "destructive",
       })
       return
@@ -166,7 +166,7 @@ export default function ProfilePage() {
 
     try {
       setChangingPassword(true)
-      await api.changePassword({
+      const res = await api.changePassword({
         current_password: currentPassword,
         new_password: newPassword,
       })
@@ -174,14 +174,21 @@ export default function ProfilePage() {
       setNewPassword("")
       setConfirmPassword("")
       toast({
-        title: "Password changed",
-        description: "Your password has been successfully updated.",
+        title: "Password Changed Successfully",
+        description: res?.message || "Your password has been successfully updated.",
       })
     } catch (err: unknown) {
-      const errorMsg =
-        (err as { message?: string })?.message || "Failed to change password. Please check your current password."
+      const errorObj = err as { detail?: string | { msg?: string }[]; message?: string }
+      let errorMsg = "Current password is incorrect. Please check your current password and try again."
+      if (typeof errorObj?.detail === "string") {
+        errorMsg = errorObj.detail
+      } else if (Array.isArray(errorObj?.detail) && errorObj.detail.length > 0) {
+        errorMsg = errorObj.detail[0].msg || errorMsg
+      } else if (errorObj?.message) {
+        errorMsg = errorObj.message
+      }
       toast({
-        title: "Error changing password",
+        title: "Incorrect Password",
         description: errorMsg,
         variant: "destructive",
       })
@@ -385,7 +392,7 @@ export default function ProfilePage() {
                 </div>
               </CardContent>
               <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
-                <Button type="submit" disabled={savingProfile}>
+                <Button type="submit" disabled={savingProfile} className="bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm">
                   {savingProfile ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -450,7 +457,7 @@ export default function ProfilePage() {
                 </div>
               </CardContent>
               <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
-                <Button type="submit" variant="secondary" disabled={changingPassword}>
+                <Button type="submit" disabled={changingPassword} className="bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm">
                   {changingPassword ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
