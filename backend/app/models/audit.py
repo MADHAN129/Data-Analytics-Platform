@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, func, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON
 from app.database import Base
 
 
@@ -11,7 +11,7 @@ class AuditLog(Base):
     action = Column(String(100), nullable=False, index=True)
     resource_type = Column(String(100), nullable=False)
     resource_id = Column(String(100), nullable=True)
-    details = Column(JSONB, nullable=True)
+    details = Column(JSON, nullable=True)
     status = Column(String(20), nullable=False, default="success")
     ip_address = Column(String(50), nullable=True)
     user_agent = Column(Text, nullable=True)

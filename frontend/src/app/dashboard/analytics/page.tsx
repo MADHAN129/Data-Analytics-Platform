@@ -57,7 +57,13 @@ export default function AnalyticsPage() {
   const resultsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    api.listDatabases({ per_page: 100 }).then((d) => setConnections(d.connections)).catch(() => {})
+    api.listDatabases({ per_page: 100 }).then((d) => {
+      const dbs = d.connections || []
+      setConnections(dbs)
+      if (dbs.length > 0) {
+        setSelectedDbId((prev) => prev || String(dbs[0].id))
+      }
+    }).catch(() => {})
     api.listConversations({ per_page: 20 }).then((d) => {
       setConversations(d.conversations.map((c) => ({ id: c.id, title: c.title || "Untitled" })))
     }).catch(() => {})
@@ -73,7 +79,15 @@ export default function AnalyticsPage() {
   useEffect(() => { fetchHistory() }, [fetchHistory])
 
   const handleExecute = async () => {
-    if (!nlInput.trim() || !selectedDbId || isExecuting) return
+    if (isExecuting) return
+    if (!nlInput.trim()) {
+      toast({ title: "Question required", description: "Please enter a question to analyze.", variant: "destructive" })
+      return
+    }
+    if (!selectedDbId) {
+      toast({ title: "Database required", description: "Please select a database from the dropdown above.", variant: "destructive" })
+      return
+    }
     setIsExecuting(true)
     setCurrentQuery(null)
     try {
@@ -97,7 +111,11 @@ export default function AnalyticsPage() {
   }
 
   const handleFollowUp = async (queryId: number) => {
-    if (!nlInput.trim() || isExecuting) return
+    if (isExecuting) return
+    if (!nlInput.trim()) {
+      toast({ title: "Question required", description: "Please enter a follow-up question.", variant: "destructive" })
+      return
+    }
     setIsExecuting(true)
     try {
       const result = await api.queryFollowUp(queryId, { natural_language: nlInput })
@@ -224,7 +242,14 @@ export default function AnalyticsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="db-select">Database</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="db-select">Database</Label>
+              {connections.length === 0 && (
+                <span className="text-xs text-amber-600 dark:text-amber-400">
+                  No databases found. <a href="/dashboard/databases" className="underline font-medium">Add a database</a>
+                </span>
+              )}
+            </div>
             <Select value={selectedDbId} onValueChange={setSelectedDbId}>
               <SelectTrigger id="db-select">
                 <SelectValue placeholder="Select a database..." />
@@ -232,9 +257,14 @@ export default function AnalyticsPage() {
               <SelectContent>
                 {connections.map((c) => (
                   <SelectItem key={c.id} value={String(c.id)}>
-                    <div className="flex items-center gap-2">
-                      <Database className="h-4 w-4" />
-                      {c.name}
+                    <div className="flex items-center justify-between gap-4 w-full">
+                      <div className="flex items-center gap-2">
+                        <Database className="h-4 w-4 text-primary" />
+                        <span>{c.name}</span>
+                      </div>
+                      <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                        {c.type}
+                      </Badge>
                     </div>
                   </SelectItem>
                 ))}
@@ -266,7 +296,7 @@ export default function AnalyticsPage() {
                 <Button
                   variant="outline"
                   onClick={() => handleFollowUp(currentQuery.id)}
-                  disabled={isExecuting || !nlInput.trim() || !selectedDbId}
+                  disabled={isExecuting || !nlInput.trim()}
                 >
                   {isExecuting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MessageSquare className="mr-2 h-4 w-4" />}
                   Follow-up
@@ -274,7 +304,7 @@ export default function AnalyticsPage() {
               )}
               <Button
                 onClick={handleExecute}
-                disabled={isExecuting || !nlInput.trim() || !selectedDbId}
+                disabled={isExecuting || !nlInput.trim()}
               >
                 {isExecuting ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing...</>
@@ -316,8 +346,8 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {currentQuery.explanation && (
-                <div className="rounded-lg bg-muted p-4 text-sm">
-                  <p>{currentQuery.explanation}</p>
+                <div className="rounded-lg bg-muted/60 border p-4 text-sm whitespace-pre-wrap leading-relaxed">
+                  <div className="space-y-1">{currentQuery.explanation}</div>
                 </div>
               )}
 

@@ -202,7 +202,7 @@ export interface HealthResponse {
 // DATABASE CONNECTION TYPES
 // ============================================
 
-export type ConnectionType = "postgresql" | "mysql" | "sqlserver" | "mariadb" | "mongodb"
+export type ConnectionType = "postgresql" | "mysql" | "sqlserver" | "mariadb" | "mongodb" | "oracle"
 
 export interface DatabaseCreateRequest {
   name: string

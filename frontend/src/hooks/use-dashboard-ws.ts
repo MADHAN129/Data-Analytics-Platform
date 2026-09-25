@@ -19,7 +19,7 @@ interface WsMessage {
   status?: string
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000"
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8090"
 const MAX_RECONNECT_DELAY = 30_000
 const INITIAL_RECONNECT_DELAY = 1_000
 const PING_INTERVAL = 25_000
