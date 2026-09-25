@@ -5,6 +5,7 @@ from app.database import get_db
 from app.api.deps import get_current_user, require_permission
 from app.models.user import User, UserRole
 from app.schemas.user import UserResponse, UpdateProfileRequest, UserListResponse, CreateUserRequest
+from app.schemas.auth import ChangePasswordRequest
 from app.schemas.common import MessageResponse
 from app.services import user_service, role_service
 from app.services.audit_service import create_audit_log
@@ -27,6 +28,16 @@ def update_current_user_profile(
     db: Session = Depends(get_db),
 ):
     return user_service.update_profile(db, current_user.id, data, current_user.id)
+
+
+@router.put("/users/me/password", response_model=MessageResponse)
+def update_current_user_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.services.auth_service import change_password
+    return change_password(db, current_user.id, data.current_password, data.new_password)
 
 
 @router.get("/users", response_model=UserListResponse)

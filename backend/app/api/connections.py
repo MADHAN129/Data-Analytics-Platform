@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission, user_has_permission
+from app.api.deps import require_permission, user_has_permission
 from app.models.user import User
 from app.schemas.connection import (
     DatabaseConnectionRequest, DatabaseConnectionUpdate,
@@ -118,6 +118,32 @@ def test_database_connection(
     return result
 
 
+@router.post("/test", response_model=DatabaseTestResult)
+def test_connection_params(
+    data: DatabaseConnectionRequest,
+    current_user: User = Depends(require_permission("database.test")),
+    db: Session = Depends(get_db),
+):
+    from app.services.connection_service import get_connector
+    from app.models.connection import DatabaseConnection
+    dummy_conn = DatabaseConnection(
+        name=data.name,
+        connection_type=data.connection_type,
+        host=data.host,
+        port=data.port,
+        database_name=data.database_name,
+        username=data.username,
+        password=data.password,
+        schema_name=data.schema_name,
+        extra_params=data.extra_params,
+        created_by=current_user.id,
+    )
+    connector = get_connector(dummy_conn)
+    result = connector.test_connection()
+    create_audit_log(db, current_user.id, "test", "database", None, {"success": result.success})
+    return result
+
+
 @router.get("/health/batch", response_model=BatchHealthResponse)
 def batch_connection_health(
     current_user: User = Depends(require_permission("database.read")),
@@ -147,6 +173,7 @@ def get_connection_health(
 
 
 @router.post("/{database_id}/sync", response_model=SyncResult)
+@router.post("/{database_id}/refresh-schema", response_model=SyncResult)
 def sync_database_schema(
     database_id: int,
     current_user: User = Depends(require_permission("database.sync")),

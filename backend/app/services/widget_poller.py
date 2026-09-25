@@ -7,7 +7,6 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app.services.connection_service import get_connector
 from app.models.connection import DatabaseConnection
 

@@ -3,7 +3,6 @@ from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
 
 from app.models.conversation import Conversation, ConversationMessage
 from app.schemas.conversation import (
@@ -17,7 +16,6 @@ from app.services.llm_service import llm_service
 from app.services.connection_service import get_connector
 from app.services.query_service import _serialize_rows
 from app.api.deps import user_has_permission_by_id
-from app.config import settings
 
 
 def list_conversations(

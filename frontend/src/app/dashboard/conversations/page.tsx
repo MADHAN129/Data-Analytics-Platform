@@ -25,7 +25,7 @@ import {
   Database,
 } from "lucide-react"
 
-export function ConversationsPage() {
+function ConversationsPage() {
   const router = useRouter()
   const { toast } = useToast()
   const [conversations, setConversations] = useState<ConversationResponse[]>([])

@@ -7,7 +7,6 @@ from typing import Optional
 import httpx
 
 from app.config import settings
-from app.services.mcp_client import mcp_client
 
 logger = logging.getLogger(__name__)
 

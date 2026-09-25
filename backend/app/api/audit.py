@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import require_permission
 from app.models.user import User
 from app.schemas.audit import AuditLogListResponse, AuditStats
 from app.services import audit_service
@@ -49,3 +49,15 @@ def get_audit_stats(
         start_date=start_date,
         end_date=end_date,
     )
+
+
+@router.get("/audit/logs/export", response_model=AuditLogListResponse)
+def export_audit_logs(
+    current_user: User = Depends(require_permission("audit.read")),
+    db: Session = Depends(get_db),
+):
+    logs, total = audit_service.get_audit_logs(
+        db, page=1, per_page=1000, company_id=current_user.company_id,
+    )
+    return AuditLogListResponse(logs=logs, total=total, page=1, per_page=total)
+

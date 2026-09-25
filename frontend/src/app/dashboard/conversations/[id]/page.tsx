@@ -29,7 +29,7 @@ import {
   Lightbulb,
 } from "lucide-react"
 
-export function ConversationDetailPage() {
+function ConversationDetailPage() {
   const params = useParams()
   const router = useRouter()
   const { toast } = useToast()

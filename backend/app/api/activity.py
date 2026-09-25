@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from typing import List, Dict
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query
