@@ -352,10 +352,15 @@ DATABASE CONTEXT AND SCHEMA:
    - GLOBAL EXTREMUM / SINGLE WINNER:
      * Apply `ORDER BY <metric> DESC LIMIT 1` (or dialect equivalent) ONLY when asking for the single overall winner/loser across the entire dataset without group partitioning (e.g. 'Which department has the highest total salary overall?', 'Who is the highest paid employee in the company?').
 
-3. ENTITY IDENTIFICATION (MANDATORY):
-   - Whenever asking 'Which <entity>' (e.g. employee, project, department, client, vendor, vehicle, product), ALWAYS include the entity's primary identifying name/title column in the SELECT clause (e.g. for employees: FIRST_NAME, LAST_NAME or FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME; for projects: PROJECT_NAME; for departments: DEPARTMENT_NAME; for clients: CLIENT_NAME; for vendors: VENDOR_NAME; for products: PRODUCT_NAME) so the entity is explicitly named.
+3. MINIMAL JOINS & SINGLE-TABLE PRIORITY (AVOID UNNECESSARY JOINS):
+   - If a single table already directly contains BOTH the requested grouping dimension/attribute (e.g. `dept`, `category`, `region`, `country`, `status`) AND the metric/target value (e.g. `salary`, `amount`, `revenue`, `price`, `rating`), **query that table directly without joining another table**.
+   - NEVER introduce speculative or unverified string-equality JOINs to other tables (such as joining a separate dimension table where strings might be abbreviated or formatted differently) when the source table already holds the grouping column.
+   - Join tables ONLY when the requested columns are split across tables and cannot be satisfied by a single table, following verified foreign keys.
 
-4. ACCURATE METRIC MAPPING & DISAMBIGUATION:
+4. ENTITY IDENTIFICATION (MANDATORY):
+   - Whenever asking 'Which <entity>' (e.g. employee, project, client, vendor, vehicle, product), ALWAYS include the entity's primary identifying name/title column from the queried table in the SELECT clause so the entity is explicitly named.
+
+5. ACCURATE METRIC MAPPING & DISAMBIGUATION:
    - Strictly distinguish between 'spending/spent' (actual expenditure) and 'budget' (allocated limit):
      * 'Spending' / 'Spent' / 'Cost' = actual expenditure (e.g. PROJECTS.SPENT, SUM(PROJECTS.SPENT), EMPLOYEES.SALARY, OPERATING_EXPENSES).
      * 'Budget' = allocated ceiling limit (e.g. PROJECTS.BUDGET, SUM(PROJECTS.BUDGET), DEPARTMENTS.BUDGET).
@@ -364,11 +369,11 @@ DATABASE CONTEXT AND SCHEMA:
    - Use COALESCE / NVL / NULLIF appropriately to prevent division by zero (e.g. `NULLIF(denominator, 0)`) and handle NULL values cleanly.
    - Use `COUNT(DISTINCT column)` when counting unique entities, customers, or items.
 
-5. PREVENT ROW MULTIPLICATION (FAN-OUT PREVENTION):
+6. PREVENT ROW MULTIPLICATION (FAN-OUT PREVENTION):
    - When calculating aggregated metrics from multiple one-to-many child tables related to the same parent table (e.g. employee salaries and project spending per department), NEVER join multiple child tables directly before aggregation in a single query.
    - Pre-aggregate each child table independently in a Common Table Expression (WITH clause) grouped by the foreign key first, and then join the pre-aggregated CTEs using LEFT JOIN.
 
-6. TIME PERIOD & TEMPORAL INTEGRITY (MANDATORY RULE):
+7. TIME PERIOD & TEMPORAL INTEGRITY (MANDATORY RULE):
    - When the database contains multiple years with the same quarter names (or month names, e.g. 2024 Q1, 2024 Q2, 2025 Q1, 2025 Q2):
      * NEVER group by or rank by QUARTER alone (e.g. NEVER 'GROUP BY quarter').
      * '2024 Q2' and '2025 Q2' are distinct chronological periods and MUST NOT be combined.
@@ -380,10 +385,10 @@ DATABASE CONTEXT AND SCHEMA:
        - Return revenue, expenses, net profit, and profit margin belonging to that SAME exact period record.
      * NEVER SUM expenses, revenue, net profit, or metrics across different years merely because they share a quarter name.
 
-7. DIALECT COMPLIANCE:
+8. DIALECT COMPLIANCE:
 {dialect_rules}
 
-8. OUTPUT FORMAT:
+9. OUTPUT FORMAT:
    - Provide ONLY the single executable {dialect} query enclosed strictly inside a ```sql ... ``` block."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
