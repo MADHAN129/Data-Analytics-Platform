@@ -1,6 +1,5 @@
 import re
 import time
-from typing import Optional
 
 import pymongo
 from bson import ObjectId

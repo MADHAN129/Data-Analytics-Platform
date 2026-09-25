@@ -2,13 +2,11 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import require_permission
 from app.models.user import User
 from app.models.role import Role, RolePermission
-from app.models.permission import Permission
 from app.schemas.role import RoleResponse, RoleListResponse, CreateRoleRequest, UpdateRoleRequest
 from app.schemas.common import MessageResponse
-from app.schemas.permission import PermissionListResponse, PermissionResponse
 from app.services import role_service
 from app.services.audit_service import create_audit_log
 

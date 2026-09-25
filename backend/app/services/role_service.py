@@ -1,6 +1,5 @@
-from typing import Optional, List
+from typing import Optional
 
-from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models.role import Role, RolePermission

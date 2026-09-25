@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -64,6 +64,7 @@ def delete_conversation(
 
 
 @router.patch("/{conversation_id}", response_model=ConversationResponse)
+@router.put("/{conversation_id}", response_model=ConversationResponse)
 def update_conversation(
     conversation_id: int,
     data: UpdateConversationRequest,

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import require_permission
 from app.models.user import User
 from app.schemas.query import (
     QueryRequest, SQLExecutionRequest, FollowUpRequest,
@@ -130,3 +130,48 @@ def visualize_query(
     db: Session = Depends(get_db),
 ):
     return query_service.visualize_query(db, query_id, current_user.id)
+
+
+@router.post("/{query_id}/favorite", response_model=MessageResponse)
+def favorite_query(
+    query_id: int,
+    current_user: User = Depends(require_permission("query.read")),
+    db: Session = Depends(get_db),
+):
+    query = query_service.get_query(db, query_id, current_user.id)
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found")
+    create_audit_log(db, current_user.id, "favorite", "query", query_id)
+    return MessageResponse(message="Query favorited")
+
+
+@router.delete("/{query_id}", response_model=MessageResponse)
+def delete_query(
+    query_id: int,
+    current_user: User = Depends(require_permission("query.delete")),
+    db: Session = Depends(get_db),
+):
+    from app.models.query import Query as QueryModel
+    q = db.query(QueryModel).filter(QueryModel.id == query_id).first()
+    if not q:
+        raise HTTPException(status_code=404, detail="Query not found")
+    if q.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Query not found")
+    db.delete(q)
+    db.commit()
+    create_audit_log(db, current_user.id, "delete", "query", query_id)
+    return MessageResponse(message="Query deleted")
+
+
+@router.get("/{query_id}/export")
+def export_query(
+    query_id: int,
+    current_user: User = Depends(require_permission("query.read")),
+    db: Session = Depends(get_db),
+):
+    query = query_service.get_query(db, query_id, current_user.id)
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found")
+    create_audit_log(db, current_user.id, "export", "query", query_id)
+    return query
+

@@ -2,16 +2,14 @@ import json
 import re
 import time
 import difflib
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc
+from sqlalchemy.orm import Session
 
 from app.models.connection import DatabaseConnection
 from app.models.query import Query
-from app.models.conversation import Conversation
 from app.models.template import QueryTemplate
 from app.models.user import User
 from app.schemas.query import (
@@ -22,7 +20,6 @@ from app.schemas.query import (
 )
 from app.schemas.conversation import MessageResponse
 from app.services.llm_service import llm_service
-from app.services.mcp_client import mcp_client
 from app.services.connection_service import get_connector, get_database
 from app.config import settings
 from app.utils.error_messages import friendly_error
@@ -106,7 +103,7 @@ def _get_schema_context(db_conn: DatabaseConnection) -> tuple[str, dict[str, set
         related_tables: set[str] = set()
         categorical_map: dict[str, list[dict]] = {}
         numeric_cols: list[tuple[str, str]] = []
-        stop_words = {"paid", "active", "inactive", "booked", "completed", "in progress", "true", "false", "none", "null", "full_day", "van", "car", "bike"}
+        stop_words = {"paid", "active", "inactive", "booked", "completed", "in progress", "true", "false", "none", "null"}
 
         sorted_tables = sorted(schema.tables, key=lambda t: (0 if (t.row_count or 0) > 0 else 1, t.name))
         empty_table_names = []

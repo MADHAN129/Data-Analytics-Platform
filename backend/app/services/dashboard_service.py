@@ -8,7 +8,6 @@ from app.schemas.dashboard import (
     DashboardUpdateRequest,
     LayoutUpdateRequest,
 )
-from app.models.template import QueryTemplate
 
 import threading
 
@@ -251,12 +250,12 @@ def auto_generate_from_query(
         except Exception:
             generated = None
         if not generated:
-            sql = _heuristic_sql(natural_language, schema_context)
+            sql = _heuristic_sql(natural_language, schema_context, db_conn.connection_type)
             explanation = "Generated from your request (LLM unavailable)."
         else:
             sql, explanation, _ = generated
         if not sql or sql.strip() in (";", ""):
-            sql = "SELECT 1 WHERE 1=0"
+            sql = _get_empty_query_response(db_conn.connection_type)
             explanation = "Could not generate a valid SQL query."
 
         status = "completed"
@@ -447,7 +446,15 @@ def _infer_chart_type(text: str) -> str:
     return "table"
 
 
-def _heuristic_sql(question: str, schema_context: str) -> str:
+def _get_empty_query_response(connection_type: str = "postgresql") -> str:
+    """Return an empty query formatted for the specified database dialect."""
+    c_type = (connection_type or "").lower()
+    if "oracle" in c_type:
+        return "SELECT 1 FROM DUAL WHERE 1=0"
+    return "SELECT 1 WHERE 1=0"
+
+
+def _heuristic_sql(question: str, schema_context: str, connection_type: str = "postgresql") -> str:
     """Best-effort SQL when the LLM is unavailable or times out.
 
     Picks the most likely single table from the schema and builds a GROUP BY
@@ -456,7 +463,9 @@ def _heuristic_sql(question: str, schema_context: str) -> str:
     import re
 
     tables = re.findall(r"Table:\s*(\w+)", schema_context)
-    table = tables[0] if tables else "data"
+    if not tables:
+        return _get_empty_query_response(connection_type)
+    table = tables[0]
 
     q = question.lower()
     cols = re.findall(r"\(([^)]+)\)", schema_context)
@@ -479,5 +488,11 @@ def _heuristic_sql(question: str, schema_context: str) -> str:
         return f"SELECT {cat_col}, COUNT(*) AS count FROM {table} GROUP BY {cat_col} ORDER BY count DESC"
     if "count" in q or "number of" in q or "no of" in q:
         return f"SELECT COUNT(*) AS count FROM {table}"
+
+    c_type = (connection_type or "").lower()
+    if "oracle" in c_type:
+        return f"SELECT * FROM {table} FETCH FIRST 100 ROWS ONLY"
+    elif "sqlserver" in c_type or "mssql" in c_type:
+        return f"SELECT TOP 100 * FROM {table}"
     return f"SELECT * FROM {table} LIMIT 100"
 

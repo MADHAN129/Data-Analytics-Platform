@@ -11,7 +11,6 @@ Usage (stdio — for Claude Desktop):
 """
 
 from collections.abc import Callable
-from typing import Optional
 
 try:
     from mcp.server.fastmcp import FastMCP

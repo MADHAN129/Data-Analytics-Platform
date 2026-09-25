@@ -23,9 +23,9 @@ class TestDynamicDataAnalyzer(unittest.TestCase):
     def setUpClass(cls):
         try:
             cls.db = SessionLocal()
-            cls.db_conn = cls.db.query(DatabaseConnection).filter_by(id=2).first()
+            cls.db_conn = cls.db.query(DatabaseConnection).filter_by(connection_type="oracle").first()
             if cls.db_conn is None:
-                raise unittest.SkipTest("Oracle database connection (id=2) not found in database")
+                raise unittest.SkipTest("Oracle database connection not found in database")
             cls.connector = get_connector(cls.db_conn)
             cls.oracle_conn = cls.connector.connect()
             cls.user_id = 1

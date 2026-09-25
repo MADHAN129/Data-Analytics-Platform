@@ -2,7 +2,6 @@ import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.user import User
