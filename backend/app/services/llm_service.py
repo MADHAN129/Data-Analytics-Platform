@@ -210,6 +210,17 @@ class LLMService:
     def _call_vllm(self, messages: list, temperature: float = 0.1, max_tokens: int = 1024) -> Optional[str]:
         return self._call_llm(messages, temperature, max_tokens)
 
+    def _get_db_dialect(self, connection_type: str) -> str:
+        dialect_map = {
+            "postgresql": "PostgreSQL",
+            "mysql": "MySQL",
+            "mssql": "T-SQL",
+            "oracle": "Oracle SQL",
+            "mongodb": "MongoDB Query",
+            "sqlite": "SQLite",
+        }
+        return dialect_map.get(connection_type, "SQL")
+
     def _table_names_from_schema(self, schema_context: str) -> list[str]:
         lines = [line.strip() for line in schema_context.split("\n") if line.strip()]
         tables = []

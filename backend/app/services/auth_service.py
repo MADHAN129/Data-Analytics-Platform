@@ -36,13 +36,13 @@ def register_user(db: Session, data: RegisterRequest, ip_address: str = None):
     db.commit()
     db.refresh(user)
 
-    # Assign default Viewer role
+    # Assign default Analyst role (allowing query execution and dashboard creation)
     from app.models.role import Role
     from app.models.user import UserRole
 
-    viewer_role = db.query(Role).filter(Role.name == "Viewer").first()
-    if viewer_role:
-        ur = UserRole(user_id=user.id, role_id=viewer_role.id)
+    default_role = db.query(Role).filter(Role.name == "Analyst").first() or db.query(Role).filter(Role.name == "Viewer").first()
+    if default_role:
+        ur = UserRole(user_id=user.id, role_id=default_role.id)
         db.add(ur)
         db.commit()
 
