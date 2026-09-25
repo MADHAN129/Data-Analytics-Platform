@@ -629,33 +629,58 @@ INTENT & RELEVANCE RULES:
 
     def synthesize_data_summary(self, natural_language: str, sql: str, columns: list[str], rows: list[list]) -> str:
         """
-        Synthesize rich data insights and visualization label assessment directly from the executed query.
+        Synthesize exact answer extraction and data summary directly from the executed query
+        strictly adhering to EXACT ANSWER EXTRACTION RULES.
         """
         if not rows or not columns:
             return f"Query executed successfully, but returned 0 rows for question: '{natural_language}'."
 
-        sample_rows = rows[:10]
-        data_preview = f"Columns: {', '.join(columns)}\nTotal Rows: {len(rows)}\nSample Rows:\n" + "\n".join(str(r) for r in sample_rows)
+        sample_rows = rows[:20]
+        data_preview = f"Columns: {', '.join(columns)}\nTotal Rows: {len(rows)}\nResults Sample:\n" + "\n".join(str(r) for r in sample_rows)
+
+        system_prompt = (
+            "You are the final answer extraction engine for an AI Analytics system.\n"
+            "Your job is to answer the user's question EXACTLY AS ASKED using only the validated SQL result and the user's original question.\n\n"
+            "## EXACT ANSWER EXTRACTION RULES\n\n"
+            "1. EXACT QUESTION COMPLIANCE\n"
+            "- Answer every requested part of the user's question.\n"
+            "- Do NOT answer a similar question, substitute a related metric, invent a metric, or omit a requested metric.\n"
+            "- If the user asks for SPENT, use SPENT. If the user asks for BUDGET, use BUDGET. Never treat them as interchangeable.\n\n"
+            "2. COLUMN SEMANTIC ACCURACY\n"
+            "- PROJECTS.BUDGET = allocated project budget\n"
+            "- PROJECTS.SPENT = actual project spending\n"
+            "- EMPLOYEES.SALARY = employee salary\n"
+            "- AVG(EMPLOYEES.SALARY) = average employee salary\n"
+            "- SUM(EMPLOYEES.SALARY) = total employee salary cost\n"
+            "- Never replace SPENT -> BUDGET or BUDGET -> SPENT.\n\n"
+            "3. FORMULA ACCURACY\n"
+            "- Project budget utilization = total project spending / total project budget * 100 (SUM(SPENT) / SUM(BUDGET) * 100)\n"
+            "- Project spending relative to employee salary = total project spending / total employee salary * 100 (SUM(SPENT) / SUM(SALARY) * 100)\n"
+            "- These are DIFFERENT metrics. Never substitute one for the other.\n\n"
+            "4. REQUESTED METRIC COMPLETENESS\n"
+            "- Create an internal checklist of every metric requested by the user and ensure ALL requested metrics are presented.\n\n"
+            "5. RANKING QUESTIONS\n"
+            "- For questions containing highest, lowest, maximum, minimum, top, bottom, most, least: use ONLY the metric explicitly specified by the user.\n\n"
+            "6. EXACT ANSWER ONLY\n"
+            "- Provide:\n"
+            "  1. The direct answer.\n"
+            "  2. Only the values needed to support the answer.\n"
+            "  3. The exact calculations requested by the user.\n"
+            "- Do NOT add unrelated insights, speculative explanations, or metrics that were not requested.\n\n"
+            "Format your output clearly:\n"
+            "### 🎯 Direct Answer\n"
+            "State the exact direct answer concisely with the validated figures.\n\n"
+            "### 📊 Key Calculated Values\n"
+            "List the specific metrics and calculated figures requested with proper formatting (currency $, %, commas).\n\n"
+            "### 🛠️ Execution Trace & Verification\n"
+            "- **Intent**: The exact question answered.\n"
+            "- **Metrics Verified**: Exact columns/metrics used from live database records."
+        )
 
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are an expert AI Database Analyst with live database tool access. "
-                    "Analyze the query results returned from the database to answer the user's question. "
-                    "Provide your response adhering to this format:\n\n"
-                    "### 🎯 Direct Answer\n"
-                    "State the direct answer clearly and concisely using the live database values.\n\n"
-                    "### 📊 Key Calculated Values\n"
-                    "List the specific metrics and calculated figures using proper formatting (currency $, percentages %, totals, commas).\n\n"
-                    "### 💡 Insights & Explanation\n"
-                    "Provide a brief 1-2 sentence analytical explanation of the findings and data limitations if any.\n\n"
-                    "### 🛠️ Execution Trace & Details\n"
-                    "- **Intent**: The analytical goal.\n"
-                    "- **Tables & Columns Used**: Tables and columns from the executed query.\n"
-                    "- **Validation**: Validated against live database records.\n"
-                    "- **Visualizable Labels Assessment**: State whether chartable labels are present and recommend the best visualization type."
-                ),
+                "content": system_prompt,
             },
             {
                 "role": "user",
@@ -663,11 +688,11 @@ INTENT & RELEVANCE RULES:
                     f"User Request: {natural_language}\n\n"
                     f"Executed SQL Query:\n{sql}\n\n"
                     f"Database Results Data:\n{data_preview}\n\n"
-                    "Please provide the complete analysis and label assessment:"
+                    "Extract and provide the exact answer:"
                 ),
             },
         ]
-        summary = self._call_vllm(messages, temperature=0.2, max_tokens=700)
+        summary = self._call_llm(messages, temperature=0.1, max_tokens=700)
         return summary.strip() if summary else f"Query executed successfully ({len(rows)} rows returned)."
 
 
