@@ -37,13 +37,13 @@ import {
 } from "lucide-react"
 
 const WIDGET_TYPES = [
-  { value: "analytics", label: "Analytics", icon: Sparkles },
-  { value: "kpi", label: "KPI", icon: LayoutDashboard },
   { value: "bar_chart", label: "Bar Chart", icon: BarChart3 },
   { value: "pie_chart", label: "Pie Chart", icon: PieChart },
   { value: "line_chart", label: "Line Chart", icon: LineChart },
   { value: "area_chart", label: "Area Chart", icon: AreaChart },
-  { value: "table", label: "Table", icon: Table2 },
+  { value: "kpi", label: "KPI Metric", icon: LayoutDashboard },
+  { value: "table", label: "Data Table", icon: Table2 },
+  { value: "analytics", label: "Analytics (Auto)", icon: Sparkles },
 ] as const
 
 export default function DashboardDetailPage() {
@@ -252,15 +252,16 @@ export default function DashboardDetailPage() {
     refresh_interval?: number
   }) => {
     try {
+      const current = dash?.widgets.find((w) => w.id === widgetId)
       const updated = await api.updateWidget(dashboardId, widgetId, {
         widget_type: data.widget_type,
         title: data.title,
-        position_x: 0,
-        position_y: 0,
-        width: 6,
-        height: 4,
+        position_x: current?.position_x ?? 0,
+        position_y: current?.position_y ?? 0,
+        width: current?.width ?? 6,
+        height: current?.height ?? 4,
         query_id: data.query_id ?? undefined,
-        config: { ...(data.config || {}), refresh_interval: data.refresh_interval ?? 0 },
+        config: { ...(current?.config as Record<string, unknown> || {}), ...(data.config || {}), refresh_interval: data.refresh_interval ?? 0 },
       })
       setDash((prev) => prev ? {
         ...prev,
@@ -746,12 +747,13 @@ function WidgetChartRenderer({
 }
 
 function QueryPicker({
-  value, onChange,
+  value, onChange, onSelectQuery,
 }: {
   value?: number | null
   onChange: (queryId: number | null) => void
+  onSelectQuery?: (query: { id: number; natural_language: string; generated_sql?: string; suggested_visualizations?: VisualizationSuggestion[] } | null) => void
 }) {
-  const [queries, setQueries] = useState<Array<{ id: number; natural_language: string; generated_sql?: string }>>([])
+  const [queries, setQueries] = useState<Array<{ id: number; natural_language: string; generated_sql?: string; suggested_visualizations?: VisualizationSuggestion[] }>>([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -767,7 +769,17 @@ function QueryPicker({
       <Label>Linked Query</Label>
       <Select
         value={value ? String(value) : "none"}
-        onValueChange={(v) => onChange(v === "none" ? null : Number(v))}
+        onValueChange={(v) => {
+          if (v === "none") {
+            onChange(null)
+            onSelectQuery?.(null)
+          } else {
+            const qId = Number(v)
+            onChange(qId)
+            const found = queries.find((q) => q.id === qId)
+            if (found) onSelectQuery?.(found)
+          }
+        }}
       >
         <SelectTrigger>
           <SelectValue placeholder={loading ? "Loading queries..." : "Select a query"} />
@@ -804,10 +816,41 @@ function AddWidgetDialog({
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [loadingDbs, setLoadingDbs] = useState(false)
 
-  // Manual mode state
-  const [widgetType, setWidgetType] = useState("kpi")
+  // Manual mode state - default to chart (bar_chart or pie_chart) instead of plain text KPI
+  const [widgetType, setWidgetType] = useState("bar_chart")
   const [widgetTitle, setWidgetTitle] = useState("")
   const [queryId, setQueryId] = useState<number | null>(null)
+
+  const handleSelectQuery = (q: { id: number; natural_language: string; generated_sql?: string; suggested_visualizations?: VisualizationSuggestion[] } | null) => {
+    if (!q) return
+    if (!widgetTitle.trim()) {
+      setWidgetTitle(q.natural_language || `Query #${q.id}`)
+    }
+    const qLower = (q.natural_language || "").toLowerCase()
+    if (
+      qLower.includes("pie") ||
+      qLower.includes("distribution") ||
+      qLower.includes("share") ||
+      qLower.includes("proportion") ||
+      qLower.includes("percentage") ||
+      qLower.includes("percent") ||
+      qLower.includes("breakdown") ||
+      qLower.includes("split")
+    ) {
+      setWidgetType("pie_chart")
+    } else if (
+      qLower.includes("trend") ||
+      qLower.includes("over time") ||
+      qLower.includes("timeline") ||
+      qLower.includes("monthly") ||
+      qLower.includes("growth")
+    ) {
+      setWidgetType("line_chart")
+    } else if (q.suggested_visualizations && q.suggested_visualizations.length > 0) {
+      const nonTable = q.suggested_visualizations.find((s) => s.type !== "table")
+      if (nonTable) setWidgetType(nonTable.type)
+    }
+  }
 
   useEffect(() => {
     if (!open) return
@@ -828,7 +871,7 @@ function AddWidgetDialog({
     if (!widgetTitle.trim()) return
     onAdd(widgetType, widgetTitle.trim(), queryId ?? undefined)
     setWidgetTitle("")
-    setWidgetType("kpi")
+    setWidgetType("bar_chart")
     setQueryId(null)
   }
 
@@ -943,7 +986,7 @@ function AddWidgetDialog({
   const handleReset = () => {
     setQueryId(null)
     setWidgetTitle("")
-    setWidgetType("kpi")
+    setWidgetType("bar_chart")
     setNlQuestion("")
     setAiTitle("")
     setAiWidgetType("auto")
@@ -1022,11 +1065,11 @@ function AddWidgetDialog({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="auto">✨ Auto (AI Recommended)</SelectItem>
-                    <SelectItem value="kpi">KPI Metric</SelectItem>
-                    <SelectItem value="bar_chart">Bar Chart</SelectItem>
                     <SelectItem value="pie_chart">Pie Chart</SelectItem>
+                    <SelectItem value="bar_chart">Bar Chart</SelectItem>
                     <SelectItem value="line_chart">Line Chart</SelectItem>
                     <SelectItem value="area_chart">Area Chart</SelectItem>
+                    <SelectItem value="kpi">KPI Metric (Text)</SelectItem>
                     <SelectItem value="table">Data Table</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1083,7 +1126,7 @@ function AddWidgetDialog({
               />
             </div>
 
-            <QueryPicker value={queryId} onChange={setQueryId} />
+            <QueryPicker value={queryId} onChange={setQueryId} onSelectQuery={handleSelectQuery} />
 
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

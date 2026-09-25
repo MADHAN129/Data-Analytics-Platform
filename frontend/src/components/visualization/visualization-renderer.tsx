@@ -121,7 +121,23 @@ function fixBarConfig(results: QueryResult, config?: Record<string, unknown>) {
   let x = (config?.x as string) || (config?.label as string) || strCol || results.columns[0]
   let y = (config?.y as string) || (config?.value as string) || numCol || results.columns[1] || results.columns[0]
 
-  const data = buildData(results)
+  const rawData = buildData(results)
+  const data = rawData.map((item) => {
+    if (results.columns.length === 1) {
+      return {
+        ...item,
+        __label__: results.columns[0].replace("_", " ").toUpperCase(),
+      }
+    }
+    return item
+  })
+
+  if (results.columns.length === 1) {
+    x = "__label__"
+    y = results.columns[0]
+    return { data, x, y }
+  }
+
   if (data.length > 0 && results.columns.length > 0) {
     const xIdx = results.columns.indexOf(x)
     const yIdx = results.columns.indexOf(y)
@@ -149,7 +165,23 @@ function fixPieConfig(results: QueryResult, config?: Record<string, unknown>) {
   let label = (config?.label as string) || (config?.x as string) || strCol || results.columns[0]
   let value = (config?.value as string) || (config?.y as string) || numCol || results.columns[1] || results.columns[0]
 
-  const data = buildData(results)
+  const rawData = buildData(results)
+  const data = rawData.map((item) => {
+    if (results.columns.length === 1) {
+      return {
+        ...item,
+        __label__: results.columns[0].replace("_", " ").toUpperCase(),
+      }
+    }
+    return item
+  })
+
+  if (results.columns.length === 1) {
+    label = "__label__"
+    value = results.columns[0]
+    return { data, label, value }
+  }
+
   if (data.length > 0 && results.columns.length > 0) {
     const labelIdx = results.columns.indexOf(label)
     const valueIdx = results.columns.indexOf(value)
