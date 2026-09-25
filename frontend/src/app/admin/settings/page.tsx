@@ -177,20 +177,23 @@ export default function SettingsPage() {
         {/* ========================================================================= */}
         {/* APPEARANCE & THEME MODES TAB */}
         {/* ========================================================================= */}
-        <TabsContent value="appearance" className="space-y-6">
-          {/* Theme & Display Mode Toggle Card */}
+        {/* ========================================================================= */}
+        {/* APPEARANCE & THEME MODES TAB */}
+        {/* ========================================================================= */}
+        <TabsContent value="appearance" className="space-y-4 max-w-4xl">
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 pt-5 px-6">
               <div className="flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-primary" />
-                <CardTitle className="text-base">Theme & Display Mode</CardTitle>
+                <Palette className="h-5 w-5 text-primary" />
+                <CardTitle className="text-base">Appearance & Interface Preferences</CardTitle>
               </div>
               <CardDescription className="text-xs">
-                Switch between dark/black night mode and white daylight theme.
+                Manage night mode, interface density, animations, and contrast in one place.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
+            <CardContent className="space-y-3.5 px-6 pb-5 pt-1">
+              {/* Night Mode Toggle */}
+              <div className="flex items-center justify-between py-1">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
                     {mode === "dark" ? (
@@ -204,8 +207,8 @@ export default function SettingsPage() {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {mode === "dark"
-                      ? "Theme is Black (Night / Dark mode enabled)."
-                      : "Theme is White (Light mode enabled)."}
+                      ? "Night Mode is ON (Black / Dark theme enabled)."
+                      : "Night Mode is OFF (White / Light theme enabled)."}
                   </p>
                 </div>
                 <Switch
@@ -214,26 +217,15 @@ export default function SettingsPage() {
                   onCheckedChange={(checked) => setMode(checked ? "dark" : "light")}
                 />
               </div>
-            </CardContent>
-          </Card>
 
-          {/* Interface & Visual Accessibility Card */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Eye className="h-5 w-5 text-primary" />
-                <CardTitle>Interface & Accessibility Preferences</CardTitle>
-              </div>
-              <CardDescription>
-                Customize UI scaling, animation behavior, and data readability.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
+              <Separator />
+
+              {/* Compact Density */}
+              <div className="flex items-center justify-between py-1">
                 <div className="space-y-0.5">
                   <Label htmlFor="compact-mode" className="text-sm font-medium">Compact Density</Label>
                   <p className="text-xs text-muted-foreground">
-                    Reduce padding in data tables and query results for higher information density.
+                    Reduce table padding for maximum information visibility.
                   </p>
                 </div>
                 <Switch
@@ -245,7 +237,8 @@ export default function SettingsPage() {
 
               <Separator />
 
-              <div className="flex items-center justify-between">
+              {/* Motion & UI Transitions */}
+              <div className="flex items-center justify-between py-1">
                 <div className="space-y-0.5">
                   <Label htmlFor="animations-toggle" className="text-sm font-medium">Motion & UI Transitions</Label>
                   <p className="text-xs text-muted-foreground">
@@ -261,11 +254,12 @@ export default function SettingsPage() {
 
               <Separator />
 
-              <div className="flex items-center justify-between">
+              {/* Enhanced Text Contrast */}
+              <div className="flex items-center justify-between py-1">
                 <div className="space-y-0.5">
                   <Label htmlFor="high-contrast" className="text-sm font-medium">Enhanced Text Contrast</Label>
                   <p className="text-xs text-muted-foreground">
-                    Boost font weighting and border clarity for improved legibility.
+                    Boost font weighting and border clarity for higher legibility.
                   </p>
                 </div>
                 <Switch
