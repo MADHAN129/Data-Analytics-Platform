@@ -196,4 +196,41 @@ class TestUserSelfProtection:
         assert r.status_code == 400
         assert "cannot delete your own account" in r.json()["detail"].lower()
 
+    def test_user_cannot_modify_own_roles(self, client, admin, db_session):
+        from app.models.role import Role
+        role = db_session.query(Role).filter(Role.name == "Analyst").first()
+        r = client.put(
+            f"/api/v1/users/{admin.id}/roles",
+            json={"role_id": role.id},
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 400
+        assert "cannot modify your own roles" in r.json()["detail"].lower()
+
+        r_post = client.post(
+            f"/api/v1/users/{admin.id}/roles",
+            json={"role_id": role.id},
+            headers=auth_headers(admin),
+        )
+        assert r_post.status_code == 400
+        assert "cannot modify your own roles" in r_post.json()["detail"].lower()
+
+        r_del = client.delete(
+            f"/api/v1/users/{admin.id}/roles/{role.id}",
+            headers=auth_headers(admin),
+        )
+        assert r_del.status_code == 400
+        assert "cannot modify your own roles" in r_del.json()["detail"].lower()
+
+    def test_admin_can_set_role_for_another_user_atomically(self, client, admin, plain_user, db_session):
+        from app.models.role import Role
+        analyst_role = db_session.query(Role).filter(Role.name == "Analyst").first()
+        r = client.put(
+            f"/api/v1/users/{plain_user.id}/roles",
+            json={"role_id": analyst_role.id},
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 200
+        assert "Role updated to" in r.json()["message"]
+
 

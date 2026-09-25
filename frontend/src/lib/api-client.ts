@@ -298,6 +298,13 @@ class ApiClient {
     })
   }
 
+  async setUserRole(userId: number, roleId: number): Promise<MessageResponse> {
+    return this.request<MessageResponse>(`/users/${userId}/roles`, {
+      method: "PUT",
+      body: JSON.stringify({ role_id: roleId }),
+    })
+  }
+
   async assignRoleToUser(userId: number, roleId: number): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/users/${userId}/roles`, {
       method: "POST",

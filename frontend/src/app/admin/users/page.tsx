@@ -257,6 +257,14 @@ export default function AdminUsersPage() {
 
   const handleSetRoleForSelectedUser = async (targetRole: RoleResponse) => {
     if (!selectedUser) return
+    if (isUserSelf(selectedUser)) {
+      toast({
+        title: "Action Not Allowed",
+        description: "You cannot modify roles of your own account.",
+        variant: "destructive",
+      })
+      return
+    }
     const currentRoleIds = selectedUser.roles.map((r) => r.id)
     if (currentRoleIds.includes(targetRole.id) && currentRoleIds.length === 1) {
       return // Already has only this role
@@ -264,21 +272,7 @@ export default function AdminUsersPage() {
 
     setIsUpdatingRole(targetRole.id)
     try {
-      // Remove all other roles
-      for (const r of selectedUser.roles) {
-        if (r.id !== targetRole.id) {
-          try {
-            await api.removeRoleFromUser(selectedUser.id, r.id)
-          } catch {
-            // ignore if already removed
-          }
-        }
-      }
-      // Assign target role if not already assigned
-      if (!currentRoleIds.includes(targetRole.id)) {
-        await api.assignRoleToUser(selectedUser.id, targetRole.id)
-      }
-
+      await api.setUserRole(selectedUser.id, targetRole.id)
       apiCache.invalidate("users")
       toast({ title: `Role updated to ${targetRole.name}`, variant: "success" })
       setSelectedUser({ ...selectedUser, roles: [targetRole] })
@@ -379,7 +373,7 @@ export default function AdminUsersPage() {
         const isSuperAdmin = isSuperAdminUser(user)
         const cannotDeactivate = isSelf || isSuperAdmin
         const cannotDelete = isSelf || isSuperAdmin
-        const cannotManageRoles = isSuperAdmin
+        const cannotManageRoles = isSelf || isSuperAdmin
 
         return (
           <DropdownMenu>
@@ -398,7 +392,13 @@ export default function AdminUsersPage() {
                 }}
                 disabled={cannotManageRoles}
                 className={cannotManageRoles ? "text-muted-foreground opacity-40 cursor-not-allowed" : ""}
-                title={isSuperAdmin ? "Company SuperAdmin role is permanent and cannot be modified" : undefined}
+                title={
+                  isSelf
+                    ? "You cannot modify roles of your own account"
+                    : isSuperAdmin
+                    ? "Company SuperAdmin role is permanent and cannot be modified"
+                    : undefined
+                }
               >
                 <Shield className="mr-2 h-4 w-4" />
                 Manage Roles
