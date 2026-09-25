@@ -164,14 +164,33 @@ class PostgreSQLConnector:
         )
         columns = []
         for row in cur.fetchall():
-            columns.append(ColumnInfo(
-                name=row[0],
-                data_type=row[1],
+            c_name = row[0]
+            d_type = row[1]
+            c_info = ColumnInfo(
+                name=c_name,
+                data_type=d_type,
                 nullable=row[2] == "YES",
                 is_primary_key=row[5],
                 default_value=row[3],
                 max_length=row[4],
-            ))
+            )
+            # Profile sample values for text/categorical columns
+            if d_type.lower() in ("character varying", "varchar", "text", "character", "char") and (not row[4] or row[4] <= 255):
+                try:
+                    cur.execute(
+                        sql.SQL("SELECT DISTINCT {} FROM {}.{} WHERE {} IS NOT NULL LIMIT 8").format(
+                            sql.Identifier(c_name),
+                            sql.Identifier(self.schema),
+                            sql.Identifier(table_name),
+                            sql.Identifier(c_name),
+                        )
+                    )
+                    samples = [str(s[0]) for s in cur.fetchall() if s[0] is not None]
+                    if samples:
+                        c_info.sample_values = samples
+                except Exception:
+                    pass
+            columns.append(c_info)
         return columns
 
     def get_tables_list(self) -> list[dict]:

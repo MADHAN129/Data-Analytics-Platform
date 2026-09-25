@@ -157,14 +157,25 @@ class MySQLConnector:
         """, [self.schema, table_name])
         columns = []
         for row in cur.fetchall():
-            columns.append(ColumnInfo(
-                name=row[0],
-                data_type=row[1],
+            c_name = row[0]
+            d_type = row[1]
+            c_info = ColumnInfo(
+                name=c_name,
+                data_type=d_type,
                 nullable=row[2] == "YES",
-                is_primary_key=row[0] in pk_columns,
+                is_primary_key=c_name in pk_columns,
                 default_value=row[3],
                 max_length=row[4],
-            ))
+            )
+            if d_type.lower() in ("varchar", "char", "text", "enum") and (not row[4] or row[4] <= 255):
+                try:
+                    cur.execute(f"SELECT DISTINCT `{c_name}` FROM `{self.schema}`.`{table_name}` WHERE `{c_name}` IS NOT NULL LIMIT 8")
+                    samples = [str(s[0]) for s in cur.fetchall() if s[0] is not None]
+                    if samples:
+                        c_info.sample_values = samples
+                except Exception:
+                    pass
+            columns.append(c_info)
         return columns
 
     def get_tables_list(self) -> list[dict]:
