@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.api.deps import get_current_user, require_permission
 from app.models.user import User, UserRole
-from app.schemas.user import UserResponse, UpdateProfileRequest, UserListResponse
+from app.schemas.user import UserResponse, UpdateProfileRequest, UserListResponse, CreateUserRequest
 from app.schemas.common import MessageResponse
 from app.services import user_service, role_service
 from app.services.audit_service import create_audit_log
@@ -46,6 +46,15 @@ def list_users(
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return UserListResponse(users=users, total=total, page=page, per_page=per_page, pages=pages)
+
+
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def create_user(
+    data: CreateUserRequest,
+    current_user: User = Depends(require_permission("user.create")),
+    db: Session = Depends(get_db),
+):
+    return user_service.create_user(db, data, current_user.id)
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)

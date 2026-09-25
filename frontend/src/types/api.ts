@@ -65,6 +65,15 @@ export interface UpdateProfileRequest {
   avatar_url?: string
 }
 
+export interface CreateUserRequest {
+  email: string
+  password: string
+  full_name: string
+  phone?: string
+  roles?: string[]
+  role_ids?: number[]
+}
+
 export interface UserListResponse {
   users: UserResponse[]
   total: number

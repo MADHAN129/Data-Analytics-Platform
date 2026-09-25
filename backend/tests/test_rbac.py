@@ -71,6 +71,34 @@ class TestRBACApiGates:
         )
         assert r.status_code == 201
 
+    def test_admin_can_create_user_with_roles(self, client, admin):
+        r = client.post(
+            "/api/v1/users",
+            json={
+                "full_name": "New Team Member",
+                "email": "newuser@example.com",
+                "password": "strongPassword123!",
+                "roles": ["SuperAdmin"],
+            },
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 201
+        data = r.json()
+        assert data["email"] == "newuser@example.com"
+        assert any(role["name"] == "SuperAdmin" for role in data["roles"])
+
+    def test_analyst_cannot_create_user(self, client, analyst):
+        r = client.post(
+            "/api/v1/users",
+            json={
+                "full_name": "Unauthorized User",
+                "email": "unauth@example.com",
+                "password": "password123",
+            },
+            headers=auth_headers(analyst),
+        )
+        assert r.status_code == 403
+
 
 class TestSystemRoleProtection:
     def test_system_role_cannot_be_deleted(self, client, admin, db_session):
