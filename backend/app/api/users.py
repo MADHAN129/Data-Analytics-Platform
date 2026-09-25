@@ -190,6 +190,64 @@ def get_user_roles(
     return {"roles": roles, "total": len(roles)}
 
 
+@router.put("/users/{user_id}/roles", response_model=MessageResponse)
+def set_user_role(
+    user_id: int,
+    data: dict,
+    current_user: User = Depends(require_permission("access.manage")),
+    db: Session = Depends(get_db),
+):
+    from fastapi import HTTPException, status
+    from app.models.role import Role
+    from app.api.deps import is_user_superadmin
+
+    if int(current_user.id) == int(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot modify your own roles",
+        )
+
+    target_user = user_service.get_user_by_id(db, user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and target_user.company_id != current_user.company_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if is_user_superadmin(db, target_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot modify roles of the company SuperAdmin.",
+        )
+
+    role_id = data.get("role_id")
+    role_name = data.get("role") or data.get("role_name")
+    if role_id:
+        role = db.query(Role).filter(Role.id == role_id).first()
+    elif role_name:
+        role = db.query(Role).filter(Role.name == role_name).first()
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="role_id or role name is required")
+
+    if not role:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+
+    if role.name == "SuperAdmin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SuperAdmin role cannot be assigned. There can only be one SuperAdmin (the Company Owner).",
+        )
+
+    # Atomically replace roles with new single role
+    db.query(UserRole).filter(UserRole.user_id == user_id).delete()
+    ur = UserRole(user_id=user_id, role_id=role.id, assigned_by=current_user.id)
+    db.add(ur)
+    db.commit()
+
+    create_audit_log(db, current_user.id, "user.set_role", "user", str(user_id),
+                     {"role_id": role.id, "role_name": role.name})
+    return MessageResponse(message=f"Role updated to {role.name}")
+
+
 @router.post("/users/{user_id}/roles", response_model=MessageResponse)
 def assign_role_to_user(
     user_id: int,
@@ -200,6 +258,12 @@ def assign_role_to_user(
     from fastapi import HTTPException, status
     from app.models.role import Role
     from app.api.deps import is_user_superadmin
+
+    if int(current_user.id) == int(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot modify your own roles",
+        )
 
     role_id = data.get("role_id")
     if not role_id:
@@ -251,6 +315,12 @@ def remove_role_from_user(
     from fastapi import HTTPException, status
     from app.models.role import Role
     from app.api.deps import is_user_superadmin
+
+    if int(current_user.id) == int(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot modify your own roles",
+        )
 
     target_user = user_service.get_user_by_id(db, user_id)
     if not target_user:
