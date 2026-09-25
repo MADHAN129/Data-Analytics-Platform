@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "noreply@agentic-analytics.com"
     SMTP_FROM_NAME: str = "Agentic Analytics"
     APP_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str = "http://localhost:3000"
 
     VLLM_API_URL: str = "http://localhost:11434/v1"
     VLLM_API_KEY: str = ""

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -11,10 +11,11 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { api } from "@/lib/api-client"
-import { Loader2, CheckCircle } from "lucide-react"
+import { Loader2, CheckCircle, KeyRound, ArrowLeft } from "lucide-react"
 
 const resetSchema = z
   .object({
+    token: z.string().min(1, "Reset token or OTP code is required"),
     password: z.string().min(8, "Password must be at least 8 characters"),
     confirmPassword: z.string(),
   })
@@ -28,7 +29,7 @@ type ResetFormData = z.infer<typeof resetSchema>
 export function ResetPasswordForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const token = searchParams.get("token")
+  const queryToken = searchParams.get("token") || ""
   const { toast } = useToast()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isDone, setIsDone] = useState(false)
@@ -36,25 +37,32 @@ export function ResetPasswordForm() {
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<ResetFormData>({
     resolver: zodResolver(resetSchema),
-    defaultValues: { password: "", confirmPassword: "" },
+    defaultValues: { token: queryToken, password: "", confirmPassword: "" },
   })
 
-  const onSubmit = async (data: ResetFormData) => {
-    if (!token) {
-      toast({ title: "Error", description: "Missing reset token", variant: "destructive" })
-      return
+  useEffect(() => {
+    if (queryToken) {
+      setValue("token", queryToken)
     }
+  }, [queryToken, setValue])
+
+  const onSubmit = async (data: ResetFormData) => {
     setIsSubmitting(true)
     try {
-      await api.resetPassword({ token, new_password: data.password })
+      await api.resetPassword({ token: data.token.trim(), new_password: data.password })
       setIsDone(true)
+      toast({
+        title: "Success",
+        description: "Password reset successful! You can now sign in with your new password.",
+      })
     } catch {
       toast({
         title: "Error",
-        description: "Invalid or expired reset link. Please request a new one.",
+        description: "Invalid or expired reset token/code. Please check the code or request a new one.",
         variant: "destructive",
       })
     } finally {
@@ -62,51 +70,63 @@ export function ResetPasswordForm() {
     }
   }
 
-  if (!token) {
+  if (isDone) {
     return (
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-destructive">Invalid reset link</CardTitle>
+      <Card className="w-full max-w-md shadow-lg border-muted">
+        <CardHeader className="space-y-1 text-center">
+          <div className="flex justify-center mb-2">
+            <CheckCircle className="h-12 w-12 text-emerald-500" />
+          </div>
+          <CardTitle className="text-2xl font-bold">Password reset</CardTitle>
           <CardDescription>
-            This reset link is missing a token. Please request a new password reset.
+            Your password has been reset successfully.
           </CardDescription>
         </CardHeader>
-        <CardFooter>
-          <Button className="w-full" onClick={() => router.push("/forgot-password")}>
-            Request new reset
+        <CardFooter className="flex justify-center pt-2">
+          <Button className="w-full" onClick={() => router.push("/login")}>
+            Sign in with new password
           </Button>
         </CardFooter>
       </Card>
     )
   }
 
-  if (isDone) {
-    return (
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <div className="flex justify-center">
-            <CheckCircle className="h-12 w-12 text-emerald-500" />
-          </div>
-          <CardTitle className="text-center text-2xl font-bold">Password reset</CardTitle>
-          <CardDescription className="text-center">
-            Your password has been reset successfully.
-          </CardDescription>
-        </CardHeader>
-        <CardFooter className="flex justify-center">
-          <Button onClick={() => router.push("/login")}>Sign in with new password</Button>
-        </CardFooter>
-      </Card>
-    )
-  }
-
   return (
-    <Card className="w-full max-w-md">
+    <Card className="w-full max-w-md shadow-lg border-muted">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl font-bold">Set new password</CardTitle>
-        <CardDescription>Enter your new password below.</CardDescription>
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-5 w-5 text-primary" />
+          <CardTitle className="text-2xl font-bold">Set new password</CardTitle>
+        </div>
+        <CardDescription>
+          {queryToken
+            ? "Enter your new password below."
+            : "Enter your Reset Token / OTP code received in email, then choose a new password."}
+        </CardDescription>
       </CardHeader>
       <form onSubmit={handleSubmit(onSubmit)}>
         <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="token">
+              Reset Token / OTP Code
+              {queryToken && (
+                <span className="ml-2 text-xs font-normal text-emerald-600 dark:text-emerald-400">
+                  (Attached from link)
+                </span>
+              )}
+            </Label>
+            <Input
+              id="token"
+              type="text"
+              placeholder="Paste token or OTP code from email"
+              {...register("token")}
+              className={queryToken ? "bg-muted/40 font-mono text-xs" : "font-mono text-sm"}
+            />
+            {errors.token && (
+              <p className="text-sm text-destructive">{errors.token.message}</p>
+            )}
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="password">New password</Label>
             <Input
@@ -119,12 +139,13 @@ export function ResetPasswordForm() {
               <p className="text-sm text-destructive">{errors.password.message}</p>
             )}
           </div>
+
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm password</Label>
             <Input
               id="confirmPassword"
               type="password"
-              placeholder="Repeat your password"
+              placeholder="Repeat your new password"
               {...register("confirmPassword")}
             />
             {errors.confirmPassword && (
@@ -132,19 +153,37 @@ export function ResetPasswordForm() {
             )}
           </div>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex flex-col gap-4">
           <Button type="submit" className="w-full" disabled={isSubmitting}>
             {isSubmitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Resetting...
+                Resetting password...
               </>
             ) : (
               "Reset password"
             )}
           </Button>
+          <div className="flex items-center justify-between w-full text-xs text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => router.push("/forgot-password")}
+              className="text-primary hover:underline inline-flex items-center"
+            >
+              Request new code
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/login")}
+              className="text-muted-foreground hover:underline inline-flex items-center"
+            >
+              <ArrowLeft className="mr-1 h-3 w-3" />
+              Back to sign in
+            </button>
+          </div>
         </CardFooter>
       </form>
     </Card>
   )
 }
+
