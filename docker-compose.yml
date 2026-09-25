@@ -39,6 +39,7 @@ services:
   backend:
     build: ./backend
     container_name: agentic-backend
+    restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -112,6 +113,7 @@ services:
   frontend:
     build: ./frontend
     container_name: agentic-frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:

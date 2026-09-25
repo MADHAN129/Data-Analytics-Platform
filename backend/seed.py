@@ -2,6 +2,8 @@
 import os
 import secrets
 
+import time
+
 from sqlalchemy import inspect, text
 
 from app.database import SessionLocal, engine, Base
@@ -10,6 +12,20 @@ from app.models.user import User, UserRole
 from app.models.role import Role, RolePermission
 from app.models.permission import Permission
 from app.utils.security import get_password_hash
+
+
+def wait_for_db(max_retries: int = 20, delay: float = 2.0):
+    """Wait for database engine to accept connections before running migrations/seeding."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+                return
+        except Exception as exc:
+            print(f"[seed] Database not ready yet (attempt {attempt}/{max_retries}): {exc}")
+            if attempt == max_retries:
+                raise
+            time.sleep(delay)
 
 
 def _ensure_columns():
@@ -52,6 +68,7 @@ def _ensure_columns():
 
 
 def seed():
+    wait_for_db()
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
     db = SessionLocal()

@@ -30,6 +30,17 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
+    import time
+    from sqlalchemy import text
+    for attempt in range(1, 21):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            break
+        except Exception:
+            if attempt == 20:
+                raise
+            time.sleep(1)
     Base.metadata.create_all(bind=engine)
 
 
