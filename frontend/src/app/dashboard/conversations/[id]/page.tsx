@@ -23,6 +23,10 @@ import {
   ArrowLeft,
   Database,
   AlertCircle,
+  Code2,
+  ChevronDown,
+  ChevronUp,
+  Lightbulb,
 } from "lucide-react"
 
 export function ConversationDetailPage() {
@@ -44,6 +48,7 @@ export function ConversationDetailPage() {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [selectedSuggestion, setSelectedSuggestion] = useState(-1)
+  const [openSqlMsgIds, setOpenSqlMsgIds] = useState<Record<number, boolean>>({})
   const suggestRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const suggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -138,22 +143,22 @@ export function ConversationDetailPage() {
     }
   }
 
-  const handleSend = async () => {
-    if (!input.trim() || isSending) return
+  const handleOptionClick = async (promptText: string) => {
+    if (isSending || !promptText.trim()) return
     setIsSending(true)
     try {
       const tempMsg: ConversationMessageResponse = {
         id: -Date.now(),
         conversation_id: conversationId,
         role: "user",
-        content: input,
+        content: promptText,
         created_at: new Date().toISOString(),
       }
       setMessages((prev) => [...prev, tempMsg])
       setInput("")
       setShowSuggestions(false)
 
-      const result = await api.sendMessage(conversationId, { content: input })
+      const result = await api.sendMessage(conversationId, { content: promptText })
       setMessages((prev) => [...prev, result])
       scrollToBottom()
     } catch (err: unknown) {
@@ -162,6 +167,11 @@ export function ConversationDetailPage() {
     } finally {
       setIsSending(false)
     }
+  }
+
+  const handleSend = async () => {
+    if (!input.trim() || isSending) return
+    await handleOptionClick(input.trim())
   }
 
   const handleTitleSave = async () => {
@@ -300,9 +310,73 @@ export function ConversationDetailPage() {
                     }`}
                   >
                     <div className="whitespace-pre-wrap">{msg.content}</div>
+
+                    {/* Interactive Clarification Cards */}
+                    {msg.role === "assistant" && msg.clarification_options && msg.clarification_options.length > 0 && (
+                      <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground/90">
+                          <Sparkles className="h-3.5 w-3.5 text-primary" />
+                          <span>Select an option to refine your request:</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {msg.clarification_options.map((opt, idx) => (
+                            <button
+                              key={opt.id || idx}
+                              type="button"
+                              disabled={isSending}
+                              onClick={() => handleOptionClick(opt.prompt || opt.label)}
+                              className="flex items-start gap-2.5 rounded-lg border border-border/70 bg-background/80 hover:bg-accent/80 hover:border-primary/50 p-2.5 text-left transition-all hover:shadow-sm active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none group"
+                            >
+                              <span className="text-base leading-none mt-0.5">{opt.icon || "📊"}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
+                                  {opt.label}
+                                </div>
+                                {opt.description && (
+                                  <div className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5 leading-tight">
+                                    {opt.description}
+                                  </div>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Visualizations & Executed SQL */}
                     {msg.role === "assistant" && msg.results && (
-                      <div className="mt-3 border-t pt-3">
+                      <div className="mt-3 border-t border-border/40 pt-3 space-y-3">
                         <VisualizationRenderer results={msg.results} />
+                        
+                        {/* Executed SQL accordion */}
+                        {(() => {
+                          const sqlQuery = Array.isArray(msg.tool_calls)
+                            ? (msg.tool_calls.find((t) => t && t.tool === "execute_sql" && typeof t.query === "string")?.query as string | undefined)
+                            : undefined
+                          if (!sqlQuery) return null
+                          return (
+                            <div className="rounded-md border border-border/40 bg-muted/40 p-2">
+                              <button
+                                type="button"
+                                onClick={() => setOpenSqlMsgIds((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))}
+                                className="flex w-full items-center justify-between text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <Code2 className="h-3.5 w-3.5" />
+                                  {openSqlMsgIds[msg.id] ? "Hide executed SQL query" : "View executed SQL query"}
+                                </span>
+                                {openSqlMsgIds[msg.id] ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                              </button>
+                              {openSqlMsgIds[msg.id] && (
+                                <pre className="mt-2 rounded bg-zinc-950 p-2.5 text-xs text-zinc-100 overflow-x-auto font-mono whitespace-pre-wrap">
+                                  <code>{sqlQuery}</code>
+                                </pre>
+                              )}
+                            </div>
+                          )
+                        })()}
+
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
                           <span>{msg.results.row_count} rows returned</span>
                           {msg.results.execution_time_ms != null && (
@@ -311,6 +385,30 @@ export function ConversationDetailPage() {
                         </div>
                       </div>
                     )}
+
+                    {/* Quick Follow-up Suggestions */}
+                    {msg.role === "assistant" && msg.quick_options && msg.quick_options.length > 0 && (
+                      <div className="mt-3 border-t border-border/40 pt-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1 mr-0.5">
+                            <Lightbulb className="h-3 w-3 text-amber-500" />
+                            Suggestions:
+                          </span>
+                          {msg.quick_options.map((opt, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              disabled={isSending}
+                              onClick={() => handleOptionClick(opt)}
+                              className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-xs text-foreground transition-all hover:bg-accent hover:border-primary/50 hover:text-primary active:scale-95 disabled:opacity-50"
+                            >
+                              <span>{opt}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {msg.role === "assistant" && msg.error_message && (
                       <div className="mt-2 flex items-start gap-2 rounded bg-destructive/10 p-2 text-xs text-destructive">
                         <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />

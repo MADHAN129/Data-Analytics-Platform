@@ -24,6 +24,14 @@ class ConversationListResponse(BaseModel):
     total: int
 
 
+class ClarificationOption(BaseModel):
+    id: str
+    label: str
+    prompt: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+
+
 class ConversationMessageResponse(BaseModel):
     id: int
     conversation_id: int
@@ -32,6 +40,8 @@ class ConversationMessageResponse(BaseModel):
     tool_calls: Optional[list] = None
     generated_sql: Optional[str] = None
     results: Optional[QueryResult] = None
+    clarification_options: Optional[list[ClarificationOption]] = None
+    quick_options: Optional[list[str]] = None
     error_message: Optional[str] = None
     tokens_used: Optional[int] = None
     model_used: Optional[str] = None
