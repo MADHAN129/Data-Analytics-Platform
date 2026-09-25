@@ -5,6 +5,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
+from app.services.mcp_client import mcp_client
 
 
 class LLMService:
@@ -60,6 +61,19 @@ class LLMService:
         except Exception:
             self._client = None
             return None
+
+    def _table_names_from_schema(self, schema_context: str) -> list[str]:
+        lines = [line.strip() for line in schema_context.split("\n") if line.strip()]
+        tables = []
+        for line in lines:
+            m = re.match(r"Table:\s*(\S+)", line)
+            if m:
+                tables.append(m.group(1))
+        return tables
+
+    def _has_table_in_schema(self, name: str, schema_context: str) -> bool:
+        tables = self._table_names_from_schema(schema_context)
+        return any(t.lower() == name.lower() for t in tables)
 
     def _build_schema_prompt(self, schema_context: str, dialect: str) -> str:
         dialect_rules = ""

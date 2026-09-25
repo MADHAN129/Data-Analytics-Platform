@@ -1,7 +1,15 @@
+.env
+.venv
 venv/
 __pycache__/
+*.py[cod]
 *.pyc
 *.pyo
 *.pyd
-.env
+*.egg-info
+.git
+.gitignore
+tests
+.gstack
+Dockerfile
 agentic.db

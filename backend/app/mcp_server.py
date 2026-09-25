@@ -13,7 +13,7 @@ Usage (stdio — for Claude Desktop):
 from collections.abc import Callable
 from typing import Optional
 
-from mcp.server.mcpserver import MCPServer as FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from app.config import settings
 from app.database import SessionLocal
@@ -118,7 +118,7 @@ def get_table_details(db_id: int, table_name: str) -> list[dict]:
 def execute_sql(db_id: int, sql: str) -> dict:
     db = SessionLocal()
     try:
-        db_conn = get_database(db, db_id)
+        db_conn = get_database(db, db_id, user_id=0, include_all=True)
         if not db_conn:
             return {"error": f"Database with id {db_id} not found"}
         connector = get_connector(db_conn)
@@ -140,7 +140,9 @@ def query_data(db_id: int, question: str) -> str:
     db = SessionLocal()
     try:
         req = QueryRequest(database_id=db_id, natural_language=question)
-        result = query_service.execute_natural_language_query(db, req, user_id=0)
+        result = query_service.execute_natural_language_query(
+            db, req, user_id=0, include_all=True, use_mcp_tools=False,
+        )
         if result.status == "failed":
             return f"Query failed: {result.error_message}"
 

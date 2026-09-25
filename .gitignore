@@ -31,6 +31,13 @@ agentic.db
 .DS_Store
 Thumbs.db
 *.log
+# Local tooling state
+.gstack/
+.claude/
+.claude-flow/
+.kilo/
+.swarm/
+ruvector.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

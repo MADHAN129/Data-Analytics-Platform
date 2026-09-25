@@ -21,20 +21,31 @@ from app.schemas.query import QueryRequest
 class TestDynamicDataAnalyzer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.db = SessionLocal()
-        cls.db_conn = cls.db.query(DatabaseConnection).filter_by(id=2).first()
-        assert cls.db_conn is not None, "Oracle database connection (id=2) not found in PostgreSQL"
-        cls.connector = get_connector(cls.db_conn)
-        cls.oracle_conn = cls.connector.connect()
-        cls.user_id = 1
+        try:
+            cls.db = SessionLocal()
+            cls.db_conn = cls.db.query(DatabaseConnection).filter_by(id=2).first()
+            if cls.db_conn is None:
+                raise unittest.SkipTest("Oracle database connection (id=2) not found in database")
+            cls.connector = get_connector(cls.db_conn)
+            cls.oracle_conn = cls.connector.connect()
+            cls.user_id = 1
+        except unittest.SkipTest:
+            raise
+        except Exception as e:
+            raise unittest.SkipTest(f"Live database not reachable: {e}")
 
     @classmethod
     def tearDownClass(cls):
-        try:
-            cls.oracle_conn.close()
-        except Exception:
-            pass
-        cls.db.close()
+        if hasattr(cls, "oracle_conn") and cls.oracle_conn:
+            try:
+                cls.oracle_conn.close()
+            except Exception:
+                pass
+        if hasattr(cls, "db") and cls.db:
+            try:
+                cls.db.close()
+            except Exception:
+                pass
 
     def _exec_ground_truth(self, sql: str) -> list[tuple]:
         cur = self.oracle_conn.cursor()
