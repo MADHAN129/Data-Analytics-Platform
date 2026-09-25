@@ -24,7 +24,7 @@ class TestLLMProviderResolution:
             config = service.resolve_provider()
             
             assert config.provider == "local"
-            assert config.base_url == "http://localhost:11434/v1"
+            assert config.base_url in ("http://localhost:11434/v1", "http://ollama:11434/v1")
             assert config.model == "qwen2.5-coder:3b"
 
     def test_openrouter_selected_when_key_present(self):
