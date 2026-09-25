@@ -309,3 +309,79 @@ def test_time_period_validation_aggregate_quarter_without_year_fails():
     assert is_valid is False
     assert "Time Period Validation Error" in err
 
+
+def test_window_and_analytic_functions_not_treated_as_columns():
+    """Test that DENSE_RANK(), ROW_NUMBER(), RANK(), OVER(), and query aliases like RN are never treated as columns."""
+    table_cols = {
+        "COMPANY_FINANCIALS": {
+            "FINANCIAL_ID", "FISCAL_YEAR", "QUARTER", "REVENUE",
+            "OPERATING_EXPENSES", "NET_PROFIT", "PROFIT_MARGIN_PCT"
+        }
+    }
+    
+    # Complex Oracle subquery with DENSE_RANK() OVER (ORDER BY REVENUE DESC) AS RN
+    oracle_sql = """
+    SELECT
+        FISCAL_YEAR,
+        QUARTER,
+        REVENUE,
+        OPERATING_EXPENSES,
+        NET_PROFIT,
+        PROFIT_MARGIN_PCT
+    FROM (
+        SELECT
+            FISCAL_YEAR,
+            QUARTER,
+            REVENUE,
+            OPERATING_EXPENSES,
+            NET_PROFIT,
+            PROFIT_MARGIN_PCT,
+            DENSE_RANK() OVER (ORDER BY REVENUE DESC) AS RN
+        FROM COMPANY_FINANCIALS
+    )
+    WHERE RN = 1;
+    """
+    is_valid, sanitized, err = _validate_sql_before_execution(oracle_sql, table_cols, "Oracle SQL")
+    assert is_valid is True
+    assert err is None
+
+
+def test_functions_and_constructs_whitelist():
+    """Test that SQL functions (NVL, COALESCE, NULLIF, ROUND, TO_CHAR, CAST) pass validation."""
+    table_cols = {
+        "COMPANY_FINANCIALS": {
+            "FINANCIAL_ID", "FISCAL_YEAR", "QUARTER", "REVENUE",
+            "OPERATING_EXPENSES", "NET_PROFIT", "PROFIT_MARGIN_PCT"
+        }
+    }
+    
+    sql = """
+    SELECT
+        FISCAL_YEAR,
+        QUARTER,
+        ROUND(NVL(REVENUE, 0), 2) AS FORMATTED_REV,
+        COALESCE(NET_PROFIT, 0) AS SAFE_PROFIT,
+        TO_CHAR(FISCAL_YEAR) AS FY_STR
+    FROM COMPANY_FINANCIALS;
+    """
+    is_valid, sanitized, err = _validate_sql_before_execution(sql, table_cols, "Oracle SQL")
+    assert is_valid is True
+    assert err is None
+
+
+def test_genuinely_nonexistent_column_still_rejected():
+    """Test that actual non-existent columns (e.g. COMPANY_NAME, UNKNOWN_COL) are properly caught and rejected."""
+    table_cols = {
+        "COMPANY_FINANCIALS": {
+            "FINANCIAL_ID", "FISCAL_YEAR", "QUARTER", "REVENUE",
+            "OPERATING_EXPENSES", "NET_PROFIT", "PROFIT_MARGIN_PCT"
+        }
+    }
+    
+    # COMPANY_NAME does not exist in COMPANY_FINANCIALS
+    bad_sql = "SELECT COMPANY_NAME, REVENUE FROM COMPANY_FINANCIALS;"
+    is_valid, sanitized, err = _validate_sql_before_execution(bad_sql, table_cols, "Oracle SQL")
+    assert is_valid is False
+    assert "Invalid column 'COMPANY_NAME'" in err
+
+

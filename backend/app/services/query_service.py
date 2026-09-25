@@ -401,6 +401,42 @@ def _find_best_column_match(col_name: str, valid_cols: set[str] | list[str], tab
     return None
 
 
+# Comprehensive SQL Functions & Constructs Whitelist (never validated as column names)
+SQL_FUNCTIONS = {
+    # Aggregates
+    "SUM", "AVG", "COUNT", "MIN", "MAX", "ROUND", "NVL", "NVL2", "COALESCE", "NULLIF",
+    "MEDIAN", "STDDEV", "VARIANCE", "LISTAGG", "GROUP_CONCAT", "STRING_AGG", "CORR",
+    # Analytic & Window Functions
+    "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST", "NTILE",
+    "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE", "RATIO_TO_REPORT",
+    # Conversion & Date/Time
+    "TO_CHAR", "TO_DATE", "TO_NUMBER", "TO_TIMESTAMP", "CAST", "CONVERT", "EXTRACT",
+    "TRUNC", "DATE_TRUNC", "SYSDATE", "SYSTIMESTAMP", "CURRENT_DATE", "CURRENT_TIMESTAMP",
+    "NOW", "ADD_MONTHS", "MONTHS_BETWEEN", "NEXT_DAY", "LAST_DAY", "YEAR", "MONTH", "DAY", "QUARTER",
+    # String Functions
+    "UPPER", "LOWER", "INITCAP", "TRIM", "LTRIM", "RTRIM", "SUBSTR", "SUBSTRING",
+    "LENGTH", "INSTR", "REPLACE", "REGEXP_REPLACE", "REGEXP_SUBSTR", "REGEXP_LIKE",
+    "LPAD", "RPAD", "CONCAT", "CONCAT_WS", "CHR", "ASCII", "TRANSLATE",
+    # Math & Numeric
+    "ABS", "CEIL", "CEILING", "FLOOR", "MOD", "POWER", "SQRT", "EXP", "LN", "LOG",
+    "SIGN", "GREATEST", "LEAST", "DECODE", "BIN_TO_NUM",
+    # JSON / XML / Types
+    "JSON_VALUE", "JSON_QUERY", "JSON_ARRAY", "JSON_OBJECT", "XMLAGG", "XMLELEMENT",
+}
+
+# Comprehensive SQL Keywords & Clauses (never validated as column names)
+SQL_KEYWORDS = {
+    "SELECT", "FROM", "WHERE", "JOIN", "ON", "LEFT", "RIGHT", "INNER", "OUTER", "FULL",
+    "CROSS", "NATURAL", "GROUP", "BY", "ORDER", "HAVING", "FETCH", "FIRST", "NEXT", "ROWS",
+    "ROW", "ONLY", "WITH", "AS", "AND", "OR", "NOT", "NULL", "IS", "CASE", "WHEN", "THEN",
+    "ELSE", "END", "DESC", "ASC", "DUAL", "LIMIT", "OFFSET", "LIKE", "ILIKE", "IN", "EXISTS",
+    "BETWEEN", "UNION", "INTERSECT", "MINUS", "EXCEPT", "ALL", "DISTINCT", "SHOW", "DESCRIBE",
+    "DESC", "TABLES", "COLUMNS", "DATABASE", "TABLE", "SCHEMA", "OVER", "PARTITION", "RANGE",
+    "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "FILTER", "LATERAL", "USING", "SET",
+    "VALUES", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "DROP", "CREATE", "ALTER", "GRANT",
+    "REVOKE", "TRUE", "FALSE", "TOP", "PERCENT", "TIES", "SIBLINGS", "PRIOR", "CONNECT", "START",
+}
+
 # System Catalog & Metadata Whitelist across all database engines
 SYSTEM_CATALOG_TABLES = {
     "DUAL",
@@ -587,15 +623,9 @@ def _validate_sql_before_execution(
         clean_sql_no_literals = re.sub(r"'[^']*'", "", sanitized)
         select_as_aliases = {a.upper() for a in re.findall(r"\bAS\s+([a-zA-Z0-9_]+)\b", clean_sql_no_literals, flags=re.IGNORECASE)}
         subquery_aliases = {a.upper() for a in re.findall(r"\)\s*(?:AS\s+)?([a-zA-Z0-9_]+)\b", clean_sql_no_literals, flags=re.IGNORECASE)}
-        clean_sql_no_subqueries = re.sub(r"\(SELECT[\s\S]*?\)", "", clean_sql_no_literals, flags=re.IGNORECASE)
-        unqualified = re.findall(r"\b([a-zA-Z0-9_]+)\b", clean_sql_no_subqueries)
-        sql_keywords = {
-            "SELECT", "FROM", "WHERE", "JOIN", "ON", "LEFT", "RIGHT", "INNER", "CROSS", "GROUP", "BY",
-            "ORDER", "HAVING", "FETCH", "FIRST", "ROWS", "ONLY", "WITH", "AS", "AND", "OR", "NOT",
-            "NULL", "IS", "SUM", "COUNT", "AVG", "MIN", "MAX", "ROUND", "NVL", "COALESCE", "NULLIF",
-            "CASE", "WHEN", "THEN", "ELSE", "END", "DESC", "ASC", "DUAL", "LIMIT", "LIKE", "IN",
-            "SHOW", "DESCRIBE", "DESC", "TABLES", "COLUMNS", "DATABASE", "TABLE", "SCHEMA",
-        }
+        function_calls = {f.upper() for f in re.findall(r"\b([a-zA-Z0-9_]+)\s*\(", clean_sql_no_literals)}
+        unqualified = re.findall(r"\b([a-zA-Z0-9_]+)\b", clean_sql_no_literals)
+
         all_known_cols = set()
         for t_in_q in tables_in_query:
             if t_in_q in table_cols:
@@ -604,8 +634,11 @@ def _validate_sql_before_execution(
         for cand in unqualified:
             cand_up = cand.upper()
             if (
-                cand_up not in sql_keywords
+                cand_up not in SQL_KEYWORDS
+                and cand_up not in SQL_FUNCTIONS
+                and cand_up not in function_calls
                 and cand_up not in alias_to_table
+                and cand_up not in alias_to_cte
                 and cand_up not in cte_names_upper
                 and cand_up not in select_as_aliases
                 and cand_up not in subquery_aliases
