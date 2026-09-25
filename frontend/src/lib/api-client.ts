@@ -60,6 +60,8 @@ import type {
   LayoutUpdateRequest,
   AutoGenerateRequest,
   ActivityOverviewResponse,
+  NotificationItemResponse,
+  NotificationListResponse,
 } from "@/types/api"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090/api/v1"
@@ -727,6 +729,28 @@ class ApiClient {
   // ACTIVITY & PLATFORM ANALYTICS
   async getActivityOverview(days = 30): Promise<ActivityOverviewResponse> {
     return this.request<ActivityOverviewResponse>(`/activity/overview?days=${days}`)
+  }
+
+  // IN-APP NOTIFICATIONS
+  async listNotifications(params?: { page?: number; limit?: number; unread_only?: boolean }): Promise<NotificationListResponse> {
+    const query = new URLSearchParams()
+    if (params?.page) query.set("page", String(params.page))
+    if (params?.limit) query.set("limit", String(params.limit))
+    if (params?.unread_only) query.set("unread_only", "true")
+    const qs = query.toString() ? `?${query.toString()}` : ""
+    return this.request<NotificationListResponse>(`/notifications${qs}`)
+  }
+
+  async markNotificationRead(id: number): Promise<void> {
+    await this.request<MessageResponse>(`/notifications/${id}/read`, { method: "PUT" })
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    await this.request<MessageResponse>("/notifications/read-all", { method: "PUT" })
+  }
+
+  async deleteNotification(id: number): Promise<void> {
+    await this.request<MessageResponse>(`/notifications/${id}`, { method: "DELETE" })
   }
 }
 

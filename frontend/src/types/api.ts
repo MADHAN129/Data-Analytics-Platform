@@ -682,3 +682,27 @@ export interface ActivityOverviewResponse {
   token_timeline: TokenTimelineItem[]
 }
 
+// ============================================
+// NOTIFICATION TYPES
+// ============================================
+
+export interface NotificationItemResponse {
+  id: number
+  user_id: number
+  company_id?: number | null
+  title: string
+  message: string
+  type: string
+  severity: "critical" | "high" | "medium" | "low" | "info"
+  is_read: boolean
+  data?: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface NotificationListResponse {
+  notifications: NotificationItemResponse[]
+  total: number
+  unread_count: number
+}
+
+

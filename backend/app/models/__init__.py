@@ -8,11 +8,12 @@ from app.models.query import Query
 from app.models.conversation import Conversation, ConversationMessage
 from app.models.template import QueryTemplate
 from app.models.dashboard import Dashboard, DashboardWidget
+from app.models.notification import Notification
 
 __all__ = [
     "Company",
     "User", "UserRole", "Role", "RolePermission", "Permission",
     "AuditLog", "DatabaseConnection",
     "Query", "Conversation", "ConversationMessage", "QueryTemplate",
-    "Dashboard", "DashboardWidget",
+    "Dashboard", "DashboardWidget", "Notification",
 ]

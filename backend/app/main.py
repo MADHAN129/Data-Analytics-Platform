@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, users, roles, permissions, audit, connections, queries, conversations, templates, dashboards, activity, ws
+from app.api import auth, users, roles, permissions, audit, connections, queries, conversations, templates, dashboards, activity, ws, notifications
 from app.schemas.common import HealthResponse
 from app.services.ws_manager import manager
 from app.services.widget_poller import poll_manager
@@ -77,6 +77,7 @@ app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(templates.router, prefix="/api/v1")
 app.include_router(dashboards.router, prefix="/api/v1")
 app.include_router(activity.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(ws.router)
 
 if settings.MCP_ENABLED:

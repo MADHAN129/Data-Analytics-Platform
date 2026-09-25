@@ -299,9 +299,28 @@ def trigger_security_incident(
             )
             notified_count += 1
 
-    logger.info("Security incident [%s] processed. Notified %d SuperAdmins.", violation_type, notified_count)
+    # 4. Create In-App Notifications for SuperAdmins and User
+    try:
+        from app.services.notification_service import create_security_violation_notifications
+        create_security_violation_notifications(
+            db=db,
+            offender_user_id=user_id if user_id and user_id > 0 else None,
+            offender_name=user_name,
+            offender_email=user_email,
+            company_id=company_id,
+            violation_type=violation_type,
+            reason=reason,
+            natural_language=natural_language,
+            attempted_sql=attempted_sql,
+            source=source,
+            timestamp=timestamp_str,
+        )
+    except Exception as e:
+        logger.error("Failed to create in-app security notifications: %s", e)
 
-    # 4. Construct payload for client/modal
+    logger.info("Security incident [%s] processed. Notified %d SuperAdmins via email and in-app alert.", violation_type, notified_count)
+
+    # 5. Construct payload for client/modal
     return {
         "is_violation": True,
         "violation_type": violation_type,
