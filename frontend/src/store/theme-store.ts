@@ -37,6 +37,32 @@ function applyTheme(mode: ThemeMode) {
   root.style.removeProperty("--ring")
 }
 
+function applyPreferences(compact: boolean, anim: boolean, contrast: boolean) {
+  if (typeof window === "undefined") return
+  const root = document.documentElement
+
+  // 1. Compact Density
+  if (compact) {
+    root.classList.add("compact-density")
+  } else {
+    root.classList.remove("compact-density")
+  }
+
+  // 2. Motion & UI Transitions (disabled -> reduce-motion)
+  if (!anim) {
+    root.classList.add("reduce-motion")
+  } else {
+    root.classList.remove("reduce-motion")
+  }
+
+  // 3. Enhanced Text Contrast
+  if (contrast) {
+    root.classList.add("high-contrast")
+  } else {
+    root.classList.remove("high-contrast")
+  }
+}
+
 export const useThemeStore = create<ThemeState>((set, get) => ({
   mode: "light",
   accent: "blue",
@@ -59,16 +85,19 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   setCompactMode: (compactMode) => {
     localStorage.setItem("theme_compact", String(compactMode))
     set({ compactMode })
+    applyPreferences(compactMode, get().animations, get().highContrast)
   },
 
   setAnimations: (animations) => {
     localStorage.setItem("theme_animations", String(animations))
     set({ animations })
+    applyPreferences(get().compactMode, animations, get().highContrast)
   },
 
   setHighContrast: (highContrast) => {
     localStorage.setItem("theme_high_contrast", String(highContrast))
     set({ highContrast })
+    applyPreferences(get().compactMode, get().animations, highContrast)
   },
 
   initTheme: () => {
@@ -91,6 +120,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     })
 
     applyTheme(savedMode)
+    applyPreferences(savedCompact, savedAnimations, savedHighContrast)
 
     // Listen for OS theme changes if in system mode
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

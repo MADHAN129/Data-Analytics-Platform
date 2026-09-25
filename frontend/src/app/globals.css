@@ -75,3 +75,57 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ========================================================================= */
+/* APPEARANCE PREFERENCES: COMPACT DENSITY, REDUCE MOTION, HIGH CONTRAST */
+/* ========================================================================= */
+
+/* 1. Compact Density Mode */
+html.compact-density table th,
+html.compact-density table td {
+  padding-top: 0.35rem !important;
+  padding-bottom: 0.35rem !important;
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+  font-size: 0.8125rem !important;
+}
+
+html.compact-density tr {
+  height: 2rem !important;
+}
+
+/* 2. Motion & UI Transitions Disabled (Reduce Motion) */
+html.reduce-motion,
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* 3. Enhanced Text Contrast Mode */
+html.high-contrast {
+  --muted-foreground: 222.2 47.4% 20% !important;
+  --border: 214.3 31.8% 65% !important;
+}
+
+html.dark.high-contrast {
+  --muted-foreground: 210 40% 90% !important;
+  --border: 217.2 32.6% 40% !important;
+}
+
+html.high-contrast p,
+html.high-contrast span,
+html.high-contrast label,
+html.high-contrast th,
+html.high-contrast td {
+  font-weight: 500;
+}
+
+html.high-contrast .text-muted-foreground {
+  color: hsl(var(--foreground) / 0.9) !important;
+  font-weight: 500;
+}
+
