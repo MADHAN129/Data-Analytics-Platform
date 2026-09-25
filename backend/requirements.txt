@@ -19,3 +19,5 @@ email-validator==2.2.0
 websockets==13.1
 mcp>=1.28.0,<2
 oracledb>=2.0.0
+pytest
+pytest-asyncio

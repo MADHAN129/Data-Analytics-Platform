@@ -13,7 +13,29 @@ Usage (stdio — for Claude Desktop):
 from collections.abc import Callable
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except (ImportError, ModuleNotFoundError):
+    try:
+        from mcp.server.mcpserver import MCPServer as FastMCP
+    except Exception:
+        FastMCP = None
+
+
+class _DummyMCP:
+    def tool(self, *args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+
+    def sse_app(self):
+        async def dummy_app(scope, receive, send):
+            pass
+        return dummy_app
+
+    def run(self, *args, **kwargs):
+        pass
+
 
 from app.config import settings
 from app.database import SessionLocal
@@ -34,7 +56,7 @@ Data-Taker MCP server provides access to configured database connections.
 Use `list_databases` first to discover available databases and their IDs.
 Then use `get_schema`, `get_tables`, or `get_table_details` to explore structure.
 Use `execute_sql` for raw SQL queries or `query_data` to ask questions in plain English.
-""")
+""") if FastMCP else _DummyMCP()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

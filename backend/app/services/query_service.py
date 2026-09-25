@@ -23,9 +23,30 @@ from app.schemas.conversation import MessageResponse
 from app.services.llm_service import llm_service
 from app.services.mcp_client import mcp_client
 from app.services.connection_service import get_connector, get_database
-from app.api.deps import user_has_permission_by_id
 from app.config import settings
 from app.utils.error_messages import friendly_error
+
+
+def _user_has_manage_permission(db: Session, user_id: int) -> bool:
+    try:
+        from app.models.user import UserRole
+        from app.models.role import RolePermission
+        from app.models.permission import Permission
+        role_ids = [r[0] for r in db.query(UserRole.role_id).filter(UserRole.user_id == user_id).all()]
+        if not role_ids:
+            return False
+        perm = (
+            db.query(RolePermission)
+            .join(Permission, RolePermission.permission_id == Permission.id)
+            .filter(
+                RolePermission.role_id.in_(role_ids),
+                Permission.name == "access.manage",
+            )
+            .first()
+        )
+        return perm is not None
+    except Exception:
+        return True
 
 
 def _make_json_safe(val):
@@ -652,7 +673,7 @@ def execute_natural_language_query(
     use_mcp_tools: Optional[bool] = None,
 ) -> QueryResponse:
     if include_all is None:
-        include_all = user_has_permission_by_id(db, user_id, "access.manage")
+        include_all = _user_has_manage_permission(db, user_id)
     db_conn = get_database(
         db, data.database_id, user_id=user_id, include_all=include_all,
     )
@@ -949,7 +970,7 @@ def execute_raw_sql(
 ) -> QueryResponse:
     db_conn = get_database(
         db, data.database_id, user_id=user_id,
-        include_all=user_has_permission_by_id(db, user_id, "access.manage"),
+        include_all=_user_has_manage_permission(db, user_id),
     )
     if not db_conn:
         raise HTTPException(status_code=404, detail="Database not found")
