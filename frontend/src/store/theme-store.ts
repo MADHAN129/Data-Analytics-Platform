@@ -1,7 +1,7 @@
 import { create } from "zustand"
 
 export type ThemeMode = "light" | "dark" | "system"
-export type AccentColor = "blue" | "emerald" | "violet" | "rose" | "amber"
+export type AccentColor = "blue"
 
 interface ThemeState {
   mode: ThemeMode
@@ -18,15 +18,7 @@ interface ThemeState {
   initTheme: () => void
 }
 
-const ACCENT_COLORS: Record<AccentColor, { primary: string; ring: string }> = {
-  blue: { primary: "221.2 83.2% 53.3%", ring: "221.2 83.2% 53.3%" },
-  emerald: { primary: "142.1 76.2% 36.3%", ring: "142.1 76.2% 36.3%" },
-  violet: { primary: "262.1 83.3% 57.8%", ring: "262.1 83.3% 57.8%" },
-  rose: { primary: "346.8 77.2% 49.8%", ring: "346.8 77.2% 49.8%" },
-  amber: { primary: "24.6 95% 53.1%", ring: "24.6 95% 53.1%" },
-}
-
-function applyTheme(mode: ThemeMode, accent: AccentColor) {
+function applyTheme(mode: ThemeMode) {
   if (typeof window === "undefined") return
 
   const root = document.documentElement
@@ -40,10 +32,9 @@ function applyTheme(mode: ThemeMode, accent: AccentColor) {
     root.classList.remove("dark")
   }
 
-  // Apply accent color
-  const colors = ACCENT_COLORS[accent] || ACCENT_COLORS.blue
-  root.style.setProperty("--primary", colors.primary)
-  root.style.setProperty("--ring", colors.ring)
+  // Remove any legacy inline primary/ring overrides so pure corporate blue CSS variables apply cleanly
+  root.style.removeProperty("--primary")
+  root.style.removeProperty("--ring")
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
@@ -56,13 +47,13 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   setMode: (mode) => {
     localStorage.setItem("theme_mode", mode)
     set({ mode })
-    applyTheme(mode, get().accent)
+    applyTheme(mode)
   },
 
-  setAccent: (accent) => {
-    localStorage.setItem("theme_accent", accent)
-    set({ accent })
-    applyTheme(get().mode, accent)
+  setAccent: (_accent) => {
+    localStorage.setItem("theme_accent", "blue")
+    set({ accent: "blue" })
+    applyTheme(get().mode)
   },
 
   setCompactMode: (compactMode) => {
@@ -83,26 +74,28 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   initTheme: () => {
     if (typeof window === "undefined") return
 
+    // Clean up any legacy non-blue accents
+    localStorage.removeItem("theme_accent")
+
     const savedMode = (localStorage.getItem("theme_mode") as ThemeMode) || "light"
-    const savedAccent = (localStorage.getItem("theme_accent") as AccentColor) || "blue"
     const savedCompact = localStorage.getItem("theme_compact") === "true"
     const savedAnimations = localStorage.getItem("theme_animations") !== "false"
     const savedHighContrast = localStorage.getItem("theme_high_contrast") === "true"
 
     set({
       mode: savedMode,
-      accent: savedAccent,
+      accent: "blue",
       compactMode: savedCompact,
       animations: savedAnimations,
       highContrast: savedHighContrast,
     })
 
-    applyTheme(savedMode, savedAccent)
+    applyTheme(savedMode)
 
     // Listen for OS theme changes if in system mode
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (get().mode === "system") {
-        applyTheme("system", get().accent)
+        applyTheme("system")
       }
     })
   },
