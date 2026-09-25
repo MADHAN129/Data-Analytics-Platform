@@ -5,6 +5,7 @@ import secrets
 from sqlalchemy import inspect, text
 
 from app.database import SessionLocal, engine, Base
+import app.models
 from app.models.user import User, UserRole
 from app.models.role import Role, RolePermission
 from app.models.permission import Permission
@@ -195,15 +196,23 @@ def seed():
             # Prefer ADMIN_PASSWORD from the environment; otherwise generate a
             # strong random one. Never use a hardcoded default.
             admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+            from app.models.company import Company
+            default_company = db.query(Company).first()
+            company_id = default_company.id if default_company else None
             admin = User(
                 email=admin_email,
                 password_hash=get_password_hash(admin_password),
                 full_name="System Admin",
+                company_id=company_id,
                 is_active=True,
             )
             db.add(admin)
             db.commit()
             db.refresh(admin)
+
+            if default_company and not default_company.owner_id:
+                default_company.owner_id = admin.id
+                db.commit()
 
             # Assign SuperAdmin role
             if superadmin_role:

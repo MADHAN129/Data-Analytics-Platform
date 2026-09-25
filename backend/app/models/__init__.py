@@ -7,10 +7,12 @@ from app.models.connection import DatabaseConnection
 from app.models.query import Query
 from app.models.conversation import Conversation, ConversationMessage
 from app.models.template import QueryTemplate
+from app.models.dashboard import Dashboard, DashboardWidget
 
 __all__ = [
     "Company",
     "User", "UserRole", "Role", "RolePermission", "Permission",
     "AuditLog", "DatabaseConnection",
     "Query", "Conversation", "ConversationMessage", "QueryTemplate",
+    "Dashboard", "DashboardWidget",
 ]
