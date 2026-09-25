@@ -177,21 +177,18 @@ export default function SettingsPage() {
         {/* ========================================================================= */}
         {/* APPEARANCE & THEME MODES TAB */}
         {/* ========================================================================= */}
-        {/* ========================================================================= */}
-        {/* APPEARANCE & THEME MODES TAB */}
-        {/* ========================================================================= */}
-        <TabsContent value="appearance" className="space-y-4 max-w-4xl">
+        <TabsContent value="appearance" className="space-y-6">
           <Card>
-            <CardHeader className="pb-3 pt-5 px-6">
+            <CardHeader>
               <div className="flex items-center gap-2">
                 <Palette className="h-5 w-5 text-primary" />
-                <CardTitle className="text-base">Appearance & Interface Preferences</CardTitle>
+                <CardTitle>Appearance & Interface Preferences</CardTitle>
               </div>
-              <CardDescription className="text-xs">
+              <CardDescription>
                 Manage night mode, interface density, animations, and contrast in one place.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3.5 px-6 pb-5 pt-1">
+            <CardContent className="space-y-5">
               {/* Night Mode Toggle */}
               <div className="flex items-center justify-between py-1">
                 <div className="space-y-0.5">
