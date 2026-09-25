@@ -38,10 +38,6 @@ def send_reset_email(to_email: str, token: str) -> None:
   <p style="font-size: 13px; word-break: break-all; background-color: #f3f4f6; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;">
     <a href="{reset_link}" style="color: #4f46e5;">{reset_link}</a>
   </p>
-  <p style="font-size: 14px; color: #555; margin-bottom: 6px;">Or enter this Reset Token / Code on the reset password screen:</p>
-  <p style="font-family: monospace; font-size: 15px; font-weight: bold; background: #eef2ff; color: #4338ca; padding: 10px 14px; border-radius: 6px; display: inline-block; word-break: break-all;">
-    {token}
-  </p>
   <p style="margin-top: 24px; font-size: 13px; color: #6b7280;">If you didn't request this, you can safely ignore this email.</p>
   <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
   <p style="font-size: 12px; color: #9ca3af;">Agentic Analytics &mdash; {frontend_url}</p>

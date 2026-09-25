@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -15,7 +15,6 @@ import { Loader2, CheckCircle, KeyRound, ArrowLeft } from "lucide-react"
 
 const resetSchema = z
   .object({
-    token: z.string().min(1, "Reset token or OTP code is required"),
     password: z.string().min(8, "Password must be at least 8 characters"),
     confirmPassword: z.string(),
   })
@@ -29,7 +28,7 @@ type ResetFormData = z.infer<typeof resetSchema>
 export function ResetPasswordForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const queryToken = searchParams.get("token") || ""
+  const token = searchParams.get("token")
   const { toast } = useToast()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isDone, setIsDone] = useState(false)
@@ -37,23 +36,25 @@ export function ResetPasswordForm() {
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<ResetFormData>({
     resolver: zodResolver(resetSchema),
-    defaultValues: { token: queryToken, password: "", confirmPassword: "" },
+    defaultValues: { password: "", confirmPassword: "" },
   })
 
-  useEffect(() => {
-    if (queryToken) {
-      setValue("token", queryToken)
-    }
-  }, [queryToken, setValue])
-
   const onSubmit = async (data: ResetFormData) => {
+    if (!token) {
+      toast({
+        title: "Error",
+        description: "Missing or invalid reset token. Please request a new link.",
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsSubmitting(true)
     try {
-      await api.resetPassword({ token: data.token.trim(), new_password: data.password })
+      await api.resetPassword({ token: token.trim(), new_password: data.password })
       setIsDone(true)
       toast({
         title: "Success",
@@ -62,12 +63,38 @@ export function ResetPasswordForm() {
     } catch {
       toast({
         title: "Error",
-        description: "Invalid or expired reset token/code. Please check the code or request a new one.",
+        description: "Invalid or expired reset link. Please request a new one.",
         variant: "destructive",
       })
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  if (!token) {
+    return (
+      <Card className="w-full max-w-md shadow-lg border-muted">
+        <CardHeader className="space-y-1 text-center">
+          <CardTitle className="text-2xl font-bold text-destructive">Invalid or Missing Link</CardTitle>
+          <CardDescription>
+            This reset link is missing a valid token. Please request a new password reset link.
+          </CardDescription>
+        </CardHeader>
+        <CardFooter className="flex flex-col gap-3 pt-2">
+          <Button className="w-full" onClick={() => router.push("/forgot-password")}>
+            Request New Reset Link
+          </Button>
+          <button
+            type="button"
+            onClick={() => router.push("/login")}
+            className="text-xs text-muted-foreground hover:underline inline-flex items-center justify-center"
+          >
+            <ArrowLeft className="mr-1 h-3 w-3" />
+            Back to sign in
+          </button>
+        </CardFooter>
+      </Card>
+    )
   }
 
   if (isDone) {
@@ -98,35 +125,10 @@ export function ResetPasswordForm() {
           <KeyRound className="h-5 w-5 text-primary" />
           <CardTitle className="text-2xl font-bold">Set new password</CardTitle>
         </div>
-        <CardDescription>
-          {queryToken
-            ? "Enter your new password below."
-            : "Enter your Reset Token / OTP code received in email, then choose a new password."}
-        </CardDescription>
+        <CardDescription>Enter your new password below.</CardDescription>
       </CardHeader>
       <form onSubmit={handleSubmit(onSubmit)}>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="token">
-              Reset Token / OTP Code
-              {queryToken && (
-                <span className="ml-2 text-xs font-normal text-emerald-600 dark:text-emerald-400">
-                  (Attached from link)
-                </span>
-              )}
-            </Label>
-            <Input
-              id="token"
-              type="text"
-              placeholder="Paste token or OTP code from email"
-              {...register("token")}
-              className={queryToken ? "bg-muted/40 font-mono text-xs" : "font-mono text-sm"}
-            />
-            {errors.token && (
-              <p className="text-sm text-destructive">{errors.token.message}</p>
-            )}
-          </div>
-
           <div className="space-y-2">
             <Label htmlFor="password">New password</Label>
             <Input
@@ -170,7 +172,7 @@ export function ResetPasswordForm() {
               onClick={() => router.push("/forgot-password")}
               className="text-primary hover:underline inline-flex items-center"
             >
-              Request new code
+              Request new link
             </button>
             <button
               type="button"
@@ -186,4 +188,5 @@ export function ResetPasswordForm() {
     </Card>
   )
 }
+
 
