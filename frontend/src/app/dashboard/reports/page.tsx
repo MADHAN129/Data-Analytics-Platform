@@ -964,9 +964,9 @@ function ReportPreviewModal({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[88vh] flex flex-col p-0 overflow-hidden">
-        {/* MODAL HEADER */}
-        <div className="border-b p-6 pb-4 bg-muted/20">
+      <DialogContent className="max-w-4xl max-h-[90vh] h-[90vh] flex flex-col p-0 overflow-hidden shadow-2xl">
+        {/* MODAL HEADER (Fixed) */}
+        <div className="shrink-0 border-b p-6 pb-4 bg-muted/20">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -1017,8 +1017,8 @@ function ReportPreviewModal({
           </div>
         </div>
 
-        {/* MODAL BODY */}
-        <ScrollArea className="flex-1 p-6 space-y-6">
+        {/* MODAL BODY (Vertically Scrollable) */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
           {/* KPI CARDS */}
           {report.summary.kpis.length > 0 && (
             <div className="space-y-2">
@@ -1045,7 +1045,7 @@ function ReportPreviewModal({
           )}
 
           {/* WIDGETS DATA TABLES */}
-          <div className="space-y-4">
+          <div className="space-y-5">
             <h3 className="text-sm font-semibold text-foreground/90 uppercase tracking-wider text-[11px]">
               Widget Breakdowns & Data Tables
             </h3>
@@ -1072,9 +1072,9 @@ function ReportPreviewModal({
                   )}
 
                   {w.columns.length > 0 ? (
-                    <div className="rounded border overflow-x-auto max-h-56">
+                    <div className="rounded border overflow-x-auto max-h-64">
                       <table className="w-full text-xs text-left">
-                        <thead className="bg-muted/50 border-b font-medium text-muted-foreground">
+                        <thead className="bg-muted/50 border-b font-medium text-muted-foreground sticky top-0 bg-background/95 backdrop-blur-xs">
                           <tr>
                             {w.columns.map((col, cIdx) => (
                               <th key={cIdx} className="p-2 px-3 font-semibold whitespace-nowrap">
@@ -1109,10 +1109,10 @@ function ReportPreviewModal({
               </div>
             ))}
           </div>
-        </ScrollArea>
+        </div>
 
-        {/* MODAL FOOTER */}
-        <div className="border-t p-4 bg-muted/10 flex items-center justify-between">
+        {/* MODAL FOOTER (Fixed) */}
+        <div className="shrink-0 border-t p-4 bg-muted/10 flex items-center justify-between">
           <span className="text-xs text-muted-foreground">
             {report.widgets_data.length} widgets compiled
           </span>
