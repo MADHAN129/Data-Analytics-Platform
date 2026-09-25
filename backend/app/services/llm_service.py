@@ -614,10 +614,13 @@ DATABASE CONTEXT AND SCHEMA:
         x_label = dim_col.replace("_", " ").title()
 
         nl_lower = natural_language.lower()
-        wants_line = any(w in nl_lower for w in ["line chart", "line graph", "line plot", "as a line", "line-chart", "trend line"])
+        wants_line = any(w in nl_lower for w in ["line chart", "line graph", "line plot", "as a line", "line-chart", "trend line", "over time", "trend", "timeline", "monthly", "yearly", "daily", "growth", "history"])
         wants_area = any(w in nl_lower for w in ["area chart", "area graph", "area plot", "as an area", "area-chart"])
-        wants_pie = any(w in nl_lower for w in ["pie chart", "pie graph", "pie plot", "as a pie", "pie-chart", "donut chart", "donut"])
-        wants_bar = any(w in nl_lower for w in ["bar chart", "bar graph", "bar plot", "as a bar", "bar-chart", "column chart", "histogram"])
+        wants_pie = any(w in nl_lower for w in [
+            "pie chart", "pie graph", "pie plot", "as a pie", "pie-chart", "donut chart", "donut",
+            "distribution", "share", "proportion", "percentage", "percent", "breakdown", "split", "ratio", "portion"
+        ])
+        wants_bar = any(w in nl_lower for w in ["bar chart", "bar graph", "bar plot", "as a bar", "bar-chart", "column chart", "histogram", "comparison", "ranking", "rank", "top", "highest", "lowest"])
 
         if wants_line:
             suggestions.append({

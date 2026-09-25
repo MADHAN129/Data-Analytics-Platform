@@ -715,13 +715,17 @@ function WidgetChartRenderer({
 }) {
   const targetSuggestion = useMemo(() => {
     if (widget.widget_type === "analytics") {
+      const nonTable = suggestions?.find((s) => s.type !== "table")
+      if (nonTable) {
+        return nonTable
+      }
       if (suggestions && suggestions.length > 0) {
         return suggestions[0]
       }
       return {
         type: results.row_count === 1 && results.columns.length <= 2
           ? "kpi"
-          : (results.columns.length > 2 ? "table" : "bar_chart"),
+          : "bar_chart",
         title: widget.title,
         config: (widget.config as Record<string, unknown>) || {},
       } as VisualizationSuggestion
@@ -854,27 +858,71 @@ function AddWidgetDialog({
         return
       }
 
-      // Determine appropriate widget type
+      // Determine appropriate widget type based on user selection or natural language intent
       let resolvedType = aiWidgetType
       if (resolvedType === "auto" || resolvedType === "analytics") {
-        const suggested = result.suggested_visualizations?.[0]?.type
-        if (suggested && ["kpi", "bar_chart", "pie_chart", "line_chart", "area_chart", "table"].includes(suggested)) {
-          resolvedType = suggested
-        } else if (result.results && result.results.row_count === 1 && result.results.columns.length <= 2) {
-          resolvedType = "kpi"
-        } else if (result.results && result.results.row_count > 0 && result.results.columns.length > 2) {
-          resolvedType = "table"
+        const qLower = nlQuestion.toLowerCase()
+        if (
+          qLower.includes("pie") ||
+          qLower.includes("distribution") ||
+          qLower.includes("share") ||
+          qLower.includes("proportion") ||
+          qLower.includes("percentage") ||
+          qLower.includes("percent") ||
+          qLower.includes("breakdown") ||
+          qLower.includes("split") ||
+          qLower.includes("donut") ||
+          qLower.includes("ratio")
+        ) {
+          resolvedType = "pie_chart"
+        } else if (
+          qLower.includes("trend") ||
+          qLower.includes("over time") ||
+          qLower.includes("timeline") ||
+          qLower.includes("monthly") ||
+          qLower.includes("yearly") ||
+          qLower.includes("daily") ||
+          qLower.includes("growth") ||
+          qLower.includes("line")
+        ) {
+          resolvedType = "line_chart"
+        } else if (qLower.includes("area")) {
+          resolvedType = "area_chart"
+        } else if (
+          (result.results && result.results.row_count === 1 && result.results.columns.length <= 2 && !qLower.includes("chart") && !qLower.includes("bar")) ||
+          qLower.includes("total") ||
+          qLower.includes("sum") ||
+          qLower.includes("count of") ||
+          qLower.includes("how many") ||
+          qLower.includes("average") ||
+          qLower.includes("kpi")
+        ) {
+          if (result.results && result.results.row_count === 1 && result.results.columns.length === 1) {
+            resolvedType = "kpi"
+          } else {
+            const suggested = result.suggested_visualizations?.find((s) => s.type !== "table")?.type
+            resolvedType = suggested || "bar_chart"
+          }
         } else {
-          resolvedType = "bar_chart"
+          // Never default to a table for AI widget creation
+          const nonTableSuggested = result.suggested_visualizations?.find((s) => s.type !== "table")?.type
+          resolvedType = nonTableSuggested || "bar_chart"
         }
       }
 
+      // Find matching suggestion config for the resolved type or fallback to first non-table config
+      const matchingSuggestion =
+        result.suggested_visualizations?.find((s) => s.type === resolvedType) ||
+        result.suggested_visualizations?.find((s) => s.type !== "table") ||
+        result.suggested_visualizations?.[0]
+
       const finalTitle =
         aiTitle.trim() ||
+        matchingSuggestion?.title ||
         result.suggested_visualizations?.[0]?.title ||
         nlQuestion.trim()
 
-      const config = result.suggested_visualizations?.[0]?.config || {}
+      const config = matchingSuggestion?.config || {}
 
       onAdd(resolvedType, finalTitle, result.id, config)
       setNlQuestion("")
