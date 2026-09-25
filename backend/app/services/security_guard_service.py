@@ -55,14 +55,13 @@ PROHIBITED_DML_DDL_PATTERNS = [
     (r"\b(DO\s+\$\$)\b", "ANONYMOUS_BLOCK", "Prohibited anonymous procedural block detected."),
 ]
 
-# Prompt injection and adversarial jailbreak patterns in natural language prompts
 PROMPT_INJECTION_PATTERNS = [
-    (r"(?i)\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands|constraints)\b", "PROMPT_INJECTION_OVERRIDE", "Instruction override / prompt injection attempt detected."),
-    (r"(?i)\b(system\s+prompt\s+override|developer\s+mode\s+enabled|unrestricted\s+mode|jailbreak|dan\s+mode)\b", "PROMPT_INJECTION_JAILBREAK", "Jailbreak / unrestricted mode override attempt detected."),
-    (r"(?i)\b(delete\s+all|drop\s+all|wipe\s+out|truncate\s+all|erase\s+all|purge\s+all)\s+(tables|databases|records|data|rows|users)\b", "PROMPT_INJECTION_DESTRUCTIVE", "Adversarial destructive instruction targeting database wipeout detected."),
-    (r"(?i)\b(delete\s+from|drop\s+table|drop\s+database|truncate\s+table|update\s+[a-zA-Z0-9_]+\s+set|alter\s+table)\b", "PROMPT_INJECTION_SQL_SYNTAX", "Direct destructive SQL command embedded in natural language prompt detected."),
-    (r"(?i)\b(grant\s+all\s+privileges|give\s+me\s+superadmin|elevate\s+privileges|bypass\s+security|bypass\s+authentication)\b", "PROMPT_INJECTION_PRIVILEGE", "Privilege elevation / security bypass attempt detected."),
-    (r"(?i)\b(xp_cmdshell|exec\s+xp_|execute\s+shell|run\s+bash|run\s+cmd)\b", "PROMPT_INJECTION_RCE", "Remote code/command execution attempt detected in prompt."),
+    (r"(?i)\b(ignore|disregard|forget|override|bypass)\s+(the\s+|all\s+|all\s+the\s+|any\s+)?(previous|prior|above|system|existing)?\s*(instruction|instructions|prompt|prompts|rule|rules|command|commands|constraint|constraints|directive|directives)\b", "PROMPT_INJECTION_OVERRIDE", "Instruction override / prompt injection attempt detected."),
+    (r"(?i)\b(system\s+prompt\s+override|developer\s+mode|unrestricted\s+mode|jailbreak|dan\s+mode|god\s+mode|admin\s+mode)\b", "PROMPT_INJECTION_JAILBREAK", "Jailbreak / unrestricted mode override attempt detected."),
+    (r"(?i)\b(delete|drop|wipe\s+out|wipe|truncate|erase|purge|destroy)\s+(the\s+|all\s+|all\s+the\s+|every\s+)?(database\s+data|database|databases|db|dbs|data|table|tables|records|rows|users|schema|schemas|everything)\b", "PROMPT_INJECTION_DESTRUCTIVE", "Adversarial destructive instruction targeting database wipeout detected."),
+    (r"(?i)\b(delete\s+from|drop\s+table|drop\s+database|drop\s+schema|truncate\s+table|truncate\s+[a-zA-Z0-9_\.]+|update\s+[a-zA-Z0-9_]+\s+set|alter\s+table|insert\s+into)\b", "PROMPT_INJECTION_SQL_SYNTAX", "Direct destructive SQL command embedded in natural language prompt detected."),
+    (r"(?i)\b(grant\s+all|give\s+me\s+superadmin|elevate\s+privilege|bypass\s+security|bypass\s+auth|turn\s+off\s+security)\b", "PROMPT_INJECTION_PRIVILEGE", "Privilege elevation / security bypass attempt detected."),
+    (r"(?i)\b(xp_cmdshell|exec\s+xp_|execute\s+shell|run\s+bash|run\s+cmd|eval\(|os\.system|subprocess)\b", "PROMPT_INJECTION_RCE", "Remote code/command execution attempt detected in prompt."),
 ]
 
 
