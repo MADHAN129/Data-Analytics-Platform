@@ -48,19 +48,35 @@ def register_user(db: Session, data: RegisterRequest, ip_address: str = None):
     company.owner_id = user.id
     db.commit()
 
-    # Assign role: SuperAdmin (System Administrator) on signup
-    from app.models.role import Role
+    # Assign role: SuperAdmin (full administrator access) on signup
+    from app.models.role import Role, RolePermission
     from app.models.user import UserRole
+    from app.models.permission import Permission
 
-    assigned_role = (
-        db.query(Role).filter(Role.name == "SuperAdmin").first()
-        or db.query(Role).filter(Role.name == "Analyst").first()
-        or db.query(Role).filter(Role.name == "Viewer").first()
-    )
-    if assigned_role:
-        ur = UserRole(user_id=user.id, role_id=assigned_role.id)
-        db.add(ur)
+    superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
+    if not superadmin_role:
+        superadmin_role = Role(
+            name="SuperAdmin",
+            description="Full system access with all permissions",
+            is_system=True,
+        )
+        db.add(superadmin_role)
         db.commit()
+        db.refresh(superadmin_role)
+
+    # Ensure all permissions are granted to SuperAdmin role
+    all_perms = db.query(Permission).all()
+    existing_perm_ids = {
+        rp.permission_id
+        for rp in db.query(RolePermission).filter(RolePermission.role_id == superadmin_role.id).all()
+    }
+    for perm in all_perms:
+        if perm.id not in existing_perm_ids:
+            db.add(RolePermission(role_id=superadmin_role.id, permission_id=perm.id))
+
+    ur = UserRole(user_id=user.id, role_id=superadmin_role.id)
+    db.add(ur)
+    db.commit()
 
     create_audit_log(
         db, user.id, "register", "auth", str(user.id),
@@ -101,31 +117,35 @@ def refresh_token(db: Session, token: str):
     if payload is None or payload.get("type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+            detail="Invalid or expired refresh token",
         )
 
     user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+
     user = db.query(User).filter(User.id == int(user_id)).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
 
-    return build_token_response(db, user)
-
-
-def change_password(db: Session, user_id: int, current_password: str, new_password: str):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or not verify_password(current_password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
-
-    user.password_hash = get_password_hash(new_password)
-    db.commit()
-
-    create_audit_log(db, user_id, "change_password", "auth", str(user_id))
+    access_token = create_access_token({"sub": str(user.id)})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
 
 
 def forgot_password(db: Session, data: ForgotPasswordRequest):
     user = db.query(User).filter(User.email == data.email).first()
     if not user:
+        # Don't reveal if user exists
         return
 
     token = token_urlsafe(32)
