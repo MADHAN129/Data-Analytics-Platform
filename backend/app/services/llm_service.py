@@ -350,10 +350,22 @@ DATABASE CONTEXT AND SCHEMA:
    - Use the exact columns representing requested metrics from the verified schema.
    - Use COALESCE / NVL / NULLIF appropriately to prevent division by zero and handle NULL values cleanly.
 
-4. DIALECT COMPLIANCE:
+4. TIME PERIOD & TEMPORAL INTEGRITY (MANDATORY RULE):
+   - When the database contains multiple years with the same quarter names (or month names, e.g. 2024 Q1, 2024 Q2, 2025 Q1, 2025 Q2):
+     * NEVER group by or rank by QUARTER alone (e.g. NEVER 'GROUP BY quarter').
+     * '2024 Q2' and '2025 Q2' are distinct chronological periods and MUST NOT be combined.
+     * If year and quarter are stored in separate columns (e.g. fiscal_year and quarter, year and quarter), ALWAYS group by, select, and rank by BOTH: `GROUP BY fiscal_year, quarter` (or `GROUP BY year, quarter`).
+     * If a single period column exists (e.g. period = '2024 Q1'), group by that complete period column.
+     * When asked ranking questions like 'Which quarter had the highest revenue?' or 'Top quarter':
+       - Identify the complete quarter-period (Year + Quarter) for each record.
+       - Rank complete individual periods (e.g. 2025 Q2), NOT combined quarter names across different years.
+       - Return revenue, expenses, net profit, and profit margin belonging to that SAME exact period record.
+     * NEVER SUM expenses, revenue, net profit, or metrics across different years merely because they share a quarter name.
+
+5. DIALECT COMPLIANCE:
 {dialect_rules}
 
-5. OUTPUT FORMAT:
+6. OUTPUT FORMAT:
    - Provide ONLY the single executable {dialect} query enclosed strictly inside a ```sql ... ``` block."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
@@ -444,9 +456,10 @@ DATABASE CONTEXT AND SCHEMA:
             f"INSTRUCTIONS TO DYNAMICALLY REGENERATE:\n"
             f"1. DO NOT guess column names or perform string replacements.\n"
             f"2. Inspect the schema context above to find the exact verified table and column names.\n"
-            f"3. If multiple one-to-many child tables are joined, pre-aggregate each child table in a separate CTE (WITH clause) grouped by department_id BEFORE joining.\n"
-            f"4. Regenerate the COMPLETE corrected raw SQL query using ONLY verified tables and columns.\n"
-            f"5. Return ONLY the corrected raw SQL query strictly inside a ```sql ... ``` block."
+            f"3. If multiple one-to-many child tables are joined, pre-aggregate each child table in a separate CTE (WITH clause) grouped by the foreign key BEFORE joining.\n"
+            f"4. If analyzing, grouping, or ranking quarters/months across years, include BOTH year and quarter (e.g. 'GROUP BY fiscal_year, quarter') so quarters from different years (e.g. 2024 Q2 and 2025 Q2) are never combined.\n"
+            f"5. Regenerate the COMPLETE corrected raw SQL query using ONLY verified tables and columns.\n"
+            f"6. Return ONLY the corrected raw SQL query strictly inside a ```sql ... ``` block."
         )
         messages = [
             {"role": "system", "content": system_prompt},

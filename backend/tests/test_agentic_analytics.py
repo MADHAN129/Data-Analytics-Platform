@@ -237,3 +237,75 @@ def test_send_message_broad_intent_clarification():
         assert resp.clarification_options is not None
         assert len(resp.clarification_options) == 1
         assert "Today" in resp.clarification_options[0].label
+
+
+def test_time_period_validation_quarter_without_year_fails():
+    """Test that grouping by quarter alone on tables with separate year and quarter columns fails with Time Period Validation Error."""
+    table_cols = {
+        "COMPANY_FINANCIALS": {
+            "FINANCIAL_ID", "FISCAL_YEAR", "QUARTER", "REVENUE",
+            "OPERATING_EXPENSES", "NET_PROFIT", "PROFIT_MARGIN_PCT"
+        }
+    }
+    
+    # Grouping by quarter alone combines 2024 Q2 and 2025 Q2 -> Must fail
+    invalid_sql = "SELECT quarter, SUM(revenue) FROM company_financials GROUP BY quarter;"
+    is_valid, sanitized, err = _validate_sql_before_execution(invalid_sql, table_cols, "PostgreSQL")
+    assert is_valid is False
+    assert "Time Period Validation Error" in err
+    assert "FISCAL_YEAR" in err
+    assert "QUARTER" in err
+    assert "2024 Q2 and 2025 Q2" in err
+
+
+def test_time_period_validation_quarter_with_year_passes():
+    """Test that grouping by both fiscal_year and quarter passes validation."""
+    table_cols = {
+        "COMPANY_FINANCIALS": {
+            "FINANCIAL_ID", "FISCAL_YEAR", "QUARTER", "REVENUE",
+            "OPERATING_EXPENSES", "NET_PROFIT", "PROFIT_MARGIN_PCT"
+        }
+    }
+    
+    valid_sql = "SELECT fiscal_year, quarter, SUM(revenue) AS total_rev FROM company_financials GROUP BY fiscal_year, quarter ORDER BY fiscal_year, quarter;"
+    is_valid, sanitized, err = _validate_sql_before_execution(valid_sql, table_cols, "PostgreSQL")
+    assert is_valid is True
+    assert err is None
+
+
+def test_time_period_validation_ranking_single_period_passes():
+    """Test that ranking complete period records with year and quarter passes validation."""
+    table_cols = {
+        "COMPANY_FINANCIALS": {
+            "FINANCIAL_ID", "FISCAL_YEAR", "QUARTER", "REVENUE",
+            "OPERATING_EXPENSES", "NET_PROFIT", "PROFIT_MARGIN_PCT"
+        }
+    }
+    
+    # Highest revenue single period query
+    valid_sql = (
+        "SELECT fiscal_year, quarter, revenue, operating_expenses, net_profit, profit_margin_pct "
+        "FROM company_financials "
+        "ORDER BY revenue DESC "
+        "FETCH FIRST 1 ROWS ONLY;"
+    )
+    is_valid, sanitized, err = _validate_sql_before_execution(valid_sql, table_cols, "Oracle SQL")
+    assert is_valid is True
+    assert err is None
+
+
+def test_time_period_validation_aggregate_quarter_without_year_fails():
+    """Test that aggregating metrics over quarter without including year fails validation."""
+    table_cols = {
+        "COMPANY_FINANCIALS": {
+            "FINANCIAL_ID", "FISCAL_YEAR", "QUARTER", "REVENUE",
+            "OPERATING_EXPENSES", "NET_PROFIT", "PROFIT_MARGIN_PCT"
+        }
+    }
+    
+    # Query referencing quarter with SUM() without fiscal_year
+    invalid_sql = "SELECT quarter, SUM(revenue) FROM company_financials WHERE quarter = 'Q2';"
+    is_valid, sanitized, err = _validate_sql_before_execution(invalid_sql, table_cols, "PostgreSQL")
+    assert is_valid is False
+    assert "Time Period Validation Error" in err
+

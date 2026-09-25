@@ -340,6 +340,22 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
         elif dialect in ("SQL Server", "T-SQL"):
             guidance.append("- RANKING RULE: Use 'SELECT TOP 1' with ORDER BY the relevant metric.")
 
+    # Time Period & Quarter Integrity Guidance
+    if any(w in q_lower for w in ("quarter", "quarters", "q1", "q2", "q3", "q4", "highest revenue", "financial", "revenue", "profit", "expenses")):
+        for tbl, cols in active_cols.items():
+            cols_up = {c.upper() for c in cols}
+            found_y = cols_up.intersection({"YEAR", "FISCAL_YEAR", "FY", "REPORT_YEAR", "YR", "CALENDAR_YEAR", "FINANCIAL_YEAR"})
+            found_q = cols_up.intersection({"QUARTER", "QTR", "FISCAL_QUARTER", "FQ", "FINANCIAL_QUARTER"})
+            if found_y and found_q:
+                y_c = sorted(list(found_y))[0]
+                q_c = sorted(list(found_q))[0]
+                guidance.append(
+                    f"- MANDATORY TIME PERIOD RULE FOR '{tbl}': Table contains separate columns '{y_c}' and '{q_c}'. "
+                    f"NEVER group by or rank by '{q_c}' alone. "
+                    f"Always select and group by BOTH '{y_c}' and '{q_c}' so quarters from different years (e.g. 2024 Q2 and 2025 Q2) remain completely separate and are never summed together. "
+                    f"When ranking the top quarter (e.g. highest revenue), rank individual complete periods and return '{y_c}', '{q_c}', and all matching metric columns from that exact same record."
+                )
+
     return "VALID", "", matched, "\n".join(guidance)
 
 
@@ -641,6 +657,47 @@ def _validate_sql_before_execution(
                                     sanitized,
                                     f"Oracle SQL error: Column alias '{a}' cannot be referenced in WHERE or HAVING clauses. Repeat the expression or use a subquery/CTE."
                                 )
+
+        # 7. Time Period & Temporal Integrity Validation (Mandatory)
+        year_col_names = {"YEAR", "FISCAL_YEAR", "FY", "REPORT_YEAR", "YR", "CALENDAR_YEAR", "FINANCIAL_YEAR"}
+        quarter_col_names = {"QUARTER", "QTR", "FISCAL_QUARTER", "FQ", "FINANCIAL_QUARTER"}
+
+        for t_in_q in tables_in_query:
+            if t_in_q in table_cols:
+                cols_upper = {c.upper() for c in table_cols[t_in_q]}
+                found_years = cols_upper.intersection(year_col_names)
+                found_quarters = cols_upper.intersection(quarter_col_names)
+
+                if found_years and found_quarters:
+                    y_col = sorted(list(found_years))[0]
+                    q_col = sorted(list(found_quarters))[0]
+
+                    clean_no_str = re.sub(r"'[^']*'", "", sanitized).upper()
+
+                    # A. Check GROUP BY clause: if grouping by quarter without year
+                    group_by_match = re.search(r"\bGROUP\s+BY\b([\s\S]*?)(?:\bHAVING\b|\bORDER\b|\bFETCH\b|\bLIMIT\b|;|$)", sanitized, flags=re.IGNORECASE)
+                    if group_by_match:
+                        group_by_clause = group_by_match.group(1).upper()
+                        if re.search(rf"\b{re.escape(q_col)}\b", group_by_clause) and not re.search(rf"\b{re.escape(y_col)}\b", group_by_clause):
+                            return (
+                                False,
+                                sanitized,
+                                f"Time Period Validation Error: Table '{t_in_q}' has separate columns '{y_col}' and '{q_col}'. "
+                                f"Grouping by '{q_col}' alone incorrectly combines records across different years (e.g. 2024 Q2 and 2025 Q2). "
+                                f"You MUST include both columns in the GROUP BY clause: 'GROUP BY {y_col}, {q_col}' (and select both) so periods across different years remain distinct."
+                            )
+
+                    # B. Check if aggregating metrics and referencing quarter without year
+                    if any(agg in clean_no_str for agg in ("SUM(", "AVG(", "COUNT(")):
+                        if re.search(rf"\b{re.escape(q_col)}\b", clean_no_str) and not re.search(rf"\b{re.escape(y_col)}\b", clean_no_str):
+                            return (
+                                False,
+                                sanitized,
+                                f"Time Period Validation Error: Table '{t_in_q}' has separate columns '{y_col}' and '{q_col}'. "
+                                f"The query aggregates metrics over '{q_col}' without including '{y_col}'. "
+                                f"Quarters across different years (e.g. 2024 Q2 vs 2025 Q2) are distinct periods and must NOT be combined or summed together. "
+                                f"You MUST select and group by BOTH '{y_col}' and '{q_col}'."
+                            )
 
     return True, sanitized, None
 
