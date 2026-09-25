@@ -1,8 +1,10 @@
 "use client"
 
 import { useEffect, useState, useMemo, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import { api } from "@/lib/api-client"
 import { apiCache } from "@/lib/api-cache"
+import { useAuthStore } from "@/store/auth-store"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -40,7 +42,27 @@ import {
 } from "lucide-react"
 
 export default function ActivityPage() {
+  const router = useRouter()
   const { toast } = useToast()
+  const { user } = useAuthStore()
+
+  const userRoles = user?.roles?.map((r) => r.name)
+  const hasElevatedAccess = userRoles?.some(
+    (r) => r === "SuperAdmin" || r === "Admin" || r === "Analyst"
+  )
+  const isViewer = user && (!hasElevatedAccess || (userRoles?.includes("Viewer") && !hasElevatedAccess))
+
+  useEffect(() => {
+    if (isViewer) {
+      toast({
+        title: "Access Restricted",
+        description: "Viewer role only has access to Home, Dashboards, and Reports.",
+        variant: "destructive",
+      })
+      router.replace("/dashboard/dashboards")
+    }
+  }, [isViewer, router, toast])
+
   const [data, setData] = useState<ActivityOverviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -50,6 +72,7 @@ export default function ActivityPage() {
   const [selectedQueryForSql, setSelectedQueryForSql] = useState<ActivityQueryItem | null>(null)
 
   const fetchActivity = useCallback(async (forceFresh = false) => {
+    if (isViewer) return
     if (forceFresh) {
       setIsRefreshing(true)
       apiCache.invalidate("activity")
@@ -147,6 +170,19 @@ export default function ActivityPage() {
     const sum = valid.reduce((acc, curr) => acc + (curr.execution_time_ms || 0), 0)
     return Math.round(sum / valid.length)
   }, [data?.recent_queries])
+
+  if (isViewer) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <Activity className="h-12 w-12 text-muted-foreground/40" />
+        <h2 className="text-xl font-semibold">Access Restricted</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Your account has the Viewer role, which is authorized to view Dashboards and Reports.
+        </p>
+        <Button onClick={() => router.push("/dashboard/dashboards")}>Go to Dashboards</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6 pb-16">

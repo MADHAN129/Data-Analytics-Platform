@@ -34,6 +34,7 @@ import type {
   ConnectionType,
 } from "@/types/api"
 import { formatDate } from "@/lib/utils"
+import { useAuthStore } from "@/store/auth-store"
 import {
   CheckCircle2,
   Database,
@@ -84,6 +85,26 @@ const defaultForm: DatabaseCreateRequest = {
 
 export default function DatabasesPage() {
   const router = useRouter()
+  const { toast } = useToast()
+  const { user } = useAuthStore()
+
+  const userRoles = user?.roles?.map((r) => r.name)
+  const hasElevatedAccess = userRoles?.some(
+    (r) => r === "SuperAdmin" || r === "Admin" || r === "Analyst"
+  )
+  const isViewer = user && (!hasElevatedAccess || (userRoles?.includes("Viewer") && !hasElevatedAccess))
+
+  useEffect(() => {
+    if (isViewer) {
+      toast({
+        title: "Access Restricted",
+        description: "Viewer role only has access to Home, Dashboards, and Reports.",
+        variant: "destructive",
+      })
+      router.replace("/dashboard/dashboards")
+    }
+  }, [isViewer, router, toast])
+
   const [connections, setConnections] = useState<DatabaseConnectionResponse[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -100,11 +121,11 @@ export default function DatabasesPage() {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency_ms: number | null } | null>(null)
   const [isTestingCreated, setIsTestingCreated] = useState(false)
   const [lastHealthCheck, setLastHealthCheck] = useState<string | null>(null)
-  const { toast } = useToast()
 
   const perPage = 20
 
   const fetchConnections = useCallback(async (forceFresh = false) => {
+    if (isViewer) return
     const cacheKey = `databases:page=${page}:search=${search}:filter=${connectionTypeFilter}`
     try {
       const { data, isFromCache } = await apiCache.swr(
@@ -133,9 +154,13 @@ export default function DatabasesPage() {
       toast({ title: "Error", description: error.detail || "Failed to load databases", variant: "destructive" })
       setIsLoading(false)
     }
-  }, [page, perPage, search, connectionTypeFilter, toast])
+  }, [page, perPage, search, connectionTypeFilter, toast, isViewer])
 
-  useEffect(() => { fetchConnections() }, [fetchConnections])
+  useEffect(() => {
+    if (!isViewer) {
+      fetchConnections()
+    }
+  }, [fetchConnections, isViewer])
 
   const pollingRef = useRef(false)
   const doHealthCheck = useCallback(async () => {
@@ -384,6 +409,19 @@ export default function DatabasesPage() {
       ),
     },
   ]
+
+  if (isViewer) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <Database className="h-12 w-12 text-muted-foreground/40" />
+        <h2 className="text-xl font-semibold">Access Restricted</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Your account has the Viewer role, which is authorized to view Dashboards and Reports.
+        </p>
+        <Button onClick={() => router.push("/dashboard/dashboards")}>Go to Dashboards</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { formatDate } from "@/lib/utils"
+import { useAuthStore } from "@/store/auth-store"
 import type { ConversationResponse, DatabaseConnectionResponse } from "@/types/api"
 import {
   MessageSquare,
@@ -28,6 +29,25 @@ import {
 function ConversationsPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const { user } = useAuthStore()
+
+  const userRoles = user?.roles?.map((r) => r.name)
+  const hasElevatedAccess = userRoles?.some(
+    (r) => r === "SuperAdmin" || r === "Admin" || r === "Analyst"
+  )
+  const isViewer = user && (!hasElevatedAccess || (userRoles?.includes("Viewer") && !hasElevatedAccess))
+
+  useEffect(() => {
+    if (isViewer) {
+      toast({
+        title: "Access Restricted",
+        description: "Viewer role only has access to Home, Dashboards, and Reports.",
+        variant: "destructive",
+      })
+      router.replace("/dashboard/dashboards")
+    }
+  }, [isViewer, router, toast])
+
   const [conversations, setConversations] = useState<ConversationResponse[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -42,6 +62,7 @@ function ConversationsPage() {
   const perPage = 20
 
   const fetchConversations = async () => {
+    if (isViewer) return
     setIsLoading(true)
     try {
       const data = await api.listConversations({ page, per_page: perPage })
@@ -55,7 +76,11 @@ function ConversationsPage() {
     }
   }
 
-  useEffect(() => { fetchConversations() }, [page])
+  useEffect(() => {
+    if (!isViewer) {
+      fetchConversations()
+    }
+  }, [page, isViewer])
 
   const openCreateDialog = async () => {
     try {
@@ -164,6 +189,19 @@ function ConversationsPage() {
       ),
     },
   ]
+
+  if (isViewer) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <MessageSquare className="h-12 w-12 text-muted-foreground/40" />
+        <h2 className="text-xl font-semibold">Access Restricted</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Your account has the Viewer role, which is authorized to view Dashboards and Reports.
+        </p>
+        <Button onClick={() => router.push("/dashboard/dashboards")}>Go to Dashboards</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
