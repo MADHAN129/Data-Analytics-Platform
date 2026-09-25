@@ -28,10 +28,38 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "Agentic Analytics"
     APP_URL: str = "http://localhost:3000"
 
+    # ── LLM Settings ────────────────────────────────────────────────────────
+    # Provider selection: "auto", "openrouter", "grok", "local_proxy", "openai", "local", "mock"
+    LLM_PROVIDER: str = "auto"
+    LLM_USE_MOCK: bool = False
+
+    # Local LLM (Ollama / vLLM) - Existing default / fallback
     VLLM_API_URL: str = "http://localhost:11434/v1"
     VLLM_API_KEY: str = ""
-    LLM_USE_MOCK: bool = False
-    LLM_MODEL: str = "qwen3:8b"
+    LLM_MODEL: str = "qwen2.5-coder:3b"
+
+    # OpenRouter API (https://openrouter.ai)
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_MODEL: str = "meta-llama/llama-3.3-70b-instruct"
+    OPENROUTER_SITE_URL: str = "http://localhost:3000"
+    OPENROUTER_APP_NAME: str = "Data-Analyzer"
+
+    # Grok / xAI API (https://x.ai)
+    GROK_API_KEY: str = ""
+    XAI_API_KEY: str = ""  # Alias for GROK_API_KEY
+    GROK_BASE_URL: str = "https://api.x.ai/v1"
+    GROK_MODEL: str = "grok-2-latest"
+
+    # Local Proxy / Custom OpenAI-compatible Proxy (LiteLLM, LocalAI, vLLM proxy, etc.)
+    LOCAL_PROXY_URL: str = ""
+    LOCAL_PROXY_API_KEY: str = ""
+    LOCAL_PROXY_MODEL: str = ""
+
+    # OpenAI API (Optional direct support)
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-4o-mini"
 
     MCP_API_KEY: str = ""
     MCP_ENABLED: bool = True
