@@ -8,6 +8,7 @@ import type {
   ResetPasswordRequest,
   UserResponse,
   UpdateProfileRequest,
+  CreateUserRequest,
   UserListResponse,
   RoleResponse,
   RoleListResponse,
@@ -249,6 +250,13 @@ class ApiClient {
     if (params?.sort_by) query.set("sort_by", params.sort_by)
     if (params?.sort_order) query.set("sort_order", params.sort_order)
     return this.request<UserListResponse>(`/users?${query.toString()}`)
+  }
+
+  async createUser(data: CreateUserRequest): Promise<UserResponse> {
+    return this.request<UserResponse>("/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
   }
 
   async getUserById(userId: number): Promise<UserResponse> {

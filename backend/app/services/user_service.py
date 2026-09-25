@@ -105,3 +105,52 @@ def delete_user(db: Session, user_id: int, current_user_id: int):
     db.commit()
 
     create_audit_log(db, current_user_id, "user.delete", "user", str(user_id))
+
+
+def create_user(db: Session, data, current_user_id: int) -> UserResponse:
+    from fastapi import HTTPException, status
+    from app.utils.security import get_password_hash
+
+    existing = db.query(User).filter(User.email == data.email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User with this email already exists",
+        )
+
+    user = User(
+        email=data.email,
+        password_hash=get_password_hash(data.password),
+        full_name=data.full_name,
+        phone=data.phone,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    # Assign roles (from role_ids or role names)
+    assigned_role_ids = set(data.role_ids or [])
+    if data.roles:
+        for r_name in data.roles:
+            role_obj = db.query(Role).filter(Role.name == r_name).first()
+            if role_obj:
+                assigned_role_ids.add(role_obj.id)
+
+    # If no roles specified, default to Analyst
+    if not assigned_role_ids:
+        default_role = db.query(Role).filter(Role.name == "Analyst").first() or db.query(Role).filter(Role.name == "Viewer").first()
+        if default_role:
+            assigned_role_ids.add(default_role.id)
+
+    for rid in assigned_role_ids:
+        db.add(UserRole(user_id=user.id, role_id=rid, assigned_by=current_user_id))
+
+    db.commit()
+
+    create_audit_log(
+        db, current_user_id, "user.create", "user", str(user.id),
+        {"email": user.email, "roles": list(assigned_role_ids)},
+    )
+
+    return get_user_response(db, user)

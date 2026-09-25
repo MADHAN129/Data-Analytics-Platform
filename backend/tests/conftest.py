@@ -89,11 +89,12 @@ def _make_user(db, email, roles=None):
 @pytest.fixture()
 def permissions(db_session):
     names = ["database.read", "database.create", "database.update", "database.delete",
-             "database.test", "database.sync", "database.schema",
-             "query.read", "query.execute", "dashboard.read", "dashboard.create",
+             "database.test", "database.sync", "database.schema", "database.connect",
+             "query.read", "query.execute", "query.delete", "dashboard.read", "dashboard.create",
              "dashboard.update", "dashboard.delete", "access.manage", "audit.read",
-             "user.read", "user.update", "user.delete", "role.read", "role.create",
-             "role.update", "role.delete"]
+             "user.read", "user.create", "user.update", "user.delete", "role.read", "role.create",
+             "role.update", "role.delete", "import.csv", "import.history", "export.pdf",
+             "export.excel", "export.png", "export.csv"]
     return {n: _make_permission(db_session, n) for n in names}
 
 
@@ -118,7 +119,7 @@ def viewer(db_session, permissions):
 
 @pytest.fixture()
 def admin(db_session, permissions):
-    role = _make_role(db_session, "Admin", list(permissions.values()))
+    role = _make_role(db_session, "SuperAdmin", list(permissions.values()))
     return _make_user(db_session, "admin@test.com", [role])
 
 

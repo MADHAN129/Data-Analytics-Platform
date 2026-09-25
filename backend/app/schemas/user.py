@@ -38,6 +38,15 @@ class UpdateProfileRequest(BaseModel):
     avatar_url: Optional[str] = None
 
 
+class CreateUserRequest(BaseModel):
+    email: EmailStr
+    password: str
+    full_name: str
+    phone: Optional[str] = None
+    roles: Optional[List[str]] = None
+    role_ids: Optional[List[int]] = None
+
+
 class UserListResponse(BaseModel):
     users: List[UserResponse]
     total: int
