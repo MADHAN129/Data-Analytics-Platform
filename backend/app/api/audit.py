@@ -18,6 +18,7 @@ def list_audit_logs(
     action: str = Query(None),
     resource_type: str = Query(None),
     status: str = Query(None),
+    search: str = Query(None),
     start_date: str = Query(None),
     end_date: str = Query(None),
     sort_by: str = Query("created_at"),
@@ -29,6 +30,8 @@ def list_audit_logs(
         db, page, per_page, user_id, action,
         resource_type, status, start_date, end_date,
         sort_by, sort_order,
+        company_id=current_user.company_id,
+        search=search,
     )
     return AuditLogListResponse(logs=logs, total=total, page=page, per_page=per_page)
 
@@ -40,4 +43,9 @@ def get_audit_stats(
     current_user: User = Depends(require_permission("audit.read")),
     db: Session = Depends(get_db),
 ):
-    return audit_service.get_audit_stats(db)
+    return audit_service.get_audit_stats(
+        db,
+        company_id=current_user.company_id,
+        start_date=start_date,
+        end_date=end_date,
+    )

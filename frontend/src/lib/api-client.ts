@@ -371,8 +371,11 @@ class ApiClient {
     action?: string
     resource_type?: string
     status?: "success" | "failure"
+    search?: string
     start_date?: string
     end_date?: string
+    sort_by?: string
+    sort_order?: string
   }): Promise<AuditLogListResponse> {
     const query = new URLSearchParams()
     if (params?.page) query.set("page", String(params.page))
@@ -381,8 +384,11 @@ class ApiClient {
     if (params?.action) query.set("action", params.action)
     if (params?.resource_type) query.set("resource_type", params.resource_type)
     if (params?.status) query.set("status", params.status)
+    if (params?.search) query.set("search", params.search)
     if (params?.start_date) query.set("start_date", params.start_date)
     if (params?.end_date) query.set("end_date", params.end_date)
+    if (params?.sort_by) query.set("sort_by", params.sort_by)
+    if (params?.sort_order) query.set("sort_order", params.sort_order)
     return this.request<AuditLogListResponse>(`/audit/logs?${query.toString()}`)
   }
 
