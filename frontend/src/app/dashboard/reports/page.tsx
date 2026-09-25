@@ -949,7 +949,7 @@ function ReportPreviewModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] h-[90vh] flex flex-col p-0 overflow-hidden shadow-2xl">
         {/* MODAL HEADER (Fixed) */}
-        <div className="shrink-0 border-b p-6 pb-4 bg-muted/20">
+        <div className="shrink-0 border-b p-6 pb-4 pr-16 bg-muted/20">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -966,7 +966,7 @@ function ReportPreviewModal({
               )}
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 pr-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -980,7 +980,7 @@ function ReportPreviewModal({
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="sm" className="h-8 text-xs gap-1.5 bg-primary">
+                  <Button size="sm" className="h-8 text-xs gap-1.5 bg-primary shadow-xs">
                     <Download className="h-3.5 w-3.5" /> Download Report <ChevronDown className="h-3 w-3" />
                   </Button>
                 </DropdownMenuTrigger>
