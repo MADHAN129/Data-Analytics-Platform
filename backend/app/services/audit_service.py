@@ -17,9 +17,16 @@ def create_audit_log(
     status: str = "success",
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
+    company_id: Optional[int] = None,
 ) -> AuditLog:
+    if company_id is None and user_id:
+        u = db.query(User).filter(User.id == user_id).first()
+        if u:
+            company_id = u.company_id
+
     log = AuditLog(
         user_id=user_id,
+        company_id=company_id,
         action=action,
         resource_type=resource_type,
         resource_id=str(resource_id) if resource_id else None,
@@ -45,8 +52,17 @@ def get_audit_logs(
     end_date: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    company_id: Optional[int] = None,
+    search: Optional[str] = None,
 ):
     query = db.query(AuditLog)
+
+    if company_id is not None:
+        company_user_ids = db.query(User.id).filter(User.company_id == company_id)
+        query = query.filter(
+            (AuditLog.company_id == company_id) |
+            ((AuditLog.company_id.is_(None)) & (AuditLog.user_id.in_(company_user_ids)))
+        )
 
     if user_id:
         query = query.filter(AuditLog.user_id == user_id)
@@ -60,6 +76,14 @@ def get_audit_logs(
         query = query.filter(AuditLog.created_at >= start_date)
     if end_date:
         query = query.filter(AuditLog.created_at <= end_date)
+    if search:
+        search_term = f"%{search.strip()}%"
+        matching_user_ids = db.query(User.id).filter(User.email.ilike(search_term))
+        query = query.filter(
+            AuditLog.user_id.in_(matching_user_ids)
+            | AuditLog.action.ilike(search_term)
+            | AuditLog.resource_type.ilike(search_term)
+        )
 
     total = query.count()
 
@@ -91,14 +115,32 @@ def get_audit_logs(
     return result, total
 
 
-def get_audit_stats(db: Session):
-    total_events = db.query(AuditLog).count()
-    successful_events = db.query(AuditLog).filter(AuditLog.status == "success").count()
-    failed_events = db.query(AuditLog).filter(AuditLog.status == "failure").count()
-    unique_users = db.query(AuditLog.user_id).distinct().count()
+def get_audit_stats(
+    db: Session,
+    company_id: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    query = db.query(AuditLog)
+    if company_id is not None:
+        company_user_ids = db.query(User.id).filter(User.company_id == company_id)
+        query = query.filter(
+            (AuditLog.company_id == company_id) |
+            ((AuditLog.company_id.is_(None)) & (AuditLog.user_id.in_(company_user_ids)))
+        )
+
+    if start_date:
+        query = query.filter(AuditLog.created_at >= start_date)
+    if end_date:
+        query = query.filter(AuditLog.created_at <= end_date)
+
+    total_events = query.count()
+    successful_events = query.filter(AuditLog.status == "success").count()
+    failed_events = query.filter(AuditLog.status == "failure").count()
+    unique_users = query.with_entities(AuditLog.user_id).distinct().count()
 
     top_actions = (
-        db.query(AuditLog.action, func.count(AuditLog.id).label("count"))
+        query.with_entities(AuditLog.action, func.count(AuditLog.id).label("count"))
         .group_by(AuditLog.action)
         .order_by(desc("count"))
         .limit(10)
@@ -106,7 +148,7 @@ def get_audit_stats(db: Session):
     )
 
     top_users_data = (
-        db.query(AuditLog.user_id, func.count(AuditLog.id).label("action_count"))
+        query.with_entities(AuditLog.user_id, func.count(AuditLog.id).label("action_count"))
         .group_by(AuditLog.user_id)
         .order_by(desc("action_count"))
         .limit(10)

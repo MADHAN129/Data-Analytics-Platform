@@ -16,6 +16,7 @@ export default function AdminAuditPage() {
   const [logs, setLogs] = useState<AuditLogResponse[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
+  const [search, setSearch] = useState<string>("")
   const [action, setAction] = useState<string>("")
   const [status, setStatus] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
@@ -29,8 +30,9 @@ export default function AdminAuditPage() {
       const data = await api.listAuditLogs({
         page,
         per_page: perPage,
-        action: action || undefined,
-        status: (status as "success" | "failure") || undefined,
+        search: search.trim() || undefined,
+        action: action.trim() ? action : undefined,
+        status: (status.trim() ? status : undefined) as "success" | "failure" | undefined,
         sort_by: "created_at",
         sort_order: "desc",
       })
@@ -42,7 +44,7 @@ export default function AdminAuditPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [page, perPage, action, status, toast])
+  }, [page, perPage, search, action, status, toast])
 
   useEffect(() => { fetchLogs() }, [fetchLogs])
 
@@ -118,7 +120,12 @@ export default function AdminAuditPage() {
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Search by user email..." className="pl-9" />
+              <Input
+                placeholder="Search by user email..."
+                className="pl-9"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
             <Select value={action} onValueChange={setAction}>
               <SelectTrigger className="w-[180px]">
