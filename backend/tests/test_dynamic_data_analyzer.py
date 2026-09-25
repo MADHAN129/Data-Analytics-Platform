@@ -263,6 +263,47 @@ class TestDynamicDataAnalyzer(unittest.TestCase):
         actual_depts = {str(row[0]) for row in resp.results.rows}
         self.assertEqual(actual_depts, expected_depts)
 
+    # 14. CTE Column Exposure Scoping Preflight Validation
+    def test_14_cte_column_exposure_scoping(self):
+        """14. Preflight validator rejects unexposed CTE column references"""
+        from app.services.query_service import _validate_sql_before_execution, _get_schema_context
+        _, table_cols, _ = _get_schema_context(self.db_conn)
+        
+        # CTE employee_totals ONLY selects department_id and total_salary (does NOT expose employee_id or salary)
+        bad_sql = """
+            WITH employee_totals AS (
+                SELECT department_id, SUM(salary) AS total_salary
+                FROM employees
+                GROUP BY department_id
+            )
+            SELECT d.department_name, e.employee_id, e.total_salary
+            FROM departments d
+            LEFT JOIN employee_totals e ON d.department_id = e.department_id;
+        """
+        ok, _, err = _validate_sql_before_execution(bad_sql, table_cols, "Oracle SQL")
+        self.assertFalse(ok)
+        self.assertIn("CTE Column Reference Error", err)
+        self.assertIn("employee_id", err)
+
+    # 15. Semantic Metric Distinction Validation
+    def test_15_semantic_metric_distinction(self):
+        """15. Validator rejects substitution of DEPARTMENTS.BUDGET when employee salary cost was asked"""
+        from app.services.query_service import _validate_sql_before_execution, _get_schema_context
+        _, table_cols, _ = _get_schema_context(self.db_conn)
+        
+        # User asked for employee salary cost, but SQL incorrectly substituted DEPARTMENTS.BUDGET
+        bad_sql = """
+            SELECT d.department_name, d.budget, p.spent
+            FROM departments d
+            JOIN projects p ON d.department_id = p.department_id
+            WHERE p.spent > d.budget;
+        """
+        question = "Which departments have higher project spending than employee salary cost?"
+        ok, _, err = _validate_sql_before_execution(bad_sql, table_cols, "Oracle SQL", natural_language=question)
+        self.assertFalse(ok)
+        self.assertIn("Semantic Error", err)
+        self.assertIn("employee salary cost", err)
+
 
 if __name__ == "__main__":
     unittest.main()

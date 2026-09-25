@@ -388,6 +388,7 @@ def _validate_sql_before_execution(
     table_cols: dict[str, set[str]], 
     dialect: str,
     matched_entities: list[dict] = None,
+    natural_language: str = "",
 ) -> tuple[bool, str, Optional[str]]:
     if not sql or not sql.strip():
         return False, "", "SQL query is empty."
@@ -423,18 +424,38 @@ def _validate_sql_before_execution(
         cte_names = set(re.findall(r"(?:\bWITH\s+|,)\s*([a-zA-Z0-9_]+)\s+AS\s*\(", sanitized, flags=re.IGNORECASE))
         cte_names_upper = {c.upper() for c in cte_names}
 
+        # CTE Exposed Column Scoping: Track output columns explicitly selected inside each CTE
+        cte_exposed_cols = {}
+        cte_blocks = re.findall(r"([a-zA-Z0-9_]+)\s+AS\s*\(\s*SELECT\b([\s\S]*?)\bFROM\b", sanitized, flags=re.IGNORECASE)
+        for cte_name, select_clause in cte_blocks:
+            c_name_up = cte_name.upper()
+            exposed = set()
+            as_aliases = re.findall(r"\bAS\s+([a-zA-Z0-9_]+)\b", select_clause, flags=re.IGNORECASE)
+            for a in as_aliases:
+                exposed.add(a.upper())
+            raw_cols = re.findall(r"\b(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)\b", select_clause)
+            sql_kw = {"SELECT", "FROM", "WHERE", "JOIN", "ON", "GROUP", "BY", "ORDER", "AS", "SUM", "COUNT", "AVG", "MIN", "MAX", "ROUND", "NVL", "COALESCE", "CASE", "WHEN", "THEN", "ELSE", "END", "DISTINCT", "ALL"}
+            for rc in raw_cols:
+                rc_up = rc.upper()
+                if rc_up not in sql_kw and not rc.isdigit():
+                    exposed.add(rc_up)
+            cte_exposed_cols[c_name_up] = exposed
+
         # 1. Check table existence
         table_matches = re.findall(r"\b(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?", sanitized, flags=re.IGNORECASE)
         alias_to_table = {}
+        alias_to_cte = {}
         tables_in_query = []
 
         active_schema_tables = sorted([t for t in table_cols.keys() if t in analytics_tables or t in cte_names_upper or "RECORDS" in t or "FINANCIAL" in t])
 
         for t, alias in table_matches:
             t_upper = t.upper()
-            if t_upper in cte_names_upper:
+            if t_upper in cte_names_upper or t_upper in cte_exposed_cols:
                 if alias and alias.upper() not in ("ON", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "CROSS", "SELECT", "SET"):
                     cte_names_upper.add(alias.upper())
+                    alias_to_cte[alias.upper()] = t_upper
+                alias_to_cte[t_upper] = t_upper
                 continue
             if t_upper in ("DUAL", "SELECT", "LATERAL"):
                 continue
@@ -500,6 +521,15 @@ def _validate_sql_before_execution(
                         False,
                         sanitized,
                         f"Column '{col}' does not exist in table '{target_table}'{hint}.{concept_hint} Available columns in '{target_table}' are: {', '.join(sorted(table_cols[target_table]))}. Do NOT invent column names."
+                    )
+            elif alias_up in alias_to_cte:
+                target_cte = alias_to_cte[alias_up]
+                exposed = cte_exposed_cols.get(target_cte, set())
+                if exposed and col_up not in exposed:
+                    return (
+                        False,
+                        sanitized,
+                        f"CTE Column Reference Error: Column '{col}' is not exposed by CTE '{target_cte}'. CTE '{target_cte}' only exposes the following selected columns: {', '.join(sorted(exposed))}. Every column referenced from a CTE in the outer query must be explicitly selected inside that CTE's SELECT clause."
                     )
 
         # 4. Check unqualified column references in SELECT/WHERE/GROUP BY/ORDER BY
@@ -573,6 +603,20 @@ def _validate_sql_before_execution(
                                     f"Oracle SQL error: Column alias '{a}' cannot be referenced in WHERE or HAVING clauses. Repeat the expression or use a subquery/CTE."
                                 )
 
+        # 7. Semantic Validation: Distinguish between employee salary cost vs department budget vs project budget
+        if natural_language:
+            nl_lower = natural_language.lower()
+            is_asking_salary_cost = any(w in nl_lower for w in ("salary", "salaries", "pay", "compensation"))
+            is_asking_dept_budget = any(w in nl_lower for w in ("budget", "allocated")) and any(w in nl_lower for w in ("department", "dept"))
+
+            if is_asking_salary_cost and not is_asking_dept_budget:
+                if re.search(r"\b(?:DEPARTMENTS|D)\.BUDGET\b", sanitized, flags=re.IGNORECASE):
+                    return (
+                        False,
+                        sanitized,
+                        "Semantic Error: The user question specifically asks for 'employee salary cost', but your query references department budget ('DEPARTMENTS.BUDGET'). Employee salary cost comes from EMPLOYEES.SALARY (or pre-aggregated total_salary in EMPLOYEES CTE), NOT department budget! Do not confuse department budget with employee salary cost."
+                    )
+
     return True, sanitized, None
 
 
@@ -645,7 +689,7 @@ def execute_natural_language_query(
 
     # 2. Pre-execution SQL Validation & auto-repair loop
     for _ in range(3):
-        is_valid, sanitized_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+        is_valid, sanitized_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
         if is_valid:
             sql = sanitized_sql
             break
@@ -655,12 +699,12 @@ def execute_natural_language_query(
         sql = fixed_sql
         explanation = fix_explanation
         tokens_used = (tokens_used or 0) + (fix_tokens or 0)
-        is_valid_after, sanitized_after, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+        is_valid_after, sanitized_after, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
         if is_valid_after:
             sql = sanitized_after
             break
     else:
-        is_valid, sanitized_sql, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+        is_valid, sanitized_sql, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
         sql = sanitized_sql
 
     query_record = Query(
@@ -680,7 +724,7 @@ def execute_natural_language_query(
     max_retries = 3
     for attempt in range(max_retries + 1):
         try:
-            is_valid, exec_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+            is_valid, exec_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
             if not is_valid:
                 if attempt < max_retries:
                     sql, explanation, retry_tokens = llm_service.fix_sql(
