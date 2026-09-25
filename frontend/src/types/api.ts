@@ -440,14 +440,24 @@ export interface ConversationListResponse {
   total: number
 }
 
+export interface ClarificationOption {
+  id: string
+  label: string
+  prompt: string
+  description?: string
+  icon?: string
+}
+
 export interface ConversationMessageResponse {
   id: number
   conversation_id: number
   role: "user" | "assistant" | "system"
   content: string
-  tool_calls?: unknown[]
+  tool_calls?: Array<Record<string, unknown>>
   generated_sql?: string
   results?: QueryResult
+  clarification_options?: ClarificationOption[]
+  quick_options?: string[]
   error_message?: string
   tokens_used?: number
   model_used?: string
