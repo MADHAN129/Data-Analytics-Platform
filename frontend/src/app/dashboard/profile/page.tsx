@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { api } from "@/lib/api-client"
 import type { UserResponse } from "@/types/api"
 import { useToast } from "@/components/ui/use-toast"
+import { useAuthStore } from "@/store/auth-store"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,9 +29,11 @@ import {
 
 export default function ProfilePage() {
   const { toast } = useToast()
+  const { setUser: setAuthUser } = useAuthStore()
   const [user, setUser] = useState<UserResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingProfile, setSavingProfile] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
 
   // Profile Form States
@@ -55,6 +58,7 @@ export default function ProfilePage() {
       setLoading(true)
       const userData = await api.getCurrentUser()
       setUser(userData)
+      setAuthUser(userData)
       setFullName(userData.full_name || "")
       setPhone(userData.phone || "")
       setBio(userData.bio || "")
@@ -74,10 +78,10 @@ export default function ProfilePage() {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size > 10 * 1024 * 1024) {
       toast({
         title: "Image too large",
-        description: "Please select an image smaller than 5MB.",
+        description: "Please select an image smaller than 10MB.",
         variant: "destructive",
       })
       return
@@ -85,20 +89,78 @@ export default function ProfilePage() {
 
     const reader = new FileReader()
     reader.onload = () => {
-      const result = reader.result as string
-      setAvatarUrl(result)
-      toast({
-        title: "Profile photo attached",
-        description: "Click 'Save Changes' to update your profile.",
-      })
+      const img = new Image()
+      img.onload = async () => {
+        try {
+          setUploadingPhoto(true)
+          const canvas = document.createElement("canvas")
+          const maxDim = 400
+          let width = img.width
+          let height = img.height
+
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width)
+              width = maxDim
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height)
+              height = maxDim
+            }
+          }
+
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext("2d")
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height)
+            const optimizedDataUrl = canvas.toDataURL("image/jpeg", 0.88)
+            setAvatarUrl(optimizedDataUrl)
+
+            // Auto-persist directly to backend & sync global navbar avatar
+            const updated = await api.updateProfile({ avatar_url: optimizedDataUrl })
+            setUser(updated)
+            setAuthUser(updated)
+            toast({
+              title: "Profile photo updated",
+              description: "Your new avatar has been saved and updated across the dashboard.",
+            })
+          }
+        } catch {
+          toast({
+            title: "Error saving photo",
+            description: "Could not save profile picture. Please try again.",
+            variant: "destructive",
+          })
+        } finally {
+          setUploadingPhoto(false)
+        }
+      }
+      img.src = reader.result as string
     }
     reader.readAsDataURL(file)
   }
 
-  const handleRemovePhoto = () => {
+  const handleRemovePhoto = async () => {
     setAvatarUrl("")
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
+    }
+    try {
+      const updated = await api.updateProfile({ avatar_url: "" })
+      setUser(updated)
+      setAuthUser(updated)
+      toast({
+        title: "Profile photo removed",
+        description: "Your avatar has been reset to default initials.",
+      })
+    } catch {
+      toast({
+        title: "Error removing photo",
+        description: "Could not remove profile picture. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -122,6 +184,7 @@ export default function ProfilePage() {
         avatar_url: avatarUrl || undefined,
       })
       setUser(updated)
+      setAuthUser(updated)
       toast({
         title: "Profile updated",
         description: "Your profile details have been saved successfully.",
@@ -234,7 +297,7 @@ export default function ProfilePage() {
               <div className="relative -mt-12 mb-4 inline-block">
                 <Avatar className="h-24 w-24 border-4 border-background shadow-md">
                   {avatarUrl ? (
-                    <AvatarImage src={avatarUrl} alt={fullName} />
+                    <AvatarImage src={avatarUrl} alt={fullName} className="object-cover" />
                   ) : (
                     <AvatarFallback className="bg-primary text-xl font-bold text-primary-foreground">
                       {fullName ? getInitials(fullName) : <User className="h-10 w-10" />}
@@ -243,15 +306,20 @@ export default function ProfilePage() {
                 </Avatar>
                 <label
                   htmlFor="avatar-upload"
-                  className="absolute bottom-0 right-0 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-110"
+                  className="absolute bottom-0 right-0 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-110 disabled:pointer-events-none disabled:opacity-60"
                   title="Upload profile photo"
                 >
-                  <Camera className="h-3.5 w-3.5" />
+                  {uploadingPhoto ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Camera className="h-3.5 w-3.5" />
+                  )}
                   <input
                     id="avatar-upload"
                     ref={fileInputRef}
                     type="file"
                     accept="image/*"
+                    disabled={uploadingPhoto}
                     className="hidden"
                     onChange={handleImageUpload}
                   />

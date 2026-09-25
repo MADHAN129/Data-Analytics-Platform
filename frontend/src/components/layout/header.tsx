@@ -2,7 +2,7 @@
 
 import { useAuthStore } from "@/store/auth-store"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,9 +33,12 @@ export function Header() {
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="relative h-9 w-9 rounded-full">
-            <Avatar className="h-9 w-9">
-              <AvatarFallback className="bg-primary text-primary-foreground">
+          <Button variant="ghost" className="relative h-9 w-9 rounded-full ring-offset-background transition-opacity hover:opacity-80">
+            <Avatar className="h-9 w-9 border border-border">
+              {user?.avatar_url ? (
+                <AvatarImage src={user.avatar_url} alt={user?.full_name || "User"} className="object-cover" />
+              ) : null}
+              <AvatarFallback className="bg-primary text-xs font-semibold text-primary-foreground">
                 {user ? getInitials(user.full_name) : "?"}
               </AvatarFallback>
             </Avatar>

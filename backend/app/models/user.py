@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, Text
 from app.database import Base
 
 
@@ -10,8 +10,8 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     phone = Column(String(50), nullable=True)
-    avatar_url = Column(String(2048), nullable=True)
-    bio = Column(String(1000), nullable=True)
+    avatar_url = Column(Text, nullable=True)
+    bio = Column(Text, nullable=True)
     auth_provider = Column(String(50), default="local")
     auth_provider_id = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)

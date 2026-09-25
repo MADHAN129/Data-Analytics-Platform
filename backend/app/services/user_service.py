@@ -82,7 +82,7 @@ def update_profile(db: Session, user_id: int, data: UpdateProfileRequest, curren
     if data.phone is not None:
         user.phone = data.phone
     if data.avatar_url is not None:
-        user.avatar_url = data.avatar_url
+        user.avatar_url = data.avatar_url if data.avatar_url else None
     if data.bio is not None:
         user.bio = data.bio
 
