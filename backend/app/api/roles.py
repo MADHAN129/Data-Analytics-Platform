@@ -55,8 +55,8 @@ def update_role(
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    if role.is_system:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System roles cannot be modified")
+    if role.is_system and data.name is not None and data.name != role.name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System role names cannot be modified")
     return role_service.update_role(db, role_id, data, current_user.id, company_id=current_user.company_id)
 
 
