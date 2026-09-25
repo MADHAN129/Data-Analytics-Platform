@@ -24,7 +24,6 @@ import {
   Zap,
   Database,
   Search,
-  RefreshCw,
   Clock,
   User,
   CheckCircle2,
@@ -152,28 +151,14 @@ export default function ActivityPage() {
   return (
     <div className="space-y-6 pb-16">
       {/* Page Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <Activity className="h-8 w-8 text-blue-600" />
-            Company Activity & Telemetry
-          </h1>
-          <p className="text-muted-foreground">
-            Monitor real-time AI analyzer token consumption, connected database lifecycles, and question query history for your organization.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => fetchActivity(true)}
-            disabled={loading || isRefreshing}
-            className="flex items-center gap-2 shadow-sm hover:bg-muted"
-          >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
-            {isRefreshing ? "Refreshing..." : "Refresh"}
-          </Button>
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <Activity className="h-8 w-8 text-blue-600" />
+          Company Activity & Telemetry
+        </h1>
+        <p className="text-muted-foreground">
+          Monitor real-time AI analyzer token consumption, connected database lifecycles, and question query history for your organization.
+        </p>
       </div>
 
       {/* Overview Metric Cards */}
