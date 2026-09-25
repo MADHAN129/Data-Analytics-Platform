@@ -59,6 +59,7 @@ import type {
   WidgetResponse,
   LayoutUpdateRequest,
   AutoGenerateRequest,
+  ActivityOverviewResponse,
 } from "@/types/api"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090/api/v1"
@@ -705,6 +706,11 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     })
+  }
+
+  // ACTIVITY & PLATFORM ANALYTICS
+  async getActivityOverview(days = 30): Promise<ActivityOverviewResponse> {
+    return this.request<ActivityOverviewResponse>(`/activity/overview?days=${days}`)
   }
 }
 

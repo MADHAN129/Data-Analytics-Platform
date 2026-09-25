@@ -97,7 +97,7 @@ def get_connector(db_conn: DatabaseConnection):
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
-            password=db_conn.password,
+            password=password,
             schema=db_conn.schema_name or db_conn.username,
             ssl=db_conn.ssl,
         )

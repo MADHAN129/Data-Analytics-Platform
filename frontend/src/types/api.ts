@@ -605,3 +605,61 @@ export interface AutoGenerateRequest {
   database_id: number
   query_text?: string
 }
+
+// Activity & Analytics Types
+export interface ActivityQueryItem {
+  id: number
+  question: string
+  generated_sql?: string
+  status: string
+  tokens_used: number
+  execution_time_ms?: number
+  row_count: number
+  created_at: string
+  user_id: number
+  user_name?: string
+  user_email?: string
+  database_id?: number
+  database_name?: string
+  database_type?: string
+  database_host?: string
+  database_port?: number
+}
+
+export interface ActivityDatabaseItem {
+  id: number
+  name: string
+  type: string
+  host: string
+  port: number
+  database_name: string
+  username: string
+  is_active: boolean
+  health_status?: boolean
+  health_latency_ms?: number
+  created_at: string
+  updated_at?: string
+  dismissed_at?: string
+  created_by_user_id: number
+  created_by_name?: string
+  created_by_email?: string
+}
+
+export interface TokenTimelineItem {
+  date: string
+  tokens: number
+  queries_count: number
+}
+
+export interface ActivityOverviewResponse {
+  total_tokens: number
+  total_queries: number
+  total_databases: number
+  active_databases: number
+  dismissed_databases: number
+  total_users: number
+  recent_queries: ActivityQueryItem[]
+  database_lifecycle: ActivityDatabaseItem[]
+  token_timeline: TokenTimelineItem[]
+}
+
