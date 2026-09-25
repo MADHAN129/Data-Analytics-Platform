@@ -47,9 +47,17 @@ class LLMService:
         return self._get_client(config)
 
     def _get_local_provider_config(self) -> LLMProviderConfig:
+        raw_url = getattr(settings, "VLLM_API_URL", "http://localhost:11434/v1") or "http://localhost:11434/v1"
+        if "localhost:11434" in raw_url or "127.0.0.1:11434" in raw_url:
+            import socket
+            try:
+                socket.gethostbyname("ollama")
+                raw_url = raw_url.replace("localhost:11434", "ollama:11434").replace("127.0.0.1:11434", "ollama:11434")
+            except Exception:
+                pass
         return LLMProviderConfig(
             provider="local",
-            base_url=getattr(settings, "VLLM_API_URL", "http://localhost:11434/v1").rstrip("/"),
+            base_url=raw_url.rstrip("/"),
             api_key=getattr(settings, "VLLM_API_KEY", "") or "",
             model=getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
         )
@@ -109,12 +117,13 @@ class LLMService:
         # If user put a GroqCloud key (gsk_...) into GROK_API_KEY or GROQ_API_KEY
         if groq_key or (grok_key and grok_key.startswith("gsk_")):
             effective_groq_key = groq_key or grok_key
+            groq_model = getattr(settings, "GROQ_MODEL", "") or "openai/gpt-oss-120b"
             add_config(
                 LLMProviderConfig(
                     provider="groq",
                     base_url=getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/"),
                     api_key=effective_groq_key,
-                    model=getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    model=groq_model,
                 )
             )
         elif grok_key:

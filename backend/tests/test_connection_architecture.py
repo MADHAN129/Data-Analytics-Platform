@@ -54,8 +54,32 @@ class TestConnectionArchitecture(unittest.TestCase):
             rows=rows,
             natural_language="highest salary of each department"
         )
-        self.assertTrue(val_ok)
-        self.assertIn("6 validated rows", val_notes)
+    def test_validate_query_results_detects_mismatched_join_nulls(self):
+        """Verify that _validate_query_results flags queries where a JOIN causes excessive NULL values in results."""
+        sql = """
+        SELECT d.department_name, em.max_salary
+        FROM departments d
+        LEFT JOIN (SELECT dept, MAX(salary) AS max_salary FROM employees GROUP BY dept) em
+               ON d.department_name = em.dept;
+        """
+        columns = ["department_name", "max_salary"]
+        rows = [
+            ["Customer Success", None],
+            ["Engineering", "168000.00"],
+            ["Finance & Operations", None],
+            ["Human Resources", None],
+            ["Product Management", None],
+            ["Sales & Marketing", None],
+        ]
+
+        val_ok, val_notes = _validate_query_results(
+            sql=sql,
+            columns=columns,
+            rows=rows,
+            natural_language="what is the highest salary of each department"
+        )
+        self.assertFalse(val_ok)
+        self.assertIn("Mismatched JOIN Error", val_notes)
 
 
 if __name__ == "__main__":

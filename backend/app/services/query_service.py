@@ -779,7 +779,23 @@ def _validate_query_results(
                 f"Please query the primary table directly (e.g. using GROUP BY or window functions) without joining secondary tables."
             )
 
-    # 2. Check if all aggregate values in row 0 are None (meaning 0 rows matched the WHERE filter)
+    # 2. Check for Mismatched JOIN resulting in excessive NULL metric columns
+    if len(rows) > 1 and "JOIN" in sql.upper():
+        null_counts = [0] * len(columns)
+        for r in rows:
+            for i, cell in enumerate(r):
+                if cell is None:
+                    null_counts[i] += 1
+        for i, null_cnt in enumerate(null_counts):
+            if null_cnt / len(rows) >= 0.4:
+                col_name = columns[i]
+                return (
+                    False,
+                    f"Mismatched JOIN Error: Column '{col_name}' returned NULL for {null_cnt} of {len(rows)} rows because the JOIN condition failed to match records across tables. "
+                    f"Do NOT perform cross-table joins on unverified string columns. Query the primary table that contains the metric and grouping column directly."
+                )
+
+    # 3. Check if all aggregate values in row 0 are None (meaning 0 rows matched the WHERE filter)
     if len(rows) == 1 and all(cell is None for cell in rows[0]):
         where_match = re.search(r"\bWHERE\b([\s\S]*?)(?:\bGROUP\b|\bORDER\b|\bFETCH\b|;|$)", sql, flags=re.IGNORECASE)
         hint = ""
