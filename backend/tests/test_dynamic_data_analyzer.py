@@ -231,18 +231,39 @@ class TestDynamicDataAnalyzer(unittest.TestCase):
         self.assertIn("This question cannot be answered from the connected database", resp.explanation)
         self.assertIn("Available Topics", resp.explanation)
 
-    # 12. Ambiguous Question Handling
-    def test_12_ambiguous_question(self):
-        """12. Ambiguous questions (e.g., 'Who is the best?') handled cleanly with metric suggestions"""
-        req = QueryRequest(database_id=self.db_conn.id, natural_language="Who is the best?")
+    # 13. Multi-Child Aggregation Comparison (Aggregate-Then-Join Pattern)
+    def test_13_multi_child_aggregation_comparison(self):
+        """13. Multi-child aggregation questions ('Which departments have higher project spending than employee salary cost?')"""
+        gt_rows = self._exec_ground_truth("""
+            WITH employee_totals AS (
+                SELECT department_id, SUM(salary) AS total_salary
+                FROM employees
+                GROUP BY department_id
+            ),
+            project_totals AS (
+                SELECT department_id, SUM(spent) AS total_project_spent
+                FROM projects
+                GROUP BY department_id
+            )
+            SELECT d.department_name, NVL(e.total_salary, 0) AS total_salary, NVL(p.total_project_spent, 0) AS total_project_spent
+            FROM departments d
+            LEFT JOIN employee_totals e ON d.department_id = e.department_id
+            LEFT JOIN project_totals p ON d.department_id = p.department_id
+            WHERE NVL(p.total_project_spent, 0) > NVL(e.total_salary, 0)
+        """)
+        expected_depts = {row[0] for row in gt_rows}
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Which departments have higher project spending than employee salary cost?")
         resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
 
         self.assertEqual(resp.status, "completed")
-        self.assertIsNone(resp.generated_sql)
-        self.assertEqual(len(resp.results.rows if resp.results else []), 0)
-        self.assertIn("ambiguous", resp.explanation.lower())
-        self.assertIn("Suggested Metrics", resp.explanation)
+        self.assertIsNotNone(resp.results)
+        # Ensure generated SQL uses WITH clause to pre-aggregate (preventing row multiplication)
+        self.assertIn("WITH", resp.generated_sql.upper())
+        actual_depts = {str(row[0]) for row in resp.results.rows}
+        self.assertEqual(actual_depts, expected_depts)
 
 
 if __name__ == "__main__":
     unittest.main()
+
