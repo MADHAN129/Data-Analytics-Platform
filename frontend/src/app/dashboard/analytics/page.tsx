@@ -263,7 +263,7 @@ export default function AnalyticsPage() {
                         <span>{c.name}</span>
                       </div>
                       <Badge variant="outline" className="text-[10px] uppercase font-mono">
-                        {c.type}
+                        {c.connection_type}
                       </Badge>
                     </div>
                   </SelectItem>

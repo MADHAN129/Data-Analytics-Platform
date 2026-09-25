@@ -559,7 +559,6 @@ def execute_natural_language_query(
     if not db_conn:
         raise HTTPException(status_code=404, detail="Database not found")
 
-<<<<<<< HEAD
     # Check if we should use MCP tools
     if use_mcp_tools is None:
         use_mcp_tools = getattr(settings, 'USE_MCP_TOOLS', False)
@@ -658,13 +657,10 @@ def execute_natural_language_query(
                 result.suggested_visualizations = _get_visualization_suggestions(query_record)
                 return result
                 
-        except Exception as e:
+        except Exception:
             # Fall back to traditional approach if MCP fails
             pass
     
-    # Traditional approach (original implementation)
-    schema_context = _get_schema_context(db_conn)
-=======
     schema_context, table_cols, schema_metadata = _get_schema_context(db_conn)
     dialect = llm_service._get_db_dialect(db_conn.connection_type)
 
@@ -695,8 +691,6 @@ def execute_natural_language_query(
     prompt_nl = f"Write a single executable {dialect} query strictly inside a ```sql ... ``` code block to retrieve data for:\n{data.natural_language}"
     if dynamic_guidance:
         prompt_nl += "\n\n" + dynamic_guidance
-
->>>>>>> origin/main
     sql, explanation, tokens_used = llm_service.generate_sql(
         prompt_nl, schema_context, db_conn.connection_type,
     )
