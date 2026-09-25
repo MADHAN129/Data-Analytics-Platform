@@ -22,7 +22,7 @@ def list_roles(
     current_user: User = Depends(require_permission("role.read")),
     db: Session = Depends(get_db),
 ):
-    roles, total = role_service.list_roles(db, page, per_page)
+    roles, total = role_service.list_roles(db, page, per_page, company_id=current_user.company_id)
     return RoleListResponse(roles=roles, total=total)
 
 
@@ -32,7 +32,7 @@ def create_role(
     current_user: User = Depends(require_permission("role.create")),
     db: Session = Depends(get_db),
 ):
-    return role_service.create_role(db, data, current_user.id)
+    return role_service.create_role(db, data, current_user.id, company_id=current_user.company_id)
 
 
 @router.get("/roles/{role_id}", response_model=RoleResponse)
@@ -44,7 +44,7 @@ def get_role(
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    return role_service.get_role_response(db, role)
+    return role_service.get_role_response(db, role, company_id=current_user.company_id)
 
 
 @router.put("/roles/{role_id}", response_model=RoleResponse)
@@ -59,7 +59,7 @@ def update_role(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
     if role.is_system:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System roles cannot be modified")
-    return role_service.update_role(db, role_id, data, current_user.id)
+    return role_service.update_role(db, role_id, data, current_user.id, company_id=current_user.company_id)
 
 
 @router.delete("/roles/{role_id}", response_model=MessageResponse)
