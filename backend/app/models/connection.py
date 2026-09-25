@@ -26,5 +26,6 @@ class DatabaseConnection(Base):
     schema_cache_updated_at = Column(DateTime(timezone=True), nullable=True)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(Integer, nullable=False)
+    company_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())

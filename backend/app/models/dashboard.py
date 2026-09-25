@@ -11,6 +11,7 @@ class Dashboard(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    company_id = Column(Integer, nullable=True, index=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     layout_config = Column(JSON, default=lambda: {"columns": 12})

@@ -1,0 +1,157 @@
+import pytest
+from app.models.company import Company
+from app.models.user import User, UserRole
+from app.models.role import Role
+from app.models.connection import DatabaseConnection
+from tests.conftest import auth_headers, _make_role
+
+
+class TestMultiTenancyIsolation:
+    def test_registration_creates_company_and_superadmin(self, client, permissions, db_session):
+        # Create SuperAdmin system role
+        _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+
+        # 1. Register User A
+        resp_a = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "owner_a@company-a.com",
+                "password": "Password123!",
+                "full_name": "Alice Admin",
+                "company_name": "Alpha Corp",
+            },
+        )
+        assert resp_a.status_code == 201
+        user_a_data = resp_a.json()["user"]
+        assert user_a_data["company_name"] == "Alpha Corp"
+        assert user_a_data["company_id"] is not None
+        assert any(r["name"] == "SuperAdmin" for r in user_a_data["roles"])
+
+        # 2. Register User B
+        resp_b = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "owner_b@company-b.com",
+                "password": "Password123!",
+                "full_name": "Bob Admin",
+                "company_name": "Beta LLC",
+            },
+        )
+        assert resp_b.status_code == 201
+        user_b_data = resp_b.json()["user"]
+        assert user_b_data["company_name"] == "Beta LLC"
+        assert user_b_data["company_id"] is not None
+        assert user_b_data["company_id"] != user_a_data["company_id"]
+
+    def test_database_isolation_between_companies(self, client, db_session, permissions):
+        role = _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+
+        # Create company A and company B
+        comp_a = Company(name="Company A")
+        comp_b = Company(name="Company B")
+        db_session.add_all([comp_a, comp_b])
+        db_session.commit()
+
+        # User A in Company A
+        user_a = User(email="admin_a@comp-a.com", password_hash="hash", full_name="Admin A", company_id=comp_a.id, is_active=True)
+        # User B in Company B
+        user_b = User(email="admin_b@comp-b.com", password_hash="hash", full_name="Admin B", company_id=comp_b.id, is_active=True)
+        db_session.add_all([user_a, user_b])
+        db_session.commit()
+
+        db_session.add(UserRole(user_id=user_a.id, role_id=role.id))
+        db_session.add(UserRole(user_id=user_b.id, role_id=role.id))
+        db_session.commit()
+
+        # Database connection in Company A
+        conn_a = DatabaseConnection(
+            name="Alpha DB", connection_type="postgresql", host="localhost",
+            port=5432, database_name="alpha", username="user",
+            password="pass", created_by=user_a.id, company_id=comp_a.id,
+        )
+        db_session.add(conn_a)
+        db_session.commit()
+
+        # User B lists databases -> should not see Company A's database
+        headers_b = auth_headers(user_b)
+        resp = client.get("/api/v1/connections", headers=headers_b)
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 0
+
+        # User A lists databases -> should see Company A's database
+        headers_a = auth_headers(user_a)
+        resp = client.get("/api/v1/connections", headers=headers_a)
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+        assert resp.json()["connections"][0]["name"] == "Alpha DB"
+
+    def test_admin_creates_sub_user_in_same_company(self, client, db_session, permissions):
+        # Create SuperAdmin and Analyst roles
+        _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+        _make_role(db_session, "Analyst", [
+            permissions["database.read"],
+            permissions["query.read"],
+            permissions["query.execute"],
+            permissions["dashboard.read"],
+            permissions["dashboard.create"],
+        ], is_system=True)
+
+        # Register Admin A
+        resp_a = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "corp_admin@mycorp.com",
+                "password": "Password123!",
+                "full_name": "Corp Admin",
+                "company_name": "MyCorp",
+            },
+        )
+        assert resp_a.status_code == 201
+        token_a = resp_a.json()["access_token"]
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+
+        # Admin A creates Database connection
+        db_resp = client.post(
+            "/api/v1/connections",
+            headers=headers_a,
+            json={
+                "name": "MyCorp Production",
+                "connection_type": "postgresql",
+                "host": "localhost",
+                "port": 5432,
+                "database_name": "prod",
+                "username": "admin",
+                "password": "secretpassword",
+            },
+        )
+        assert db_resp.status_code == 201
+
+        # Admin A creates User A2 (Analyst)
+        create_user_resp = client.post(
+            "/api/v1/users",
+            headers=headers_a,
+            json={
+                "email": "analyst@mycorp.com",
+                "password": "Password123!",
+                "full_name": "MyCorp Analyst",
+                "role": "Analyst",
+            },
+        )
+        assert create_user_resp.status_code == 201
+        analyst_user = create_user_resp.json()
+        assert analyst_user["company_name"] == "MyCorp"
+
+        # Login as User A2
+        login_resp = client.post(
+            "/api/v1/auth/login",
+            json={"email": "analyst@mycorp.com", "password": "Password123!"},
+        )
+        assert login_resp.status_code == 200
+        token_analyst = login_resp.json()["access_token"]
+        headers_analyst = {"Authorization": f"Bearer {token_analyst}"}
+
+        # Analyst A2 lists databases -> CAN see MyCorp's database
+        list_resp = client.get("/api/v1/connections", headers=headers_analyst)
+        assert list_resp.status_code == 200
+        assert list_resp.json()["total"] == 1
+        assert list_resp.json()["connections"][0]["name"] == "MyCorp Production"

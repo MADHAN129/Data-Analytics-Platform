@@ -22,9 +22,20 @@ from app.utils.error_messages import friendly_error
 from app.utils.security import encrypt_secret, decrypt_secret
 
 
-def _scoped_query(db: Session, db_id: int, user_id: Optional[int], include_all: bool = False):
+def _scoped_query(
+    db: Session,
+    db_id: int,
+    user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
+    include_all: bool = False,
+):
     query = db.query(DatabaseConnection).filter(DatabaseConnection.id == db_id)
-    if user_id is not None and not include_all:
+    if company_id is not None:
+        query = query.filter(
+            (DatabaseConnection.company_id == company_id) |
+            ((DatabaseConnection.company_id.is_(None)) & (DatabaseConnection.created_by == user_id))
+        )
+    elif user_id is not None and not include_all:
         query = query.filter(DatabaseConnection.created_by == user_id)
     return query
 
@@ -89,10 +100,16 @@ def list_databases(
     type_filter: Optional[str] = None,
     is_active: Optional[bool] = None,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> tuple[list[DatabaseResponse], int]:
     query = db.query(DatabaseConnection)
-    if user_id is not None and not include_all:
+    if company_id is not None:
+        query = query.filter(
+            (DatabaseConnection.company_id == company_id)
+            | ((DatabaseConnection.company_id.is_(None)) & (DatabaseConnection.created_by == user_id))
+        )
+    elif user_id is not None and not include_all:
         query = query.filter(DatabaseConnection.created_by == user_id)
     if search:
         query = query.filter(
@@ -116,12 +133,17 @@ def get_database(
     db: Session,
     db_id: int,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> Optional[DatabaseConnection]:
-    return _scoped_query(db, db_id, user_id, include_all).first()
+    return _scoped_query(db, db_id, user_id, company_id, include_all).first()
 
 
 def create_database(db: Session, data: DatabaseConnectionRequest, user_id: int) -> DatabaseResponse:
+    from app.models.user import User
+    creator = db.query(User).filter(User.id == user_id).first()
+    company_id = creator.company_id if creator else None
+
     conn = DatabaseConnection(
         name=data.name,
         description=data.description,
@@ -136,6 +158,7 @@ def create_database(db: Session, data: DatabaseConnectionRequest, user_id: int) 
         pool_size=data.pool_size,
         timeout_seconds=data.timeout_seconds,
         created_by=user_id,
+        company_id=company_id,
     )
     db.add(conn)
     db.commit()
@@ -148,9 +171,10 @@ def update_database(
     db_id: int,
     data: DatabaseConnectionUpdate,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> Optional[DatabaseResponse]:
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return None
 
@@ -168,9 +192,10 @@ def delete_database(
     db: Session,
     db_id: int,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> bool:
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return False
     db.delete(conn)
@@ -182,9 +207,10 @@ def test_connection(
     db: Session,
     db_id: int,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> Optional[DatabaseTestResult]:
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)
@@ -195,9 +221,10 @@ def check_health(
     db: Session,
     db_id: int,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> Optional[ConnectionHealthResponse]:
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return None
 
@@ -237,18 +264,16 @@ def check_health(
 def check_all_health(
     db: Session,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> BatchHealthResponse:
-    """Probe all connections in parallel with a bounded total budget.
-
-    Network probes run in worker threads (no DB access inside them); cache
-    writes happen on the calling thread afterwards, keeping the session
-    thread-confined. A batch that exceeds ``BATCH_TIMEOUT_SECONDS`` returns
-    partial results (unfinished connections are reported unhealthy) instead
-    of hanging the request on unreachable hosts.
-    """
     query = db.query(DatabaseConnection)
-    if user_id is not None and not include_all:
+    if company_id is not None:
+        query = query.filter(
+            (DatabaseConnection.company_id == company_id)
+            | ((DatabaseConnection.company_id.is_(None)) & (DatabaseConnection.created_by == user_id))
+        )
+    elif user_id is not None and not include_all:
         query = query.filter(DatabaseConnection.created_by == user_id)
     connections = query.all()
 
@@ -274,8 +299,6 @@ def check_all_health(
                 except Exception:
                     results[conn.id] = None
         except TimeoutError:
-            # Do not block on still-running probes: release the request and
-            # let the daemon worker threads finish in the background.
             pool.shutdown(wait=False, cancel_futures=True)
             for conn in connections:
                 results.setdefault(conn.id, None)
@@ -307,9 +330,10 @@ def get_schema(
     db: Session,
     db_id: int,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> Optional[SchemaResponse]:
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return None
 
@@ -336,9 +360,10 @@ def sync_schema(
     db: Session,
     db_id: int,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> Optional[SyncResult]:
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)
@@ -361,9 +386,10 @@ def get_tables(
     db: Session,
     db_id: int,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ) -> Optional[list[dict]]:
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)
@@ -380,9 +406,10 @@ def get_table_details(
     db_id: int,
     table_name: str,
     user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     include_all: bool = False,
 ):
-    conn = get_database(db, db_id, user_id, include_all)
+    conn = get_database(db, db_id, user_id, company_id, include_all)
     if not conn:
         return None
     connector = get_connector(conn)

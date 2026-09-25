@@ -23,6 +23,8 @@ class UserResponse(BaseModel):
     phone: Optional[str] = None
     avatar_url: Optional[str] = None
     bio: Optional[str] = None
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None
     auth_provider: str
     is_active: bool
     mfa_enabled: bool

@@ -39,10 +39,15 @@ def _run_with_timeout(func, seconds: int):
 
 def list_dashboards(
     db: Session, skip: int = 0, limit: int = 50,
-    user_id: int | None = None, include_all: bool = False,
+    user_id: int | None = None, company_id: int | None = None, include_all: bool = False,
 ) -> tuple[list[Dashboard], int]:
     query = db.query(Dashboard)
-    if user_id is not None and not include_all:
+    if company_id is not None:
+        query = query.filter(
+            (Dashboard.company_id == company_id)
+            | ((Dashboard.company_id.is_(None)) & (Dashboard.user_id == user_id))
+        )
+    elif user_id is not None and not include_all:
         query = query.filter(Dashboard.user_id == user_id)
     total = query.with_entities(func.count(Dashboard.id)).scalar() or 0
     dashboards = (
@@ -56,19 +61,30 @@ def list_dashboards(
 
 def get_dashboard(
     db: Session, dashboard_id: int,
-    user_id: int | None = None, include_all: bool = False,
+    user_id: int | None = None, company_id: int | None = None, include_all: bool = False,
 ) -> Dashboard | None:
     query = db.query(Dashboard).filter(Dashboard.id == dashboard_id)
-    if user_id is not None and not include_all:
+    if company_id is not None:
+        query = query.filter(
+            (Dashboard.company_id == company_id)
+            | ((Dashboard.company_id.is_(None)) & (Dashboard.user_id == user_id))
+        )
+    elif user_id is not None and not include_all:
         query = query.filter(Dashboard.user_id == user_id)
     return query.first()
 
 
 def create_dashboard(
-    db: Session, data: DashboardCreateRequest, user_id: int
+    db: Session, data: DashboardCreateRequest, user_id: int, company_id: int | None = None
 ) -> Dashboard:
+    if company_id is None:
+        from app.models.user import User
+        u = db.query(User).filter(User.id == user_id).first()
+        company_id = u.company_id if u else None
+
     dash = Dashboard(
         user_id=user_id,
+        company_id=company_id,
         title=data.title,
         description=data.description,
         is_template=data.is_template,
