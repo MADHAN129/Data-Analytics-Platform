@@ -822,7 +822,6 @@ function CreateReportDialog({
   const [selectedDbId, setSelectedDbId] = useState<string>("")
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
-  const [format, setFormat] = useState<"pdf" | "csv" | "json" | "html">("pdf")
   const [generating, setGenerating] = useState(false)
 
   // Auto-populate title when dashboard changes
@@ -841,12 +840,11 @@ function CreateReportDialog({
     if (!selectedDbId || !title.trim()) return
     setGenerating(true)
     try {
-      const report = await onGenerate(Number(selectedDbId), title.trim(), description.trim(), format)
+      const report = await onGenerate(Number(selectedDbId), title.trim(), description.trim(), "pdf")
       onCreated(report)
       setSelectedDbId("")
       setTitle("")
       setDescription("")
-      setFormat("pdf")
     } finally {
       setGenerating(false)
     }
@@ -901,23 +899,8 @@ function CreateReportDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Key takeaways, context, or report objectives..."
-              rows={2}
+              rows={3}
             />
-          </div>
-
-          {/* Primary Format */}
-          <div className="space-y-2">
-            <Label>Preferred Export Format</Label>
-            <Select value={format} onValueChange={(v) => setFormat(v as "pdf" | "csv" | "json" | "html")}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="pdf">PDF / Printable Document</SelectItem>
-                <SelectItem value="csv">CSV Spreadsheet</SelectItem>
-                <SelectItem value="json">JSON Structured Data</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </div>
 
