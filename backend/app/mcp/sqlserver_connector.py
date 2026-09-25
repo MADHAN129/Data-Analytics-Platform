@@ -152,15 +152,26 @@ class SQLServerConnector:
         """, [self.schema, table_name, self.schema, table_name])
         columns = []
         for row in cur.fetchall():
+            c_name = row[0]
+            d_type = row[1]
             default_val = str(row[3]) if row[3] is not None else None
-            columns.append(ColumnInfo(
-                name=row[0],
-                data_type=row[1],
+            c_info = ColumnInfo(
+                name=c_name,
+                data_type=d_type,
                 nullable=row[2] == "YES",
                 is_primary_key=bool(row[5]),
                 default_value=default_val,
                 max_length=row[4],
-            ))
+            )
+            if d_type.lower() in ("varchar", "nvarchar", "char", "nchar", "text", "ntext") and (not row[4] or row[4] <= 255):
+                try:
+                    cur.execute(f"SELECT DISTINCT TOP 8 [{c_name}] FROM [{self.schema}].[{table_name}] WHERE [{c_name}] IS NOT NULL")
+                    samples = [str(s[0]) for s in cur.fetchall() if s[0] is not None]
+                    if samples:
+                        c_info.sample_values = samples
+                except Exception:
+                    pass
+            columns.append(c_info)
         return columns
 
     def get_tables_list(self) -> list[dict]:

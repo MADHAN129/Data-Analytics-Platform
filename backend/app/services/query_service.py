@@ -756,10 +756,30 @@ def _validate_sql_before_execution(
     return True, sanitized, None
 
 
-def _validate_query_results(sql: str, columns: list[str], rows: list[list], table_cols: dict[str, set[str]] = None) -> tuple[bool, str]:
+def _validate_query_results(
+    sql: str,
+    columns: list[str],
+    rows: list[list],
+    table_cols: dict[str, set[str]] = None,
+    natural_language: str = "",
+) -> tuple[bool, str]:
     if not rows or not columns:
         return True, "Query executed successfully; returned 0 rows matching criteria."
-    # Check if all aggregate values in row 0 are None (meaning 0 rows matched the WHERE filter)
+
+    # 1. Multi-group breakdown dropped rows check
+    if natural_language and len(rows) <= 1:
+        is_multi_group = bool(re.search(r"\b(?:in\s+each|of\s+each|for\s+each|per\s+[a-zA-Z0-9_]+|for\s+every|by\s+[a-zA-Z0-9_]+|breakdown\s+by)\b", natural_language, flags=re.IGNORECASE))
+        has_join = bool(re.search(r"\bJOIN\b", sql, flags=re.IGNORECASE))
+        if is_multi_group and has_join:
+            return (
+                False,
+                f"Multi-Group Result Anomaly: The user asked for a breakdown across multiple groups ('{natural_language}'), "
+                f"but the query used a JOIN and returned only {len(rows)} row(s). "
+                f"The JOIN condition likely dropped rows due to unaligned or abbreviated string values across tables. "
+                f"Please query the primary table directly (e.g. using GROUP BY or window functions) without joining secondary tables."
+            )
+
+    # 2. Check if all aggregate values in row 0 are None (meaning 0 rows matched the WHERE filter)
     if len(rows) == 1 and all(cell is None for cell in rows[0]):
         where_match = re.search(r"\bWHERE\b([\s\S]*?)(?:\bGROUP\b|\bORDER\b|\bFETCH\b|;|$)", sql, flags=re.IGNORECASE)
         hint = ""
@@ -770,8 +790,10 @@ def _validate_query_results(sql: str, columns: list[str], rows: list[list], tabl
                 val = literal_match.group(1)
                 hint = f" The filter value '{val}' yielded 0 rows. Check if '{val}' belongs to a column in another table (e.g. DEPARTMENTS.DEPARTMENT_NAME) and JOIN that table using foreign keys."
         return False, f"Query returned NULL (0 rows matched the WHERE filter condition).{hint}"
+
     if len(rows) > 500 and "CROSS JOIN" in sql.upper():
         return False, "Query returned a large number of rows with CROSS JOIN; verify Cartesian product did not occur."
+
     return True, f"Query returned {len(rows)} validated rows."
 
 
@@ -998,7 +1020,7 @@ def execute_natural_language_query(
             row_count = len(rows)
 
             # Result validation & recovery
-            val_ok, val_notes = _validate_query_results(exec_sql, columns, rows, table_cols)
+            val_ok, val_notes = _validate_query_results(exec_sql, columns, rows, table_cols, data.natural_language)
             if not val_ok and attempt < max_retries:
                 sql, explanation, retry_tokens = llm_service.fix_sql(
                     prompt_nl, exec_sql, val_notes, schema_context, db_conn.connection_type,
