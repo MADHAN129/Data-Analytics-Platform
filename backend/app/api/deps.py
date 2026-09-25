@@ -89,3 +89,41 @@ def require_permission(permission: str):
         return current_user
 
     return _dep
+
+
+def is_user_superadmin(db: Session, user: User) -> bool:
+    """Return True if the user holds the SuperAdmin role or is the owner of their company."""
+    if not user:
+        return False
+    if user.company_id:
+        from app.models.company import Company
+        company = db.query(Company).filter(Company.id == user.company_id).first()
+        if company and company.owner_id == user.id:
+            return True
+    role_ids = _role_ids(db, user.id)
+    if not role_ids:
+        return False
+    return (
+        db.query(Role.id)
+        .filter(Role.id.in_(role_ids), Role.name == "SuperAdmin")
+        .first()
+        is not None
+    )
+
+
+def require_superadmin():
+    """Dependency factory: 403 unless the current user is a SuperAdmin / Company Owner."""
+
+    def _dep(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if not is_user_superadmin(db, current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="SuperAdmin privileges required",
+            )
+        return current_user
+
+    return _dep
+

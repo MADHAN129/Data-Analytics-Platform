@@ -67,11 +67,18 @@ def _make_permission(db, name):
 
 
 def _make_role(db, name, permissions=None, is_system=False):
-    role = Role(name=name, description=name, is_system=is_system)
-    db.add(role)
-    db.commit()
+    role = db.query(Role).filter(Role.name == name).first()
+    if not role:
+        role = Role(name=name, description=name, is_system=is_system)
+        db.add(role)
+        db.commit()
     for perm in permissions or []:
-        db.add(RolePermission(role_id=role.id, permission_id=perm.id))
+        existing_rp = db.query(RolePermission).filter(
+            RolePermission.role_id == role.id,
+            RolePermission.permission_id == perm.id,
+        ).first()
+        if not existing_rp:
+            db.add(RolePermission(role_id=role.id, permission_id=perm.id))
     db.commit()
     return role
 
@@ -105,22 +112,53 @@ def plain_user(db_session):
 
 @pytest.fixture()
 def analyst(db_session, permissions):
+    _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+    admin_perms = [
+        p for name, p in permissions.items()
+        if not name.startswith(("role.create", "role.delete", "role.update"))
+    ]
+    _make_role(db_session, "Admin", admin_perms, is_system=True)
     role = _make_role(db_session, "Analyst", [permissions["database.read"], permissions["query.read"],
                                               permissions["query.execute"], permissions["dashboard.read"],
-                                              permissions["dashboard.create"]])
+                                              permissions["dashboard.create"]], is_system=True)
+    _make_role(db_session, "Viewer", [permissions["database.read"], permissions["dashboard.read"]], is_system=True)
     return _make_user(db_session, "analyst@test.com", [role])
 
 
 @pytest.fixture()
 def viewer(db_session, permissions):
-    role = _make_role(db_session, "Viewer", [permissions["database.read"], permissions["dashboard.read"]])
+    role = _make_role(db_session, "Viewer", [permissions["database.read"], permissions["dashboard.read"]], is_system=True)
     return _make_user(db_session, "viewer@test.com", [role])
 
 
 @pytest.fixture()
 def admin(db_session, permissions):
-    role = _make_role(db_session, "SuperAdmin", list(permissions.values()))
+    role = _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+    admin_perms = [
+        p for name, p in permissions.items()
+        if not name.startswith(("role.create", "role.delete", "role.update"))
+    ]
+    _make_role(db_session, "Admin", admin_perms, is_system=True)
+    _make_role(db_session, "Analyst", [permissions["database.read"], permissions["query.read"],
+                                      permissions["query.execute"], permissions["dashboard.read"],
+                                      permissions["dashboard.create"]], is_system=True)
+    _make_role(db_session, "Viewer", [permissions["database.read"], permissions["dashboard.read"]], is_system=True)
     return _make_user(db_session, "admin@test.com", [role])
+
+
+@pytest.fixture()
+def company_admin(db_session, permissions):
+    _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+    admin_perms = [
+        p for name, p in permissions.items()
+        if not name.startswith(("role.create", "role.delete", "role.update"))
+    ]
+    role = _make_role(db_session, "Admin", admin_perms, is_system=True)
+    _make_role(db_session, "Analyst", [permissions["database.read"], permissions["query.read"],
+                                      permissions["query.execute"], permissions["dashboard.read"],
+                                      permissions["dashboard.create"]], is_system=True)
+    _make_role(db_session, "Viewer", [permissions["database.read"], permissions["dashboard.read"]], is_system=True)
+    return _make_user(db_session, "co_admin@test.com", [role])
 
 
 def auth_headers(user):

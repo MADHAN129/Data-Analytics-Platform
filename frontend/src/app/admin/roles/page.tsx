@@ -141,11 +141,26 @@ export default function AdminRolesPage() {
       header: "Role",
       cell: (role) => (
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-            <Shield className="h-4 w-4 text-primary" />
+          <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+            role.name === "SuperAdmin"
+              ? "bg-purple-500/10 text-purple-700 dark:text-purple-400"
+              : role.name === "Admin"
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+              : role.name === "Analyst"
+              ? "bg-blue-500/10 text-blue-700 dark:text-blue-400"
+              : "bg-primary/10 text-primary"
+          }`}>
+            <Shield className="h-4 w-4" />
           </div>
           <div>
-            <p className="font-medium">{role.name}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-medium">{role.name}</p>
+              {role.name === "SuperAdmin" && (
+                <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-purple-500/10 text-purple-700 border-purple-200">
+                  Owner
+                </Badge>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground">{role.description}</p>
           </div>
         </div>
