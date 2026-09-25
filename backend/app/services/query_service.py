@@ -629,11 +629,12 @@ def _validate_sql_before_execution(
                                     f"Oracle SQL error: Column alias '{a}' cannot be referenced in WHERE or HAVING clauses. Repeat the expression or use a subquery/CTE."
                                 )
 
-        # 7. Semantic Validation: Distinguish between employee salary cost vs department budget vs project budget
+        # 7. Semantic Validation: Distinguish between employee salary cost vs department budget vs project budget vs project spending
         if natural_language:
             nl_lower = natural_language.lower()
             is_asking_salary_cost = any(w in nl_lower for w in ("salary", "salaries", "pay", "compensation"))
             is_asking_dept_budget = any(w in nl_lower for w in ("budget", "allocated")) and any(w in nl_lower for w in ("department", "dept"))
+            is_asking_spending_vs_salary = any(w in nl_lower for w in ("spending", "spent")) and any(w in nl_lower for w in ("salary", "salaries"))
 
             if is_asking_salary_cost and not is_asking_dept_budget:
                 if re.search(r"\b(?:DEPARTMENTS|D)\.BUDGET\b", sanitized, flags=re.IGNORECASE):
@@ -641,6 +642,14 @@ def _validate_sql_before_execution(
                         False,
                         sanitized,
                         "Semantic Error: The user question specifically asks for 'employee salary cost', but your query references department budget ('DEPARTMENTS.BUDGET'). Employee salary cost comes from EMPLOYEES.SALARY (or pre-aggregated total_salary in EMPLOYEES CTE), NOT department budget! Do not confuse department budget with employee salary cost."
+                    )
+
+            if is_asking_spending_vs_salary:
+                if re.search(r"\b(?:[a-zA-Z0-9_]+\.)?(?:total_project_budget|project_budget|budget)\s*\/\s*(?:[a-zA-Z0-9_]+\.)?(?:total_salary|total_employee_salary|salary)\b", sanitized, flags=re.IGNORECASE):
+                    return (
+                        False,
+                        sanitized,
+                        "Semantic Error: The user asked for 'project spending relative to employee salary cost', but your query calculates 'PROJECT_BUDGET / SALARY'. In table PROJECTS, actual project spending is in column 'SPENT' (total_project_spent), while 'BUDGET' is allocated budget. You MUST calculate 'SPENT / SALARY * 100' (or total_project_spent / total_salary), NOT 'BUDGET / SALARY * 100'."
                     )
 
     return True, sanitized, None

@@ -302,7 +302,6 @@ class TestDynamicDataAnalyzer(unittest.TestCase):
         from app.services.query_service import _validate_sql_before_execution, _get_schema_context
         _, table_cols, _ = _get_schema_context(self.db_conn)
         
-        # User asked for employee salary cost, but SQL incorrectly substituted DEPARTMENTS.BUDGET
         bad_sql = """
             SELECT d.department_name, d.budget, p.spent
             FROM departments d
@@ -314,6 +313,52 @@ class TestDynamicDataAnalyzer(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("Semantic Error", err)
         self.assertIn("employee salary cost", err)
+
+    # 16. Semantic Ratio Distinction Validation
+    def test_16_validator_rejects_budget_over_salary_substitution(self):
+        """16. Validator rejects substitution of total_project_budget / total_salary when project spending relative to salary was asked"""
+        from app.services.query_service import _validate_sql_before_execution, _get_schema_context
+        _, table_cols, _ = _get_schema_context(self.db_conn)
+        
+        bad_sql = """
+            WITH employee_totals AS (
+                SELECT department_id, SUM(salary) AS total_salary
+                FROM employees
+                GROUP BY department_id
+            ),
+            project_totals AS (
+                SELECT department_id, SUM(budget) AS total_project_budget, SUM(spent) AS total_project_spent
+                FROM projects
+                GROUP BY department_id
+            )
+            SELECT d.department_name, (p.total_project_budget / e.total_salary) * 100 AS ratio
+            FROM departments d
+            JOIN employee_totals e ON d.department_id = e.department_id
+            JOIN project_totals p ON d.department_id = p.department_id
+            ORDER BY ratio DESC;
+        """
+        question = "Which department has the highest project spending relative to its employee salary cost?"
+        ok, _, err = _validate_sql_before_execution(bad_sql, table_cols, "Oracle SQL", natural_language=question)
+        self.assertFalse(ok)
+        self.assertIn("Semantic Error", err)
+        self.assertIn("PROJECT_BUDGET / SALARY", err)
+
+    # 17. Multi-metric Exact Ranking Test Case
+    def test_17_multi_metric_ranking_exact_test_case(self):
+        """17. Complex multi-metric question with budget utilization and spending relative to salary ranking"""
+        question = (
+            "For each department, calculate the total employee salary cost, average employee salary, "
+            "total project budget, total project spending, and project budget utilization percentage. "
+            "Then identify the department that has the highest project spending relative to its employee salary cost, "
+            "showing the department name and the percentage."
+        )
+        req = QueryRequest(database_id=self.db_conn.id, natural_language=question)
+        resp = execute_natural_language_query(self.db, req, self.user_id, include_all=True)
+        self.assertEqual(resp.status, "completed")
+        self.assertIsNotNone(resp.results)
+        self.assertGreater(len(resp.results.rows), 0)
+        top_row = resp.results.rows[0]
+        self.assertEqual(str(top_row[0]), "Engineering")
 
 
 if __name__ == "__main__":

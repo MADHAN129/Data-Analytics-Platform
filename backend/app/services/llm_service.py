@@ -320,33 +320,47 @@ class LLMService:
   * String concatenation uses CONCAT().
   * Use LIMIT n to limit rows."""
 
-        return f"""You are an expert SQL engineer. Given a database schema and a natural language user question, generate a single valid {dialect} query that accurately answers the question.
+        return f"""You are an expert SQL engineer. Given a database schema and a natural language user question, generate a single valid {dialect} query that accurately answers the user's EXACT question.
 
 DATABASE CONTEXT AND SCHEMA:
 {schema_context}
 
-CRITICAL RULES FOR SQL GENERATION:
-1. ORACLE SCHEMA IS THE SOURCE OF TRUTH:
-   - EVERY table name, column name, and foreign key MUST exist in the schema context above.
-   - NEVER invent non-existent table names (e.g., do NOT generate 'STALL_BOOKING_TBL' or hallucinated tables). Only reference relevant analytics tables.
-   - NEVER invent non-existent column names (e.g., do NOT write 'project_spending', 'total_employee_salary_cost', 'income', 'total_company_income', 'sales_rep_id' in EMPLOYEES).
-   - Map natural language concepts directly to real database columns:
-     * 'project spending' -> PROJECTS.SPENT
-     * 'project budget' -> PROJECTS.BUDGET
-     * 'employee salary cost' / 'salary' -> EMPLOYEES.SALARY
-     * 'company revenue' / 'revenue' -> COMPANY_FINANCIALS.REVENUE
-     * 'company expenses' -> COMPANY_FINANCIALS.OPERATING_EXPENSES (or EXPENSES)
-     * 'net profit' -> COMPANY_FINANCIALS.NET_PROFIT
-     * 'sales revenue' -> SALES_RECORDS.TOTAL_REVENUE
-     * 'sales representative' -> SALES_RECORDS.SALES_REP_ID joined to EMPLOYEES.EMPLOYEE_ID
+## EXACT SQL GENERATION RULES:
 
-2. PRE-AGGREGATE FIRST, THEN JOIN (ROW MULTIPLICATION / FAN-OUT PREVENTION):
-   - When a question compares or combines metrics from multiple child tables that each have a one-to-many relationship to a parent table (e.g. EMPLOYEES has many employees per department, and PROJECTS has many projects per department):
-     NEVER join multiple child tables directly in a single FROM clause before aggregation! (Directly joining EMPLOYEES and PROJECTS to DEPARTMENTS multiplies rows, e.g. 5 employees * 2 projects = 10 rows, producing wrong numbers!).
-   - Instead, PRE-AGGREGATE each child table independently in a Common Table Expression (WITH clause) grouped by department_id first, and then JOIN the aggregated CTEs to DEPARTMENTS:
+1. NEVER SUBSTITUTE RELATED METRICS:
+   - Database columns that sound related are NOT interchangeable!
+   - In table PROJECTS:
+     * `BUDGET` = allocated project budget
+     * `SPENT` = actual project spending (amount spent, money spent, actual spending, total spending)
+   - NEVER replace `SPENT` -> `BUDGET` or `BUDGET` -> `SPENT`.
+   - In table EMPLOYEES:
+     * `SALARY` = employee salary
+
+2. EXACT METRIC MAPPINGS (MANDATORY):
+   * 'total employee salary cost' -> `SUM(EMPLOYEES.SALARY)` (or `SUM(salary)` in employee CTE)
+   * 'average employee salary' -> `AVG(EMPLOYEES.SALARY)` (or `AVG(salary)` in employee CTE)
+   * 'total project budget' -> `SUM(PROJECTS.BUDGET)` (or `SUM(budget)` in project CTE)
+   * 'total project spending' -> `SUM(PROJECTS.SPENT)` (or `SUM(spent)` in project CTE)
+   * 'project budget utilization percentage' -> `SUM(PROJECTS.SPENT) / SUM(PROJECTS.BUDGET) * 100` (or `CASE WHEN NVL(p.total_project_budget, 0) > 0 THEN NVL(p.total_project_spent, 0) / p.total_project_budget * 100 ELSE 0 END`)
+   * 'project spending relative to employee salary cost' -> `SUM(PROJECTS.SPENT) / SUM(EMPLOYEES.SALARY) * 100` (or `CASE WHEN NVL(e.total_salary, 0) > 0 THEN NVL(p.total_project_spent, 0) / e.total_salary * 100 ELSE 0 END`)
+   - NEVER calculate `BUDGET / SALARY * 100` when the user asks for project spending relative to salary!
+
+3. REQUESTED METRIC COMPLETENESS:
+   - Extract every metric requested by the user. If the user asks for multiple metrics in a single question:
+     1. Department name
+     2. Total employee salary cost
+     3. Average employee salary
+     4. Total project budget
+     5. Total project spending
+     6. Project budget utilization percentage
+     7. Project spending relative to employee salary percentage
+     ALL requested metrics must be calculated and selected in the final query. Do not omit metrics.
+
+4. PRE-AGGREGATE FIRST, THEN JOIN (ROW MULTIPLICATION / FAN-OUT PREVENTION):
+   - When combining EMPLOYEES and PROJECTS by department, aggregate each table separately in independent CTEs before joining to DEPARTMENTS:
      ```sql
      WITH employee_totals AS (
-         SELECT department_id, COUNT(*) AS employee_count, SUM(salary) AS total_salary
+         SELECT department_id, SUM(salary) AS total_salary, AVG(salary) AS average_salary
          FROM employees
          GROUP BY department_id
      ),
@@ -356,35 +370,24 @@ CRITICAL RULES FOR SQL GENERATION:
          GROUP BY department_id
      )
      SELECT
-         d.department_id,
          d.department_name,
-         NVL(e.total_salary, 0) AS total_salary,
-         NVL(p.total_project_spent, 0) AS total_project_spent
+         NVL(e.total_salary, 0) AS total_employee_salary,
+         NVL(e.average_salary, 0) AS average_employee_salary,
+         NVL(p.total_project_budget, 0) AS total_project_budget,
+         NVL(p.total_project_spent, 0) AS total_project_spending,
+         CASE WHEN NVL(p.total_project_budget, 0) > 0 THEN NVL(p.total_project_spent, 0) / p.total_project_budget * 100 ELSE 0 END AS project_budget_utilization_percentage,
+         CASE WHEN NVL(e.total_salary, 0) > 0 THEN NVL(p.total_project_spent, 0) / e.total_salary * 100 ELSE 0 END AS project_spending_vs_salary_percentage
      FROM departments d
      LEFT JOIN employee_totals e ON d.department_id = e.department_id
      LEFT JOIN project_totals p ON d.department_id = p.department_id
-     WHERE NVL(p.total_project_spent, 0) > NVL(e.total_salary, 0);
+     ORDER BY project_spending_vs_salary_percentage DESC
+     FETCH FIRST 1 ROWS ONLY;
      ```
 
-3. SINGLE TABLE COMPLETENESS: If all required metrics and columns exist in a single table (e.g. both SPENT and BUDGET are in table PROJECTS), query ONLY that table. Do NOT join other tables unnecessarily.
+5. RANKING VALIDATION:
+   - For ranking (highest, lowest, top), order by the EXACT formula or metric requested (e.g. `ORDER BY project_spending_vs_salary_percentage DESC FETCH FIRST 1 ROWS ONLY`).
 
-4. NO SELECT ALIASES IN HAVING OR WHERE (ORACLE SQL):
-   - In Oracle SQL, column aliases defined in SELECT (e.g. `AS total_spent`) CANNOT be referenced in HAVING or WHERE clauses.
-   - Wrap the query in a CTE (WITH clause) or subquery, and filter in the outer WHERE clause.
-
-5. VALID FOREIGN KEY JOINS ONLY:
-   - Verify that join columns actually exist in both tables.
-   - `SALES_RECORDS.SALES_REP_ID` relates to `EMPLOYEES.EMPLOYEE_ID`. (Do NOT write `EMPLOYEES.SALES_REP_ID`).
-
-6. 'WHO', 'WHICH', AND RANKING QUESTIONS:
-   - When asked 'Who ...': SELECT person's identity (`FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME`) together with the metric, and `ORDER BY <metric> DESC FETCH FIRST 1 ROWS ONLY`.
-   - When asked 'Which department...', 'Which project...', or 'Which quarter...': SELECT the entity name (`DEPARTMENT_NAME`, `PROJECT_NAME`, `QUARTER`, etc.) together with the metric, and `ORDER BY <metric> DESC FETCH FIRST 1 ROWS ONLY`.
-
-7. INDEPENDENT DOMAINS & MULTI-METRIC CTEs:
-   - Independent tables with no foreign keys (like `COMPANY_FINANCIALS`) must not be joined directly to other tables. Compute each metric in its own single-row CTE (WITH clause) with `FETCH FIRST 1 ROWS ONLY` and combine them via `CROSS JOIN`.
-
-8. SYNTAX & DIALECT:{dialect_rules}
-9. ROW LIMIT: Include FETCH FIRST 20 ROWS ONLY for multi-row queries unless answering a top 1 ranking question.
+6. SYNTAX & DIALECT:{dialect_rules}
 
 INTENT & RELEVANCE RULES:
 1. UNRELATED QUESTIONS: Output strictly `UNRELATED: ...` if question cannot be answered from schema.
