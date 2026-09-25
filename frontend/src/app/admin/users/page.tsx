@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { UserResponse, RoleResponse, CreateUserRequest } from "@/types/api"
+import { useAuthStore } from "@/store/auth-store"
 import { getInitials, formatDate } from "@/lib/utils"
 import {
   Loader2,
@@ -57,6 +58,7 @@ const defaultNewUserForm: NewUserFormData = {
 }
 
 export default function AdminUsersPage() {
+  const { user: currentUser } = useAuthStore()
   const [users, setUsers] = useState<UserResponse[]>([])
   const [availableRoles, setAvailableRoles] = useState<RoleResponse[]>([])
   const [total, setTotal] = useState(0)
@@ -147,6 +149,16 @@ export default function AdminUsersPage() {
   }
 
   const handleToggleStatus = async (user: UserResponse) => {
+    const isSelf = currentUser && (currentUser.id === user.id || currentUser.email.toLowerCase() === user.email.toLowerCase())
+    if (isSelf) {
+      toast({
+        title: "Action Not Allowed",
+        description: "You cannot deactivate or modify the status of your own account.",
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsToggling(true)
     try {
       if (user.is_active) {
@@ -167,6 +179,18 @@ export default function AdminUsersPage() {
 
   const handleDeleteUser = async () => {
     if (!selectedUser) return
+    const isSelf = currentUser && (currentUser.id === selectedUser.id || currentUser.email.toLowerCase() === selectedUser.email.toLowerCase())
+    if (isSelf) {
+      toast({
+        title: "Action Not Allowed",
+        description: "You cannot delete your own account.",
+        variant: "destructive",
+      })
+      setDeleteDialogOpen(false)
+      setSelectedUser(null)
+      return
+    }
+
     try {
       await api.deleteUser(selectedUser.id)
       toast({ title: "User deleted", variant: "success" })
@@ -218,19 +242,32 @@ export default function AdminUsersPage() {
     {
       key: "user",
       header: "User",
-      cell: (user) => (
-        <div className="flex items-center gap-3">
-          <Avatar className="h-9 w-9">
-            <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
-              {getInitials(user.full_name)}
-            </AvatarFallback>
-          </Avatar>
-          <div>
-            <p className="font-medium">{user.full_name}</p>
-            <p className="text-xs text-muted-foreground">{user.email}</p>
+      cell: (user) => {
+        const isSelf = Boolean(
+          currentUser &&
+          (currentUser.id === user.id || currentUser.email.toLowerCase() === user.email.toLowerCase())
+        )
+        return (
+          <div className="flex items-center gap-3">
+            <Avatar className="h-9 w-9">
+              <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
+                {getInitials(user.full_name)}
+              </AvatarFallback>
+            </Avatar>
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="font-medium">{user.full_name}</p>
+                {isSelf && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-primary/40 text-primary bg-primary/5 font-semibold">
+                    You
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">{user.email}</p>
+            </div>
           </div>
-        </div>
-      ),
+        )
+      },
     },
     {
       key: "roles",
@@ -285,47 +322,71 @@ export default function AdminUsersPage() {
     {
       key: "actions",
       header: "",
-      cell: (user) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => { setSelectedUser(user); setRoleDialogOpen(true) }}>
-              <Shield className="mr-2 h-4 w-4" />
-              Manage Roles
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => handleToggleStatus(user)}
-              disabled={isToggling}
-              className={user.is_active ? "text-amber-600" : "text-emerald-600"}
-            >
-              {user.is_active ? (
-                <>
-                  <UserX className="mr-2 h-4 w-4" />
-                  Deactivate User
-                </>
-              ) : (
-                <>
-                  <UserCheck className="mr-2 h-4 w-4" />
-                  Activate User
-                </>
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => { setSelectedUser(user); setDeleteDialogOpen(true) }}
-              className="text-destructive"
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete User
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
+      cell: (user) => {
+        const isSelf = Boolean(
+          currentUser &&
+          (currentUser.id === user.id || currentUser.email.toLowerCase() === user.email.toLowerCase())
+        )
+
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => { setSelectedUser(user); setRoleDialogOpen(true) }}>
+                <Shield className="mr-2 h-4 w-4" />
+                Manage Roles
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => !isSelf && handleToggleStatus(user)}
+                disabled={isSelf || isToggling}
+                className={
+                  isSelf
+                    ? "text-muted-foreground opacity-40 cursor-not-allowed"
+                    : user.is_active
+                    ? "text-amber-600 focus:text-amber-600 focus:bg-amber-50"
+                    : "text-emerald-600 focus:text-emerald-600 focus:bg-emerald-50"
+                }
+                title={isSelf ? "You cannot change the status of your own account" : undefined}
+              >
+                {user.is_active ? (
+                  <>
+                    <UserX className="mr-2 h-4 w-4" />
+                    <span>Deactivate User</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck className="mr-2 h-4 w-4" />
+                    <span>Activate User</span>
+                  </>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  if (isSelf) return
+                  setSelectedUser(user)
+                  setDeleteDialogOpen(true)
+                }}
+                disabled={isSelf}
+                className={
+                  isSelf
+                    ? "text-muted-foreground opacity-40 cursor-not-allowed"
+                    : "text-destructive focus:text-destructive focus:bg-destructive/10"
+                }
+                title={isSelf ? "You cannot delete your own account" : undefined}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                <span>Delete User</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      },
     },
   ]
 

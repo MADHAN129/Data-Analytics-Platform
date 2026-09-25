@@ -123,3 +123,22 @@ class TestSystemRoleProtection:
             headers=auth_headers(admin),
         )
         assert r.status_code == 400
+
+
+class TestUserSelfProtection:
+    def test_user_cannot_deactivate_own_account(self, client, admin):
+        r = client.post(
+            f"/api/v1/users/{admin.id}/deactivate",
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 400
+        assert "cannot deactivate your own account" in r.json()["detail"].lower()
+
+    def test_user_cannot_delete_own_account(self, client, admin):
+        r = client.delete(
+            f"/api/v1/users/{admin.id}",
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 400
+        assert "cannot delete your own account" in r.json()["detail"].lower()
+

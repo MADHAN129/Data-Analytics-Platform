@@ -110,6 +110,12 @@ def update_profile(db: Session, user_id: int, data: UpdateProfileRequest, curren
 
 
 def delete_user(db: Session, user_id: int, current_user_id: int):
+    if user_id == current_user_id:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account",
+        )
     user = get_user_by_id(db, user_id)
     if not user:
         from fastapi import HTTPException, status

@@ -87,6 +87,19 @@ def delete_user(
     current_user: User = Depends(require_permission("user.delete")),
     db: Session = Depends(get_db),
 ):
+    if current_user.id == user_id:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account",
+        )
+    user = user_service.get_user_by_id(db, user_id)
+    if not user:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and user.company_id != current_user.company_id:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     user_service.delete_user(db, user_id, current_user.id)
     return MessageResponse(message="User deleted")
 
@@ -101,6 +114,9 @@ def activate_user(
     if not user:
         from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and user.company_id != current_user.company_id:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     user.is_active = True
     db.commit()
     create_audit_log(db, current_user.id, "user.activate", "user", str(user_id))
@@ -113,8 +129,17 @@ def deactivate_user(
     current_user: User = Depends(require_permission("user.update")),
     db: Session = Depends(get_db),
 ):
+    if current_user.id == user_id:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot deactivate your own account",
+        )
     user = user_service.get_user_by_id(db, user_id)
     if not user:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and user.company_id != current_user.company_id:
         from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     user.is_active = False
