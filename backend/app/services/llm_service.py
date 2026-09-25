@@ -301,7 +301,8 @@ class LLMService:
             dialect_rules = """
 - ORACLE SQL SYNTAX RULES:
   * NEVER use the 'AS' keyword for table aliases (write 'FROM table_name t', NOT 'FROM table_name AS t').
-  * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' to limit rows.
+  * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' (or 'FETCH FIRST n ROWS WITH TIES' when ranking entities with possible ties) to limit rows.
+  * In Oracle SQL, 'ORDER BY col DESC' puts NULL values FIRST by default. ALWAYS add 'NULLS LAST' when ordering descending (e.g. 'ORDER BY metric DESC NULLS LAST') so NULL rows are never ranked first.
   * String concatenation uses || (e.g. col1 || ' ' || col2).
   * In GROUP BY queries, every column in the SELECT clause that is not an aggregate function (SUM, AVG, COUNT, etc.) MUST appear in the GROUP BY clause.
   * For table / schema exploration queries, use: 'SELECT table_name FROM user_tables;'."""
@@ -342,15 +343,22 @@ DATABASE CONTEXT AND SCHEMA:
    - Do NOT invent or hallucinate non-existent table or column names.
    - For database schema / table listing questions (e.g. 'what tables exist', 'show tables in db'), use the dialect-specific system catalog query as specified below.
 
-2. PREVENT ROW MULTIPLICATION (FAN-OUT PREVENTION):
-   - When calculating aggregated metrics from multiple one-to-many child tables related to the same parent table, NEVER join multiple child tables directly before aggregation in a single query.
-   - Pre-aggregate each child table independently in a Common Table Expression (WITH clause) grouped by the foreign key first, and then join the pre-aggregated CTEs.
+2. ENTITY IDENTIFICATION (MANDATORY):
+   - Whenever asking 'Which <entity>' (e.g. employee, project, department, client, vendor, vehicle, product), ALWAYS include the entity's primary identifying name/title column in the SELECT clause (e.g. for employees: FIRST_NAME, LAST_NAME or FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME; for projects: PROJECT_NAME; for departments: DEPARTMENT_NAME; for clients: CLIENT_NAME; for vendors: VENDOR_NAME; for products: PRODUCT_NAME) so the entity is explicitly named.
 
-3. ACCURATE AGGREGATIONS & METRICS:
-   - Use the exact columns representing requested metrics from the verified schema.
+3. ACCURATE METRIC MAPPING & DISAMBIGUATION:
+   - Strictly distinguish between 'spending/spent' (actual expenditure) and 'budget' (allocated limit):
+     * 'Spending' / 'Spent' / 'Cost' = actual expenditure (e.g. PROJECTS.SPENT, SUM(PROJECTS.SPENT), EMPLOYEES.SALARY, OPERATING_EXPENSES).
+     * 'Budget' = allocated ceiling limit (e.g. PROJECTS.BUDGET, SUM(PROJECTS.BUDGET), DEPARTMENTS.BUDGET).
+     * 'Remaining Budget' / 'Unspent' = (BUDGET - SPENT) or (SUM(BUDGET) - SUM(SPENT)).
+     * When ranking by 'highest spending', ORDER BY spending (e.g. SUM(PROJECTS.SPENT) DESC), NOT by budget.
    - Use COALESCE / NVL / NULLIF appropriately to prevent division by zero and handle NULL values cleanly.
 
-4. TIME PERIOD & TEMPORAL INTEGRITY (MANDATORY RULE):
+4. PREVENT ROW MULTIPLICATION (FAN-OUT PREVENTION):
+   - When calculating aggregated metrics from multiple one-to-many child tables related to the same parent table (e.g. employee salaries and project spending per department), NEVER join multiple child tables directly before aggregation in a single query.
+   - Pre-aggregate each child table independently in a Common Table Expression (WITH clause) grouped by the foreign key first, and then join the pre-aggregated CTEs using LEFT JOIN.
+
+5. TIME PERIOD & TEMPORAL INTEGRITY (MANDATORY RULE):
    - When the database contains multiple years with the same quarter names (or month names, e.g. 2024 Q1, 2024 Q2, 2025 Q1, 2025 Q2):
      * NEVER group by or rank by QUARTER alone (e.g. NEVER 'GROUP BY quarter').
      * '2024 Q2' and '2025 Q2' are distinct chronological periods and MUST NOT be combined.
@@ -362,10 +370,10 @@ DATABASE CONTEXT AND SCHEMA:
        - Return revenue, expenses, net profit, and profit margin belonging to that SAME exact period record.
      * NEVER SUM expenses, revenue, net profit, or metrics across different years merely because they share a quarter name.
 
-5. DIALECT COMPLIANCE:
+6. DIALECT COMPLIANCE:
 {dialect_rules}
 
-6. OUTPUT FORMAT:
+7. OUTPUT FORMAT:
    - Provide ONLY the single executable {dialect} query enclosed strictly inside a ```sql ... ``` block."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
@@ -407,6 +415,7 @@ DATABASE CONTEXT AND SCHEMA:
             sql = re.sub(r"\bLIMIT\s+(\d+)\s*;?$", r"FETCH FIRST \1 ROWS ONLY;", sql, flags=re.IGNORECASE)
             # Normalize FETCH FIRST 1 ROW ONLY to FETCH FIRST 1 ROWS ONLY
             sql = re.sub(r"\bFETCH\s+FIRST\s+(\d+)\s+ROW\s+ONLY", r"FETCH FIRST \1 ROWS ONLY", sql, flags=re.IGNORECASE)
+            sql = re.sub(r"\bDESC\b(?!\s+NULLS)", "DESC NULLS LAST", sql, flags=re.IGNORECASE)
         return sql
 
     def _estimate_tokens(self, nl: str, sql: str) -> int:
@@ -618,28 +627,27 @@ DATABASE CONTEXT AND SCHEMA:
 
         system_prompt = (
             "You are the final answer extraction engine for an AI Analytics system.\n"
-            "Your job is to answer the user's question EXACTLY AS ASKED using only the validated SQL result and the user's original question.\n\n"
+            "Your job is to answer the user's question EXACTLY AS ASKED using ONLY the validated SQL result and the user's original question.\n\n"
             "## EXACT ANSWER EXTRACTION RULES\n\n"
-            "1. EXACT QUESTION COMPLIANCE\n"
+            "1. EXACT QUESTION COMPLIANCE & ENTITY IDENTIFICATION\n"
             "- Answer every requested part of the user's question.\n"
-            "- Do NOT answer a similar question, substitute a related metric, invent a metric, or omit a requested metric.\n"
-            "- Use the exact columns and metrics present in the query results.\n\n"
-            "2. COLUMN SEMANTIC ACCURACY\n"
-            "- Represent each metric accurately based on the executed SQL and resulting data.\n"
-            "- Do not confuse distinct columns or substitute one metric for another.\n\n"
+            "- Explicitly name the entity (employee name, project name, department name, client, etc.) in the Direct Answer.\n"
+            "- If multiple records/entities are tied for the highest or lowest value, list ALL tied entities clearly.\n"
+            "- Do NOT answer a similar question, substitute a related metric, invent a metric, or omit a requested metric.\n\n"
+            "2. COLUMN SEMANTIC & VALUE ACCURACY\n"
+            "- Use the exact figures from the database results. Never fabricate, estimate, or modify numbers.\n"
+            "- Represent each metric accurately (e.g. Spent vs Budget vs Remaining Budget vs Salary vs Revenue).\n"
+            "- Format numbers properly: currency with '$', percentages with '%', large numbers with commas.\n\n"
             "3. REQUESTED METRIC COMPLETENESS\n"
-            "- Ensure all metrics and calculations requested by the user are clearly presented in the response.\n\n"
-            "4. RANKING QUESTIONS\n"
-            "- For questions containing highest, lowest, maximum, minimum, top, bottom, most, least: present the top entities ranked by the metric explicitly specified by the user.\n\n"
-            "5. EXACT ANSWER ONLY\n"
+            "- Ensure all metrics, columns, and calculations requested by the user are clearly presented.\n\n"
+            "4. EXACT ANSWER ONLY\n"
             "- Provide:\n"
-            "  1. The direct answer.\n"
-            "  2. Only the values needed to support the answer.\n"
-            "  3. The exact calculations requested by the user.\n"
-            "- Do NOT add unrelated insights, speculative explanations, or metrics that were not requested.\n\n"
+            "  1. The direct answer naming the entity and its primary metric.\n"
+            "  2. The exact values requested by the user.\n"
+            "- Do NOT add unrelated insights, speculative explanations, or extraneous commentary.\n\n"
             "Format your output clearly:\n"
             "### 🎯 Direct Answer\n"
-            "State the exact direct answer concisely with the validated figures.\n\n"
+            "State the exact direct answer concisely with the entity name and validated figures.\n\n"
             "### 📊 Key Calculated Values\n"
             "List the specific metrics and calculated figures requested with proper formatting (currency $, %, commas).\n\n"
             "### 🛠️ Execution Trace & Verification\n"

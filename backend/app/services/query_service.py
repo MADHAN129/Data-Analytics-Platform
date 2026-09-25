@@ -326,19 +326,47 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
         for tbl, cols in sorted(rel_tables, key=lambda x: len(x[1]), reverse=True)[:5]:
             guidance.append(f"- Table {tbl}: verified columns {', '.join(sorted(cols))}")
 
-    # Add verified foreign key relationships between relevant tables dynamically
-    for t1, c1, t2, c2 in fk_list:
-        if t1 in rel_table_names and t2 in rel_table_names:
-            guidance.append(f"- Foreign Key Relationship: {t1}.{c1} relates to {t2}.{c2}. Use: JOIN {t2} ON {t1}.{c1} = {t2}.{c2}")
+    # Entity Identification Guidance
+    if any(w in q_lower for w in ("who", "which employee", "which person", "which worker", "which staff", "employee", "employees", "which project", "which department", "which client", "which customer", "which vendor", "which product", "which car", "which vehicle")):
+        guidance.append(
+            "- ENTITY IDENTIFICATION RULE: When asked 'Which <entity>' (e.g. employee, project, department, client, vendor, vehicle, product), "
+            "you MUST ALWAYS select the entity's primary identifying name/label column in the SELECT clause (e.g. for employees: FIRST_NAME, LAST_NAME or FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME; for projects: PROJECT_NAME; for departments: DEPARTMENT_NAME; for clients: CLIENT_NAME; for vendors: VENDOR_NAME; for products: PRODUCT_NAME; for vehicles: REGISTERATION_NUMBER) "
+            "along with all requested attributes and metrics so the entity being discussed is explicitly and unmistakably identified."
+        )
+
+    # Metric Disambiguation Guidance
+    if any(w in q_lower for w in ("spending", "spent", "budget", "cost", "salary", "expense", "expenses", "revenue", "profit", "unspent", "remaining")):
+        guidance.append(
+            "- METRIC DISAMBIGUATION RULE: Always strictly distinguish between actual spending/expenditure and allocated budget:\n"
+            "  * 'Spending' / 'Spent' = actual expenditure (e.g. PROJECTS.SPENT, SUM(PROJECTS.SPENT), OPERATING_EXPENSES).\n"
+            "  * 'Budget' = allocated limit (e.g. PROJECTS.BUDGET, SUM(PROJECTS.BUDGET), DEPARTMENTS.BUDGET).\n"
+            "  * 'Remaining Budget' / 'Unspent' = (BUDGET - SPENT) or (SUM(BUDGET) - SUM(SPENT)).\n"
+            "  * When ranking by highest spending, ORDER BY spending (e.g. SUM(SPENT) DESC), NOT by budget."
+        )
+
+    # Multi-Table CTE Aggregation Rule
+    if len(rel_table_names) >= 2 or any(w in q_lower for w in ("ratio", "compare", "salary", "spending", "department", "project")):
+        guidance.append(
+            "- MULTI-TABLE AGGREGATION RULE: When calculating department-level metrics from multiple child tables (e.g. employee salary cost and project spending), "
+            "you MUST aggregate each child table independently in a CTE (WITH clause) grouped by the foreign key (e.g. department_id) first, "
+            "and then join the department table to the CTEs using LEFT JOIN. NEVER join multiple child tables directly before aggregation."
+        )
+
+    # Ratio & Percentage Calculation Guidance
+    if any(w in q_lower for w in ("ratio", "percentage", "utilization", "percent", "pct", "divided by", "proportion")):
+        guidance.append(
+            "- RATIO CALCULATION & FILTER RULE: When calculating ratios or percentages between entities (e.g. spending / salary, spending / budget), "
+            "ensure entities with valid data are returned by ordering with 'DESC NULLS LAST' and filtering WHERE numerator IS NOT NULL and denominator > 0 (or using INNER JOIN)."
+        )
 
     # Ranking single item guidance
     if any(w in q_lower for w in ("highest", "lowest", "most", "least", "top", "best", "bottom")) and "summary" not in q_lower:
         if dialect == "Oracle SQL":
-            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity, ORDER BY the relevant metric (DESC for highest/most, ASC for lowest/least) and append 'FETCH FIRST 1 ROWS ONLY'.")
+            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity, ORDER BY the relevant metric DESC NULLS LAST (or ASC NULLS LAST for lowest) and append 'FETCH FIRST 1 ROWS WITH TIES'.")
         elif dialect in ("PostgreSQL", "MySQL", "SQLite"):
-            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity, ORDER BY the relevant metric (DESC for highest/most, ASC for lowest/least) and append 'LIMIT 1'.")
+            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity, ORDER BY the relevant metric (DESC NULLS LAST for highest/most, ASC NULLS LAST for lowest/least) and append 'LIMIT 1'.")
         elif dialect in ("SQL Server", "T-SQL"):
-            guidance.append("- RANKING RULE: Use 'SELECT TOP 1' with ORDER BY the relevant metric.")
+            guidance.append("- RANKING RULE: Use 'SELECT TOP 1 WITH TIES' with ORDER BY the relevant metric.")
 
     # Time Period & Quarter Integrity Guidance
     if any(w in q_lower for w in ("quarter", "quarters", "q1", "q2", "q3", "q4", "highest revenue", "financial", "revenue", "profit", "expenses")):
@@ -422,13 +450,14 @@ SQL_FUNCTIONS = {
 SQL_KEYWORDS = {
     "SELECT", "FROM", "WHERE", "JOIN", "ON", "LEFT", "RIGHT", "INNER", "OUTER", "FULL",
     "CROSS", "NATURAL", "GROUP", "BY", "ORDER", "HAVING", "FETCH", "FIRST", "NEXT", "ROWS",
-    "ROW", "ONLY", "WITH", "AS", "AND", "OR", "NOT", "NULL", "IS", "CASE", "WHEN", "THEN",
-    "ELSE", "END", "DESC", "ASC", "DUAL", "LIMIT", "OFFSET", "LIKE", "ILIKE", "IN", "EXISTS",
-    "BETWEEN", "UNION", "INTERSECT", "MINUS", "EXCEPT", "ALL", "DISTINCT", "SHOW", "DESCRIBE",
-    "DESC", "TABLES", "COLUMNS", "DATABASE", "TABLE", "SCHEMA", "OVER", "PARTITION", "RANGE",
-    "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "FILTER", "LATERAL", "USING", "SET",
-    "VALUES", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "DROP", "CREATE", "ALTER", "GRANT",
-    "REVOKE", "TRUE", "FALSE", "TOP", "PERCENT", "TIES", "SIBLINGS", "PRIOR", "CONNECT", "START",
+    "ROW", "ONLY", "WITH", "AS", "AND", "OR", "NOT", "NULL", "NULLS", "LAST", "FIRST", "IS",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "DESC", "ASC", "DUAL", "LIMIT", "OFFSET", "LIKE",
+    "ILIKE", "IN", "EXISTS", "BETWEEN", "UNION", "INTERSECT", "MINUS", "EXCEPT", "ALL",
+    "DISTINCT", "SHOW", "DESCRIBE", "DESC", "TABLES", "COLUMNS", "DATABASE", "TABLE",
+    "SCHEMA", "OVER", "PARTITION", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT",
+    "FILTER", "LATERAL", "USING", "SET", "VALUES", "INSERT", "UPDATE", "DELETE", "TRUNCATE",
+    "DROP", "CREATE", "ALTER", "GRANT", "REVOKE", "TRUE", "FALSE", "TOP", "PERCENT", "TIES",
+    "SIBLINGS", "PRIOR", "CONNECT", "START", "WINDOW",
 }
 
 # System Catalog & Metadata Whitelist across all database engines
@@ -481,6 +510,7 @@ def _validate_sql_before_execution(
         sanitized = re.sub(r"\)\s*AS\s+([a-zA-Z0-9_]+)\b", r") \1", sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r"\bLIMIT\s+(\d+)\s*;?$", r"FETCH FIRST \1 ROWS ONLY;", sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r"\bFETCH\s+FIRST\s+(\d+)\s+ROW\s+ONLY", r"FETCH FIRST \1 ROWS ONLY", sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r"\bDESC\b(?!\s+NULLS)", "DESC NULLS LAST", sanitized, flags=re.IGNORECASE)
 
     # Check matched entity inclusion
     if matched_entities:
