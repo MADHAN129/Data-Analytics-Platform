@@ -20,6 +20,9 @@ def _ensure_columns():
             conn.execute(text("ALTER TABLE users ADD COLUMN reset_token VARCHAR(255)"))
         if "reset_token_expires" not in existing:
             conn.execute(text("ALTER TABLE users ADD COLUMN reset_token_expires TIMESTAMP WITH TIME ZONE"))
+        if "bio" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN bio TEXT"))
+        conn.execute(text("ALTER TABLE users ALTER COLUMN avatar_url TYPE TEXT"))
         conn.commit()
 
 
