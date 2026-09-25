@@ -66,6 +66,50 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090/api/v1"
 
+async function parseErrorResponse(response: Response): Promise<{ detail: string; message: string; [key: string]: unknown }> {
+  try {
+    const errorData = await response.json()
+    if (typeof errorData === "string") {
+      return { detail: errorData, message: errorData }
+    }
+    if (errorData && typeof errorData === "object") {
+      const result: Record<string, unknown> = { ...errorData }
+      if (Array.isArray(errorData.detail)) {
+        const msg = errorData.detail
+          .map((d: any) => {
+            const loc = Array.isArray(d?.loc) ? d.loc.filter((p: any) => p !== "body").join(".") : ""
+            return loc ? `${loc}: ${d?.msg || JSON.stringify(d)}` : (d?.msg || JSON.stringify(d))
+          })
+          .filter(Boolean)
+          .join("; ")
+        result.detail = msg || "Validation error"
+        result.message = msg || "Validation error"
+        return result as { detail: string; message: string; [key: string]: unknown }
+      }
+      if (typeof errorData.detail === "object" && errorData.detail !== null) {
+        const d = errorData.detail
+        const msg = d.msg || d.message || JSON.stringify(d)
+        result.detail = msg
+        result.message = msg
+        return result as { detail: string; message: string; [key: string]: unknown }
+      }
+      if (typeof errorData.detail === "string") {
+        result.message = errorData.detail
+        return result as { detail: string; message: string; [key: string]: unknown }
+      }
+      if (typeof errorData.message === "string") {
+        result.detail = errorData.message
+        return result as { detail: string; message: string; [key: string]: unknown }
+      }
+      return { detail: JSON.stringify(errorData), message: JSON.stringify(errorData), ...errorData }
+    }
+  } catch {
+    // If body cannot be parsed as JSON
+  }
+  const fallback = response.statusText || `HTTP error ${response.status}`
+  return { detail: fallback, message: fallback }
+}
+
 class ApiClient {
   private accessToken: string | null = null
   private _refreshToken: string | null = null
@@ -133,7 +177,7 @@ class ApiClient {
           return undefined as T
         }
         if (!retryResponse.ok) {
-          throw await retryResponse.json()
+          throw await parseErrorResponse(retryResponse)
         }
         return retryResponse.json()
       }
@@ -147,7 +191,7 @@ class ApiClient {
     }
 
     if (!response.ok) {
-      throw await response.json()
+      throw await parseErrorResponse(response)
     }
 
     return response.json()
