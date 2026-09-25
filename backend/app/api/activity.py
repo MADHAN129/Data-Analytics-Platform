@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
 from app.database import get_db
-from app.api.deps import get_current_user, user_has_permission
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.connection import DatabaseConnection
 from app.models.query import Query as QueryModel
@@ -29,47 +29,57 @@ def get_activity_overview(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    is_admin = user_has_permission(db, current_user, "access.manage")
+    company_id = current_user.company_id
 
-    # 1. Total tokens calculation
+    # 1. Total tokens calculation strictly scoped to the user's company
     query_tokens_q = db.query(func.coalesce(func.sum(QueryModel.tokens_used), 0))
-    msg_tokens_q = db.query(func.coalesce(func.sum(ConversationMessage.tokens_used), 0))
+    msg_tokens_q = db.query(func.coalesce(func.sum(ConversationMessage.tokens_used), 0)).join(
+        Conversation, ConversationMessage.conversation_id == Conversation.id
+    )
 
-    if not is_admin and current_user.company_id:
-        query_tokens_q = query_tokens_q.filter(QueryModel.company_id == current_user.company_id)
-        # join with conversation for company filter
-        msg_tokens_q = msg_tokens_q.join(Conversation, ConversationMessage.conversation_id == Conversation.id).filter(Conversation.company_id == current_user.company_id)
+    if company_id is not None:
+        query_tokens_q = query_tokens_q.filter(QueryModel.company_id == company_id)
+        msg_tokens_q = msg_tokens_q.filter(Conversation.company_id == company_id)
+    else:
+        query_tokens_q = query_tokens_q.filter(QueryModel.user_id == current_user.id)
+        msg_tokens_q = msg_tokens_q.filter(Conversation.user_id == current_user.id)
 
     total_query_tokens = query_tokens_q.scalar() or 0
     total_msg_tokens = msg_tokens_q.scalar() or 0
     total_tokens = total_query_tokens + total_msg_tokens
 
-    # 2. Total queries count
+    # 2. Total queries count strictly scoped to company
     queries_count_q = db.query(func.count(QueryModel.id))
-    if not is_admin and current_user.company_id:
-        queries_count_q = queries_count_q.filter(QueryModel.company_id == current_user.company_id)
+    if company_id is not None:
+        queries_count_q = queries_count_q.filter(QueryModel.company_id == company_id)
+    else:
+        queries_count_q = queries_count_q.filter(QueryModel.user_id == current_user.id)
     total_queries = queries_count_q.scalar() or 0
 
-    # 3. Users count
+    # 3. Users count strictly scoped to company
     users_count_q = db.query(func.count(User.id))
-    if not is_admin and current_user.company_id:
-        users_count_q = users_count_q.filter(User.company_id == current_user.company_id)
+    if company_id is not None:
+        users_count_q = users_count_q.filter(User.company_id == company_id)
+    else:
+        users_count_q = users_count_q.filter(User.id == current_user.id)
     total_users = users_count_q.scalar() or 0
 
     # 4. Recent queries with user and database details
-    queries_q = (
-        db.query(QueryModel)
-        .order_by(desc(QueryModel.created_at))
-        .limit(100)
-    )
-    if not is_admin and current_user.company_id:
-        queries_q = queries_q.filter(QueryModel.company_id == current_user.company_id)
+    queries_q = db.query(QueryModel).order_by(desc(QueryModel.created_at)).limit(100)
+    if company_id is not None:
+        queries_q = queries_q.filter(QueryModel.company_id == company_id)
+    else:
+        queries_q = queries_q.filter(QueryModel.user_id == current_user.id)
 
     raw_queries = queries_q.all()
 
-    # Pre-fetch users and databases mapping
-    all_users = {u.id: u for u in db.query(User).all()}
-    all_dbs = {d.id: d for d in db.query(DatabaseConnection).all()}
+    # Pre-fetch users and databases mapping scoped to company
+    if company_id is not None:
+        all_users = {u.id: u for u in db.query(User).filter(User.company_id == company_id).all()}
+        all_dbs = {d.id: d for d in db.query(DatabaseConnection).filter(DatabaseConnection.company_id == company_id).all()}
+    else:
+        all_users = {current_user.id: current_user}
+        all_dbs = {d.id: d for d in db.query(DatabaseConnection).filter(DatabaseConnection.created_by == current_user.id).all()}
 
     recent_queries: List[ActivityQueryItem] = []
     for q in raw_queries:
@@ -96,10 +106,12 @@ def get_activity_overview(
             )
         )
 
-    # 5. Database lifecycle items (Active + Inactive + Deleted Audit Logs)
+    # 5. Database lifecycle items strictly scoped to company
     dbs_q = db.query(DatabaseConnection).order_by(desc(DatabaseConnection.created_at))
-    if not is_admin and current_user.company_id:
-        dbs_q = dbs_q.filter(DatabaseConnection.company_id == current_user.company_id)
+    if company_id is not None:
+        dbs_q = dbs_q.filter(DatabaseConnection.company_id == company_id)
+    else:
+        dbs_q = dbs_q.filter(DatabaseConnection.created_by == current_user.id)
     raw_dbs = dbs_q.all()
 
     database_lifecycle: List[ActivityDatabaseItem] = []
@@ -132,14 +144,16 @@ def get_activity_overview(
             )
         )
 
-    # Cross-reference audit logs for deleted / dismissed databases
+    # Cross-reference audit logs for deleted / dismissed databases within company
     audit_deleted_q = (
         db.query(AuditLog)
         .filter(AuditLog.resource_type == "database", AuditLog.action == "delete")
         .order_by(desc(AuditLog.created_at))
     )
-    if not is_admin and current_user.company_id:
-        audit_deleted_q = audit_deleted_q.filter(AuditLog.company_id == current_user.company_id)
+    if company_id is not None:
+        audit_deleted_q = audit_deleted_q.filter(AuditLog.company_id == company_id)
+    else:
+        audit_deleted_q = audit_deleted_q.filter(AuditLog.user_id == current_user.id)
 
     for al in audit_deleted_q.all():
         if al.resource_id and al.resource_id not in seen_db_ids:
@@ -176,7 +190,7 @@ def get_activity_overview(
     dismissed_databases = sum(1 for d in database_lifecycle if not d.is_active)
     total_databases = len(database_lifecycle)
 
-    # 6. Token Timeline over the last N days
+    # 6. Token Timeline over the last N days (strictly scoped to company)
     cutoff_date = datetime.utcnow() - timedelta(days=days)
     timeline_dict: Dict[str, Dict[str, int]] = defaultdict(lambda: {"tokens": 0, "queries": 0})
 

@@ -131,10 +131,10 @@ export default function ActivityPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <Activity className="h-8 w-8 text-blue-600" />
-            Platform Activity & Telemetry
+            Company Activity & Telemetry
           </h1>
           <p className="text-muted-foreground">
-            Monitor real-time AI analyzer token consumption, connected database lifecycles, and question query history.
+            Monitor real-time AI analyzer token consumption, connected database lifecycles, and question query history for your organization.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -212,7 +212,7 @@ export default function ActivityPage() {
         {/* Active Users Card */}
         <Card className="border-border shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Platform Users</CardTitle>
+            <CardTitle className="text-sm font-medium">Company Members</CardTitle>
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
               <User className="h-4 w-4" />
             </div>
@@ -222,7 +222,7 @@ export default function ActivityPage() {
               {loading ? "..." : data?.total_users || 0}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Authorized users with workspace access
+              Active members in your organization
             </p>
           </CardContent>
         </Card>
