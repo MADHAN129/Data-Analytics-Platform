@@ -630,12 +630,11 @@ DATABASE CONTEXT AND SCHEMA:
                 "title": f"{y_label} by {x_label}",
                 "config": {"x": dim_col, "y": metric_col, "sort": "desc"},
             })
-            if row_count <= 10:
-                suggestions.append({
-                    "type": "pie_chart",
-                    "title": f"{y_label} Distribution by {x_label}",
-                    "config": {"label": dim_col, "value": metric_col},
-                })
+            suggestions.append({
+                "type": "pie_chart",
+                "title": f"{y_label} Distribution by {x_label}",
+                "config": {"label": dim_col, "value": metric_col},
+            })
 
         suggestions.append({"type": "table", "title": "Data Table", "config": {}})
         return suggestions

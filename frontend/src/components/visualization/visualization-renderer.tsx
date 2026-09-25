@@ -199,12 +199,28 @@ function BarChartView({ results, config }: { results: QueryResult; config?: Reco
 function PieChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, label, value } = fixPieConfig(results, config)
 
+  // If there are more than 8 categories, take the top 7 and group the rest into "Other"
+  let pieData = data
+  if (data.length > 8) {
+    const sorted = [...data].sort((a, b) => Number(b[value] || 0) - Number(a[value] || 0))
+    const top = sorted.slice(0, 7)
+    const rest = sorted.slice(7)
+    const restSum = rest.reduce((acc, curr) => acc + Number(curr[value] || 0), 0)
+    if (restSum > 0) {
+      top.push({
+        [label]: "Other",
+        [value]: restSum,
+      })
+    }
+    pieData = top
+  }
+
   return (
     <div className="w-full h-[340px] flex flex-col items-center justify-center">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart margin={{ top: 15, right: 15, bottom: 15, left: 15 }}>
           <Pie
-            data={data}
+            data={pieData}
             dataKey={value}
             nameKey={label}
             cx="50%"
@@ -218,7 +234,7 @@ function PieChartView({ results, config }: { results: QueryResult; config?: Reco
             }}
             labelLine={true}
           >
-            {data.map((_, i) => (
+            {pieData.map((_, i) => (
               <Cell key={i} fill={getColor(i)} stroke="hsl(var(--background))" strokeWidth={1.5} />
             ))}
           </Pie>
