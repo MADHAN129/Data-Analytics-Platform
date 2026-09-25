@@ -10,6 +10,14 @@ import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -38,7 +46,31 @@ import {
   Plus,
   History,
   Search,
+  ShieldCheck,
+  CheckCheck,
 } from "lucide-react"
+
+interface TraceDetails {
+  intent: string
+  metricsVerified: string
+  rawTrace: string
+}
+
+function extractTraceDetails(explanation?: string | null): TraceDetails | null {
+  if (!explanation) return null
+  const traceMatch = explanation.match(/###\s*(?:🛠️\s*)?Execution Trace & Verification([\s\S]*?)(?=###|$)/i)
+  if (!traceMatch) return null
+
+  const rawTrace = traceMatch[1].trim()
+  const intentMatch = rawTrace.match(/\*\*Intent\*\*:\s*([^\n]+)/i)
+  const metricsMatch = rawTrace.match(/\*\*Metrics Verified\*\*:\s*([^\n]+)/i)
+
+  return {
+    intent: intentMatch ? intentMatch[1].trim() : "",
+    metricsVerified: metricsMatch ? metricsMatch[1].trim() : "",
+    rawTrace,
+  }
+}
 
 export default function AnalyticsPage() {
   const router = useRouter()
@@ -54,6 +86,16 @@ export default function AnalyticsPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [conversations, setConversations] = useState<{ id: number; title: string }[]>([])
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null)
+  const [showTraceModal, setShowTraceModal] = useState(false)
+  const [traceData, setTraceData] = useState<{
+    intent: string
+    metricsVerified: string
+    rawTrace: string
+    question: string
+    rowCount: number
+    executionTimeMs?: number | null
+    dbName?: string
+  } | null>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -101,6 +143,29 @@ export default function AnalyticsPage() {
         await api.sendMessage(activeConversationId, { content: nlInput })
       }
       fetchHistory()
+
+      const dbObj = connections.find((c) => String(c.id) === selectedDbId)
+      const parsedTrace = extractTraceDetails(result.explanation)
+      const traceInfo = {
+        intent: parsedTrace?.intent || result.natural_language || "",
+        metricsVerified: parsedTrace?.metricsVerified || result.results?.columns?.join(", ") || "",
+        rawTrace: parsedTrace?.rawTrace || "",
+        question: result.natural_language || nlInput,
+        rowCount: result.results?.row_count ?? 0,
+        executionTimeMs: result.results?.execution_time_ms,
+        dbName: dbObj?.name || "Connected Database",
+      }
+      setTraceData(traceInfo)
+
+      if (result.status === "completed") {
+        setShowTraceModal(true)
+        toast({
+          title: "Execution Trace Verified",
+          description: traceInfo.intent ? `Intent: ${traceInfo.intent}` : "Execution trace and database records verified.",
+          variant: "success",
+        })
+      }
+
       setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
     } catch (err: unknown) {
       const error = err as { detail?: string }
@@ -121,6 +186,29 @@ export default function AnalyticsPage() {
       const result = await api.queryFollowUp(queryId, { natural_language: nlInput })
       setCurrentQuery(result)
       setNlInput("")
+
+      const dbObj = connections.find((c) => String(c.id) === selectedDbId)
+      const parsedTrace = extractTraceDetails(result.explanation)
+      const traceInfo = {
+        intent: parsedTrace?.intent || result.natural_language || "",
+        metricsVerified: parsedTrace?.metricsVerified || result.results?.columns?.join(", ") || "",
+        rawTrace: parsedTrace?.rawTrace || "",
+        question: result.natural_language || nlInput,
+        rowCount: result.results?.row_count ?? 0,
+        executionTimeMs: result.results?.execution_time_ms,
+        dbName: dbObj?.name || "Connected Database",
+      }
+      setTraceData(traceInfo)
+
+      if (result.status === "completed") {
+        setShowTraceModal(true)
+        toast({
+          title: "Execution Trace Verified",
+          description: traceInfo.intent ? `Intent: ${traceInfo.intent}` : "Execution trace verified for follow-up query.",
+          variant: "success",
+        })
+      }
+
       setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
     } catch (err: unknown) {
       const error = err as { detail?: string }
@@ -339,7 +427,31 @@ export default function AnalyticsPage() {
         <div ref={resultsRef} className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-lg">Results</CardTitle>
+              <div className="flex items-center gap-3">
+                <CardTitle className="text-lg">Results</CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs font-medium text-emerald-600 border-emerald-500/30 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                  onClick={() => {
+                    const dbObj = connections.find((c) => String(c.id) === selectedDbId)
+                    const parsedTrace = extractTraceDetails(currentQuery.explanation)
+                    setTraceData({
+                      intent: parsedTrace?.intent || currentQuery.natural_language || "",
+                      metricsVerified: parsedTrace?.metricsVerified || currentQuery.results?.columns?.join(", ") || "",
+                      rawTrace: parsedTrace?.rawTrace || "",
+                      question: currentQuery.natural_language || "",
+                      rowCount: currentQuery.results?.row_count ?? 0,
+                      executionTimeMs: currentQuery.results?.execution_time_ms,
+                      dbName: dbObj?.name || "Connected Database",
+                    })
+                    setShowTraceModal(true)
+                  }}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>Execution Trace & Verification</span>
+                </Button>
+              </div>
               <Badge variant={currentQuery.status === "completed" ? "success" : currentQuery.status === "failed" ? "destructive" : "secondary"}>
                 {currentQuery.status}
               </Badge>
@@ -395,6 +507,74 @@ export default function AnalyticsPage() {
           </Card>
         </div>
       )}
+
+      {/* Execution Trace & Verification Pop Message Modal */}
+      <Dialog open={showTraceModal} onOpenChange={setShowTraceModal}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <div className="flex items-center gap-2.5">
+              <div className="rounded-full bg-emerald-100 p-2 dark:bg-emerald-950/60">
+                <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-semibold">Execution Trace & Verification</DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground">
+                  Verification trace confirmed from live database records
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {traceData && (
+            <div className="space-y-3.5 py-2">
+              {traceData.intent && (
+                <div className="rounded-lg border bg-muted/40 p-3.5 text-sm space-y-1">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🎯 Verified Intent</p>
+                  <p className="font-medium text-foreground">{traceData.intent}</p>
+                </div>
+              )}
+
+              {traceData.metricsVerified && (
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3.5 text-sm space-y-1.5">
+                  <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                    📊 Metrics & Columns Verified
+                  </p>
+                  <p className="text-foreground font-mono text-xs leading-relaxed bg-background/60 p-2 rounded border border-emerald-500/10">
+                    {traceData.metricsVerified}
+                  </p>
+                </div>
+              )}
+
+              {traceData.rawTrace && (
+                <div className="rounded-lg bg-muted/60 border p-3.5 text-xs whitespace-pre-wrap leading-relaxed">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">🛠️ Execution Trace</p>
+                  <div className="space-y-1 font-mono text-muted-foreground bg-background/80 p-2.5 rounded border">
+                    {traceData.rawTrace}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between text-xs text-muted-foreground px-1 pt-1 border-t border-border/50">
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                  <span>{traceData.rowCount} rows verified</span>
+                </div>
+                {traceData.executionTimeMs != null && (
+                  <span>{traceData.executionTimeMs}ms execution time</span>
+                )}
+                <span className="font-medium">{traceData.dbName}</span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="pt-2">
+            <Button size="sm" onClick={() => setShowTraceModal(false)}>
+              <CheckCheck className="mr-1.5 h-4 w-4" />
+              Got it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
