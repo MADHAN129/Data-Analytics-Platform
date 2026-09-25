@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { api } from "@/lib/api-client"
 import { useToast } from "@/components/ui/use-toast"
-import { useThemeStore, type ThemeMode, type AccentColor } from "@/store/theme-store"
+import { useThemeStore } from "@/store/theme-store"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,12 +38,10 @@ export default function SettingsPage() {
   const { toast } = useToast()
   const {
     mode,
-    accent,
     compactMode,
     animations,
     highContrast,
     setMode,
-    setAccent,
     setCompactMode,
     setAnimations,
     setHighContrast,
@@ -146,14 +144,6 @@ export default function SettingsPage() {
     }, 400)
   }
 
-  const accentOptions: { id: AccentColor; name: string; bgClass: string; hex: string }[] = [
-    { id: "blue", name: "Corporate Blue", bgClass: "bg-blue-600", hex: "#2563EB" },
-    { id: "emerald", name: "Emerald Green", bgClass: "bg-emerald-600", hex: "#059669" },
-    { id: "violet", name: "Royal Violet", bgClass: "bg-purple-600", hex: "#7C3AED" },
-    { id: "rose", name: "Rose Crimson", bgClass: "bg-rose-600", hex: "#E11D48" },
-    { id: "amber", name: "Sunset Amber", bgClass: "bg-amber-600", hex: "#D97706" },
-  ]
-
   return (
     <div className="space-y-6 pb-16">
       {/* Page Header */}
@@ -188,7 +178,7 @@ export default function SettingsPage() {
         {/* APPEARANCE & THEME MODES TAB */}
         {/* ========================================================================= */}
         <TabsContent value="appearance" className="space-y-6">
-          {/* Theme Mode Selector Card */}
+          {/* Theme Mode Selector Card (Button Model) */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
@@ -200,92 +190,48 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap items-center gap-2.5">
+              <div className="inline-flex items-center rounded-lg border bg-muted/60 p-1">
                 {/* Light Mode Button */}
-                <Button
+                <button
                   type="button"
-                  size="sm"
-                  variant={mode === "light" ? "default" : "outline"}
                   onClick={() => setMode("light")}
-                  className={`h-9 px-3.5 text-xs font-medium gap-2 transition-all ${
+                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all ${
                     mode === "light"
-                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm ring-2 ring-blue-600/30"
-                      : "hover:bg-muted"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   }`}
                 >
-                  <Sun className="h-4 w-4 text-amber-500" />
+                  <Sun className={`h-4 w-4 ${mode === "light" ? "text-amber-300" : "text-amber-500"}`} />
                   <span>Light Mode</span>
-                  {mode === "light" && <Check className="h-3.5 w-3.5 ml-1" />}
-                </Button>
+                </button>
 
                 {/* Night / Dark Mode Button */}
-                <Button
+                <button
                   type="button"
-                  size="sm"
-                  variant={mode === "dark" ? "default" : "outline"}
                   onClick={() => setMode("dark")}
-                  className={`h-9 px-3.5 text-xs font-medium gap-2 transition-all ${
+                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all ${
                     mode === "dark"
-                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm ring-2 ring-blue-600/30"
-                      : "hover:bg-muted"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   }`}
                 >
-                  <Moon className="h-4 w-4 text-indigo-400" />
+                  <Moon className={`h-4 w-4 ${mode === "dark" ? "text-indigo-200" : "text-indigo-400"}`} />
                   <span>Night / Dark Mode</span>
-                  {mode === "dark" && <Check className="h-3.5 w-3.5 ml-1" />}
-                </Button>
+                </button>
 
                 {/* System Default Button */}
-                <Button
+                <button
                   type="button"
-                  size="sm"
-                  variant={mode === "system" ? "default" : "outline"}
                   onClick={() => setMode("system")}
-                  className={`h-9 px-3.5 text-xs font-medium gap-2 transition-all ${
+                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all ${
                     mode === "system"
-                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm ring-2 ring-blue-600/30"
-                      : "hover:bg-muted"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   }`}
                 >
-                  <Laptop className="h-4 w-4 text-slate-400" />
+                  <Laptop className="h-4 w-4" />
                   <span>System Default</span>
-                  {mode === "system" && <Check className="h-3.5 w-3.5 ml-1" />}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Color Accent Themes Card */}
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <Palette className="h-5 w-5 text-primary" />
-                <CardTitle className="text-base">Accent Color Palette</CardTitle>
-              </div>
-              <CardDescription className="text-xs">
-                Select your preferred accent color for buttons, badges, navigation highlights, and active elements.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap items-center gap-2">
-                {accentOptions.map((opt) => (
-                  <Button
-                    key={opt.id}
-                    type="button"
-                    size="sm"
-                    variant={accent === opt.id ? "default" : "outline"}
-                    onClick={() => setAccent(opt.id)}
-                    className={`h-9 px-3 text-xs font-medium gap-2 transition-all ${
-                      accent === opt.id
-                        ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm ring-2 ring-primary/40"
-                        : "hover:bg-muted"
-                    }`}
-                  >
-                    <span className={`h-2.5 w-2.5 rounded-full ${opt.bgClass} shadow-inner`} />
-                    <span>{opt.name}</span>
-                    {accent === opt.id && <Check className="h-3.5 w-3.5 ml-0.5" />}
-                  </Button>
-                ))}
+                </button>
               </div>
             </CardContent>
           </Card>
