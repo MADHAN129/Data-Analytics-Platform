@@ -207,19 +207,20 @@ def seed():
         # Create admin user if not exists
         superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
         analyst_role = db.query(Role).filter(Role.name == "Analyst").first()
-        admin_email = "admin@agentic.com"
+        admin_email = os.environ.get("ADMIN_EMAIL") or os.environ.get("FIRST_SUPERUSER") or "admin@agentic.com"
+        admin_name = os.environ.get("ADMIN_NAME") or os.environ.get("FIRST_SUPERUSER_NAME") or "System Admin"
         existing_admin = db.query(User).filter(User.email == admin_email).first()
         if not existing_admin:
             # Prefer ADMIN_PASSWORD from the environment; otherwise generate a
             # strong random one. Never use a hardcoded default.
-            admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+            admin_password = os.environ.get("ADMIN_PASSWORD") or os.environ.get("FIRST_SUPERUSER_PASSWORD") or secrets.token_urlsafe(12)
             from app.models.company import Company
             default_company = db.query(Company).first()
             company_id = default_company.id if default_company else None
             admin = User(
                 email=admin_email,
                 password_hash=get_password_hash(admin_password),
-                full_name="System Admin",
+                full_name=admin_name,
                 company_id=company_id,
                 is_active=True,
             )
