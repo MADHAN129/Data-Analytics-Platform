@@ -450,14 +450,14 @@ export default function AdminUsersPage() {
                           {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
                         </div>
                         <div className="space-y-0.5">
-                          <p className="text-sm font-medium leading-none flex items-center gap-2">
-                            {role.name}
+                          <div className="text-sm font-medium leading-none flex items-center gap-2">
+                            <span>{role.name}</span>
                             {role.name === "SuperAdmin" && (
                               <Badge variant="outline" className="text-[10px] py-0 px-1 bg-purple-50 text-purple-700">
                                 Full Access
                               </Badge>
                             )}
-                          </p>
+                          </div>
                           <p className="text-xs text-muted-foreground">{role.description}</p>
                         </div>
                       </div>
@@ -534,7 +534,7 @@ export default function AdminUsersPage() {
                 >
                   <div className="space-y-1 pr-4">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium text-sm">{role.name}</p>
+                      <span className="font-medium text-sm">{role.name}</span>
                       {role.name === "SuperAdmin" && (
                         <Badge variant="outline" className="text-[10px] py-0 px-1 bg-purple-50 text-purple-700">
                           SuperAdmin
