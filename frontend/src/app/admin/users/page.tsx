@@ -40,12 +40,20 @@ import {
   Trash2,
 } from "lucide-react"
 
-const defaultNewUserForm: CreateUserRequest = {
+interface NewUserFormData {
+  full_name: string
+  email: string
+  password: string
+  phone: string
+  role: string
+}
+
+const defaultNewUserForm: NewUserFormData = {
   full_name: "",
   email: "",
   password: "",
   phone: "",
-  roles: ["Analyst"],
+  role: "Analyst",
 }
 
 export default function AdminUsersPage() {
@@ -63,7 +71,7 @@ export default function AdminUsersPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   
   // Form states
-  const [newUserForm, setNewUserForm] = useState<CreateUserRequest>({ ...defaultNewUserForm })
+  const [newUserForm, setNewUserForm] = useState<NewUserFormData>({ ...defaultNewUserForm })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isToggling, setIsToggling] = useState(false)
   const [isUpdatingRole, setIsUpdatingRole] = useState<number | null>(null)
@@ -113,12 +121,14 @@ export default function AdminUsersPage() {
 
     setIsSubmitting(true)
     try {
+      const selectedRole = newUserForm.role || "Analyst"
       await api.createUser({
         full_name: newUserForm.full_name.trim(),
         email: newUserForm.email.trim(),
         password: newUserForm.password,
         phone: newUserForm.phone?.trim() || undefined,
-        roles: newUserForm.roles && newUserForm.roles.length > 0 ? newUserForm.roles : ["Analyst"],
+        role: selectedRole,
+        roles: [selectedRole],
       })
       toast({ title: "User created successfully", variant: "success" })
       setAddDialogOpen(false)
@@ -169,48 +179,38 @@ export default function AdminUsersPage() {
     }
   }
 
-  const handleToggleRoleForSelectedUser = async (role: RoleResponse) => {
+  const handleSetRoleForSelectedUser = async (targetRole: RoleResponse) => {
     if (!selectedUser) return
-    const hasRole = selectedUser.roles.some((r) => r.id === role.id || r.name === role.name)
-    setIsUpdatingRole(role.id)
+    const currentRoleIds = selectedUser.roles.map((r) => r.id)
+    if (currentRoleIds.includes(targetRole.id) && currentRoleIds.length === 1) {
+      return // Already has only this role
+    }
 
+    setIsUpdatingRole(targetRole.id)
     try {
-      if (hasRole) {
-        await api.removeRoleFromUser(selectedUser.id, role.id)
-        toast({ title: `Removed ${role.name} role`, variant: "success" })
-        const updatedRoles = selectedUser.roles.filter((r) => r.id !== role.id && r.name !== role.name)
-        setSelectedUser({ ...selectedUser, roles: updatedRoles })
-      } else {
-        await api.assignRoleToUser(selectedUser.id, role.id)
-        toast({ title: `Assigned ${role.name} role`, variant: "success" })
-        const updatedRoles = [...selectedUser.roles, role]
-        setSelectedUser({ ...selectedUser, roles: updatedRoles })
+      // Remove all other roles
+      for (const r of selectedUser.roles) {
+        if (r.id !== targetRole.id) {
+          try {
+            await api.removeRoleFromUser(selectedUser.id, r.id)
+          } catch {
+            // ignore if already removed
+          }
+        }
       }
+      // Assign target role if not already assigned
+      if (!currentRoleIds.includes(targetRole.id)) {
+        await api.assignRoleToUser(selectedUser.id, targetRole.id)
+      }
+
+      toast({ title: `Role updated to ${targetRole.name}`, variant: "success" })
+      setSelectedUser({ ...selectedUser, roles: [targetRole] })
       fetchUsers()
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error updating role", description: error.detail || "Operation failed", variant: "destructive" })
     } finally {
       setIsUpdatingRole(null)
-    }
-  }
-
-  const toggleNewUserRole = (roleName: string) => {
-    const currentRoles = newUserForm.roles || []
-    if (currentRoles.includes(roleName)) {
-      if (currentRoles.length === 1) {
-        toast({ title: "At least one role must be selected", variant: "destructive" })
-        return
-      }
-      setNewUserForm({
-        ...newUserForm,
-        roles: currentRoles.filter((r) => r !== roleName),
-      })
-    } else {
-      setNewUserForm({
-        ...newUserForm,
-        roles: [...currentRoles, roleName],
-      })
     }
   }
 
@@ -429,64 +429,76 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Select Roles *</Label>
-              <div className="space-y-2 rounded-lg border p-3">
+              <Label>Select Role *</Label>
+              <div className="space-y-2 rounded-lg border p-2 bg-muted/20">
                 {availableRoles.length > 0 ? (
                   availableRoles.map((role) => {
-                    const isChecked = (newUserForm.roles || []).includes(role.name)
+                    const isSelected = newUserForm.role === role.name
                     return (
                       <div
                         key={role.id}
-                        onClick={() => toggleNewUserRole(role.name)}
-                        className={`flex items-start gap-3 p-2 rounded-md cursor-pointer transition-colors ${
-                          isChecked ? "bg-primary/10 border border-primary/20" : "hover:bg-muted"
+                        onClick={() => setNewUserForm({ ...newUserForm, role: role.name })}
+                        className={`flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                          isSelected
+                            ? "bg-primary/10 border-primary/40 shadow-sm"
+                            : "bg-background border-border hover:bg-muted/50"
                         }`}
                       >
                         <div
-                          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                            isChecked ? "bg-primary text-primary-foreground border-primary" : "border-muted-foreground"
+                          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                            isSelected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/60"
                           }`}
                         >
-                          {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                          {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-background" />}
                         </div>
-                        <div className="space-y-0.5">
-                          <p className="text-sm font-medium leading-none flex items-center gap-2">
-                            {role.name}
+                        <div className="space-y-0.5 flex-1">
+                          <div className="text-sm font-semibold flex items-center justify-between">
+                            <span>{role.name}</span>
                             {role.name === "SuperAdmin" && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1 bg-purple-50 text-purple-700">
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-purple-500/10 text-purple-700 border-purple-200">
                                 Full Access
                               </Badge>
                             )}
-                          </p>
+                            {role.name === "Analyst" && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-blue-500/10 text-blue-700 border-blue-200">
+                                Default
+                              </Badge>
+                            )}
+                            {role.name === "Viewer" && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-slate-500/10 text-slate-700 border-slate-200">
+                                Read Only
+                              </Badge>
+                            )}
+                          </div>
                           <p className="text-xs text-muted-foreground">{role.description}</p>
                         </div>
                       </div>
                     )
                   })
                 ) : (
-                  <div className="space-y-2">
-                    {["SuperAdmin", "Analyst", "Viewer"].map((rName) => {
-                      const isChecked = (newUserForm.roles || []).includes(rName)
-                      return (
+                  ["SuperAdmin", "Analyst", "Viewer"].map((rName) => {
+                    const isSelected = newUserForm.role === rName
+                    return (
+                      <div
+                        key={rName}
+                        onClick={() => setNewUserForm({ ...newUserForm, role: rName })}
+                        className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                          isSelected
+                            ? "bg-primary/10 border-primary/40 shadow-sm"
+                            : "bg-background border-border hover:bg-muted/50"
+                        }`}
+                      >
                         <div
-                          key={rName}
-                          onClick={() => toggleNewUserRole(rName)}
-                          className={`flex items-center gap-3 p-2 rounded-md cursor-pointer ${
-                            isChecked ? "bg-primary/10" : "hover:bg-muted"
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                            isSelected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/60"
                           }`}
                         >
-                          <div
-                            className={`flex h-4 w-4 items-center justify-center rounded border ${
-                              isChecked ? "bg-primary text-primary-foreground" : "border-muted-foreground"
-                            }`}
-                          >
-                            {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                          <span className="text-sm font-medium">{rName}</span>
+                          {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-background" />}
                         </div>
-                      )
-                    })}
-                  </div>
+                        <span className="text-sm font-medium">{rName}</span>
+                      </div>
+                    )
+                  })
                 )}
               </div>
             </div>
@@ -516,9 +528,9 @@ export default function AdminUsersPage() {
       <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Manage Roles</DialogTitle>
+            <DialogTitle>Manage User Role</DialogTitle>
             <DialogDescription>
-              Assign or remove roles for <span className="font-semibold text-foreground">{selectedUser?.full_name}</span> ({selectedUser?.email})
+              Assign a single active role for <span className="font-semibold text-foreground">{selectedUser?.full_name}</span> ({selectedUser?.email})
             </DialogDescription>
           </DialogHeader>
 
@@ -530,35 +542,62 @@ export default function AdminUsersPage() {
               return (
                 <div
                   key={role.id}
-                  className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                  onClick={() => !isUpdating && !isAssigned && handleSetRoleForSelectedUser(role)}
+                  className={`flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer ${
+                    isAssigned
+                      ? "bg-primary/10 border-primary/40 shadow-sm"
+                      : "bg-card hover:bg-muted/50 border-border"
+                  }`}
                 >
                   <div className="space-y-1 pr-4">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium text-sm">{role.name}</p>
+                      <div
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                          isAssigned ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/60"
+                        }`}
+                      >
+                        {isAssigned && <div className="h-1.5 w-1.5 rounded-full bg-background" />}
+                      </div>
+                      <span className="font-medium text-sm">{role.name}</span>
                       {role.name === "SuperAdmin" && (
-                        <Badge variant="outline" className="text-[10px] py-0 px-1 bg-purple-50 text-purple-700">
-                          SuperAdmin
+                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-purple-500/10 text-purple-700 border-purple-200">
+                          Full Access
+                        </Badge>
+                      )}
+                      {role.name === "Analyst" && (
+                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-blue-500/10 text-blue-700 border-blue-200">
+                          Default
+                        </Badge>
+                      )}
+                      {role.name === "Viewer" && (
+                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-slate-500/10 text-slate-700 border-slate-200">
+                          Read Only
                         </Badge>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground">{role.description}</p>
+                    <p className="text-xs text-muted-foreground pl-6">{role.description}</p>
                   </div>
 
-                  <Button
-                    size="sm"
-                    variant={isAssigned ? "outline" : "default"}
-                    disabled={isUpdating}
-                    onClick={() => handleToggleRoleForSelectedUser(role)}
-                    className={isAssigned ? "border-destructive text-destructive hover:bg-destructive/10" : ""}
-                  >
+                  <div>
                     {isUpdating ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
                     ) : isAssigned ? (
-                      "Remove"
+                      <Badge variant="success" className="text-xs">
+                        Active
+                      </Badge>
                     ) : (
-                      "Assign"
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleSetRoleForSelectedUser(role)
+                        }}
+                      >
+                        Select
+                      </Button>
                     )}
-                  </Button>
+                  </div>
                 </div>
               )
             })}
@@ -566,7 +605,7 @@ export default function AdminUsersPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setRoleDialogOpen(false)}>
-              Done
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

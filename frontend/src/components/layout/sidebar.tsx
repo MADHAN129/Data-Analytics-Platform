@@ -20,6 +20,7 @@ import {
   Sparkles,
   ChevronLeft,
   BookOpen,
+  Code2,
 } from "lucide-react"
 import { useState } from "react"
 
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { label: "Databases", icon: <Database className="h-4 w-4" />, href: "/dashboard/databases" },
   { label: "Reports", icon: <FileBarChart className="h-4 w-4" />, href: "/dashboard/reports" },
   { label: "Activity", icon: <Activity className="h-4 w-4" />, href: "/dashboard/activity" },
+  { label: "API Docs", icon: <Code2 className="h-4 w-4" />, href: "/dashboard/api-docs" },
 ]
 
 const adminItems: NavItem[] = [
