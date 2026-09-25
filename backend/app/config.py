@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     GROK_BASE_URL: str = "https://api.x.ai/v1"
     GROK_MODEL: str = "grok-2-latest"
 
+    # GroqCloud API (https://groq.com)
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+
     # Local Proxy / Custom OpenAI-compatible Proxy (LiteLLM, LocalAI, vLLM proxy, etc.)
     LOCAL_PROXY_URL: str = ""
     LOCAL_PROXY_API_KEY: str = ""

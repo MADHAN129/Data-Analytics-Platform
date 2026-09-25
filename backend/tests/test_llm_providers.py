@@ -108,6 +108,38 @@ class TestLLMProviderResolution:
             assert info["fallback_provider"] == "local"
 
 
+    def test_get_provider_chain_ordered_sequence(self):
+        """get_provider_chain returns providers in priority order: OpenRouter -> Groq -> Local Proxy -> OpenAI -> Local."""
+        with patch.object(settings, "LLM_PROVIDER", "auto"), \
+             patch.object(settings, "LLM_USE_MOCK", False), \
+             patch.object(settings, "OPENROUTER_API_KEY", "sk-or-test"), \
+             patch.object(settings, "GROQ_API_KEY", "gsk-test"), \
+             patch.object(settings, "LOCAL_PROXY_URL", "http://localhost:4000/v1"), \
+             patch.object(settings, "OPENAI_API_KEY", "sk-proj-test"), \
+             patch.object(settings, "VLLM_API_URL", "http://localhost:11434/v1"):
+            
+            service = LLMService()
+            chain = service.get_provider_chain()
+            provider_names = [c.provider for c in chain]
+            
+            assert provider_names == ["openrouter", "groq", "local_proxy", "openai", "local"]
+
+    def test_groq_key_autodetection_from_gsk_prefix(self):
+        """When GROK_API_KEY starts with gsk_, it is auto-detected as GroqCloud provider."""
+        with patch.object(settings, "LLM_PROVIDER", "auto"), \
+             patch.object(settings, "LLM_USE_MOCK", False), \
+             patch.object(settings, "OPENROUTER_API_KEY", ""), \
+             patch.object(settings, "GROK_API_KEY", "gsk_1234567890abcdef"), \
+             patch.object(settings, "GROQ_API_KEY", ""):
+            
+            service = LLMService()
+            config = service.resolve_provider()
+            
+            assert config.provider == "groq"
+            assert "groq.com" in config.base_url
+            assert config.api_key == "gsk_1234567890abcdef"
+
+
 class TestLLMExecutionAndFallback:
     def test_primary_provider_success(self):
         """When the primary cloud provider succeeds, return the result."""
@@ -120,14 +152,63 @@ class TestLLMExecutionAndFallback:
         )
 
         with patch.object(settings, "LLM_USE_MOCK", False), \
-             patch.object(service, "resolve_provider", return_value=mock_config), \
+             patch.object(service, "get_provider_chain", return_value=[mock_config]), \
              patch.object(service, "_execute_chat_completion", return_value="SELECT * FROM users;"):
             
             result = service._call_llm([{"role": "user", "content": "list users"}])
             assert result == "SELECT * FROM users;"
 
-    def test_fallback_to_local_llm_on_cloud_provider_failure(self):
-        """When cloud provider fails, automatically fallback to local LLM."""
+    def test_multi_hop_sequential_fallback(self):
+        """When OpenRouter fails and Groq fails, fallback continues down chain to Local Proxy."""
+        service = LLMService()
+        openrouter_config = LLMProviderConfig(
+            provider="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="sk-or-key",
+            model="llama-3.3-70b",
+        )
+        groq_config = LLMProviderConfig(
+            provider="groq",
+            base_url="https://api.groq.com/openai/v1",
+            api_key="gsk-key",
+            model="llama-3.3-70b-versatile",
+        )
+        proxy_config = LLMProviderConfig(
+            provider="local_proxy",
+            base_url="http://localhost:4000/v1",
+            api_key="",
+            model="qwen2.5-coder:3b",
+        )
+        local_config = LLMProviderConfig(
+            provider="local",
+            base_url="http://localhost:11434/v1",
+            api_key="",
+            model="qwen2.5-coder:3b",
+        )
+
+        chain = [openrouter_config, groq_config, proxy_config, local_config]
+        calls = []
+
+        def mock_execute(cfg, msgs, temperature, max_tokens):
+            calls.append(cfg.provider)
+            if cfg.provider == "openrouter":
+                return None  # Simulate OpenRouter failure
+            if cfg.provider == "groq":
+                return None  # Simulate Groq rate-limit / timeout
+            if cfg.provider == "local_proxy":
+                return "SELECT * FROM proxy_result;"
+            return "SELECT * FROM local_result;"
+
+        with patch.object(settings, "LLM_USE_MOCK", False), \
+             patch.object(service, "get_provider_chain", return_value=chain), \
+             patch.object(service, "_execute_chat_completion", side_effect=mock_execute):
+            
+            result = service._call_llm([{"role": "user", "content": "list users"}])
+            assert result == "SELECT * FROM proxy_result;"
+            assert calls == ["openrouter", "groq", "local_proxy"]
+
+    def test_full_chain_exhaustion_falls_back_to_local_llm(self):
+        """When all cloud and proxy providers fail, fallback reaches the local LLM."""
         service = LLMService()
         cloud_config = LLMProviderConfig(
             provider="openrouter",
@@ -142,20 +223,40 @@ class TestLLMExecutionAndFallback:
             model="qwen2.5-coder:3b",
         )
 
+        chain = [cloud_config, local_config]
+        calls = []
+
         def mock_execute(cfg, msgs, temperature, max_tokens):
+            calls.append(cfg.provider)
             if cfg.provider == "openrouter":
-                return None  # Simulate network / rate-limit failure
+                return None
             if cfg.provider == "local":
                 return "SELECT * FROM users_from_local;"
             return None
 
         with patch.object(settings, "LLM_USE_MOCK", False), \
-             patch.object(service, "resolve_provider", return_value=cloud_config), \
-             patch.object(service, "_get_local_provider_config", return_value=local_config), \
+             patch.object(service, "get_provider_chain", return_value=chain), \
              patch.object(service, "_execute_chat_completion", side_effect=mock_execute):
             
             result = service._call_llm([{"role": "user", "content": "list users"}])
             assert result == "SELECT * FROM users_from_local;"
+            assert calls == ["openrouter", "local"]
+
+    def test_all_providers_fail_returns_none(self):
+        """When every provider in the chain fails (including local), returns None gracefully."""
+        service = LLMService()
+        local_config = LLMProviderConfig(
+            provider="local",
+            base_url="http://localhost:11434/v1",
+            api_key="",
+            model="qwen2.5-coder:3b",
+        )
+        with patch.object(settings, "LLM_USE_MOCK", False), \
+             patch.object(service, "get_provider_chain", return_value=[local_config]), \
+             patch.object(service, "_execute_chat_completion", return_value=None):
+            
+            result = service._call_llm([{"role": "user", "content": "list users"}])
+            assert result is None
 
     def test_mock_mode_returns_none(self):
         """When mock mode is enabled, _call_llm returns None without making HTTP calls."""

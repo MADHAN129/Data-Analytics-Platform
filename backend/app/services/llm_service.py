@@ -47,73 +47,6 @@ class LLMService:
         config = self.resolve_provider()
         return self._get_client(config)
 
-    def resolve_provider(self) -> LLMProviderConfig:
-        """
-        Dynamically determine the active LLM provider based on configured API keys
-        and the LLM_PROVIDER setting.
-        
-        Priority (when LLM_PROVIDER="auto"):
-        1. OpenRouter (if OPENROUTER_API_KEY is provided)
-        2. Grok / xAI (if GROK_API_KEY or XAI_API_KEY is provided)
-        3. Local Proxy (if LOCAL_PROXY_URL is provided)
-        4. OpenAI (if OPENAI_API_KEY is provided)
-        5. Local LLM / Ollama / vLLM (default / fallback)
-        """
-        provider_override = getattr(settings, "LLM_PROVIDER", "auto").lower()
-
-        if self.use_mock:
-            return LLMProviderConfig(
-                provider="mock",
-                base_url="",
-                api_key="",
-                model="mock",
-            )
-
-        # 1. OpenRouter
-        if provider_override == "openrouter" or (provider_override == "auto" and getattr(settings, "OPENROUTER_API_KEY", "")):
-            headers = {
-                "HTTP-Referer": getattr(settings, "OPENROUTER_SITE_URL", "http://localhost:3000"),
-                "X-Title": getattr(settings, "OPENROUTER_APP_NAME", "Data-Analyzer"),
-            }
-            return LLMProviderConfig(
-                provider="openrouter",
-                base_url=getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/"),
-                api_key=getattr(settings, "OPENROUTER_API_KEY", ""),
-                model=getattr(settings, "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct"),
-                headers=headers,
-            )
-
-        # 2. Grok / xAI
-        grok_key = getattr(settings, "GROK_API_KEY", "") or getattr(settings, "XAI_API_KEY", "")
-        if provider_override == "grok" or (provider_override == "auto" and grok_key):
-            return LLMProviderConfig(
-                provider="grok",
-                base_url=getattr(settings, "GROK_BASE_URL", "https://api.x.ai/v1").rstrip("/"),
-                api_key=grok_key,
-                model=getattr(settings, "GROK_MODEL", "grok-2-latest"),
-            )
-
-        # 3. Local Proxy
-        if provider_override == "local_proxy" or (provider_override == "auto" and getattr(settings, "LOCAL_PROXY_URL", "")):
-            return LLMProviderConfig(
-                provider="local_proxy",
-                base_url=getattr(settings, "LOCAL_PROXY_URL", "").rstrip("/"),
-                api_key=getattr(settings, "LOCAL_PROXY_API_KEY", ""),
-                model=getattr(settings, "LOCAL_PROXY_MODEL", "") or getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
-            )
-
-        # 4. OpenAI
-        if provider_override == "openai" or (provider_override == "auto" and getattr(settings, "OPENAI_API_KEY", "")):
-            return LLMProviderConfig(
-                provider="openai",
-                base_url=getattr(settings, "OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-                api_key=getattr(settings, "OPENAI_API_KEY", ""),
-                model=getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"),
-            )
-
-        # 5. Local LLM / Ollama / vLLM (Default)
-        return self._get_local_provider_config()
-
     def _get_local_provider_config(self) -> LLMProviderConfig:
         return LLMProviderConfig(
             provider="local",
@@ -122,14 +55,132 @@ class LLMService:
             model=getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
         )
 
+    def get_provider_chain(self) -> list[LLMProviderConfig]:
+        """
+        Build an ordered sequential chain of all available/configured LLM providers.
+        
+        Evaluation & Fallback Sequence:
+        1. OpenRouter (if OPENROUTER_API_KEY is provided)
+        2. GroqCloud (if GROQ_API_KEY is provided or key starts with 'gsk_')
+        3. Grok / xAI (if GROK_API_KEY or XAI_API_KEY is provided)
+        4. Local Proxy (if LOCAL_PROXY_URL is provided)
+        5. OpenAI (if OPENAI_API_KEY is provided)
+        6. Local LLM / Ollama (always present at the end of the chain as final fallback)
+        """
+        if self.use_mock:
+            return [
+                LLMProviderConfig(
+                    provider="mock",
+                    base_url="",
+                    api_key="",
+                    model="mock",
+                )
+            ]
+
+        provider_override = getattr(settings, "LLM_PROVIDER", "auto").lower().strip()
+        chain: list[LLMProviderConfig] = []
+        seen_providers: set[str] = set()
+
+        def add_config(cfg: Optional[LLMProviderConfig]):
+            if cfg and cfg.provider not in seen_providers:
+                chain.append(cfg)
+                seen_providers.add(cfg.provider)
+
+        # 1. OpenRouter
+        openrouter_key = getattr(settings, "OPENROUTER_API_KEY", "").strip()
+        if openrouter_key:
+            headers = {
+                "HTTP-Referer": getattr(settings, "OPENROUTER_SITE_URL", "http://localhost:3000"),
+                "X-Title": getattr(settings, "OPENROUTER_APP_NAME", "Data-Analyzer"),
+            }
+            add_config(
+                LLMProviderConfig(
+                    provider="openrouter",
+                    base_url=getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/"),
+                    api_key=openrouter_key,
+                    model=getattr(settings, "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct"),
+                    headers=headers,
+                )
+            )
+
+        # 2. GroqCloud / Grok detection
+        groq_key = getattr(settings, "GROQ_API_KEY", "").strip()
+        grok_key = getattr(settings, "GROK_API_KEY", "").strip() or getattr(settings, "XAI_API_KEY", "").strip()
+
+        # If user put a GroqCloud key (gsk_...) into GROK_API_KEY or GROQ_API_KEY
+        if groq_key or (grok_key and grok_key.startswith("gsk_")):
+            effective_groq_key = groq_key or grok_key
+            add_config(
+                LLMProviderConfig(
+                    provider="groq",
+                    base_url=getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/"),
+                    api_key=effective_groq_key,
+                    model=getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"),
+                )
+            )
+        elif grok_key:
+            # Standard xAI Grok
+            add_config(
+                LLMProviderConfig(
+                    provider="grok",
+                    base_url=getattr(settings, "GROK_BASE_URL", "https://api.x.ai/v1").rstrip("/"),
+                    api_key=grok_key,
+                    model=getattr(settings, "GROK_MODEL", "grok-2-latest"),
+                )
+            )
+
+        # 3. Local Proxy / Custom OpenAI-compatible proxy (LiteLLM, LocalAI, LM Studio, etc.)
+        proxy_url = getattr(settings, "LOCAL_PROXY_URL", "").strip()
+        if proxy_url:
+            add_config(
+                LLMProviderConfig(
+                    provider="local_proxy",
+                    base_url=proxy_url.rstrip("/"),
+                    api_key=getattr(settings, "LOCAL_PROXY_API_KEY", "").strip(),
+                    model=getattr(settings, "LOCAL_PROXY_MODEL", "").strip() or getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
+                )
+            )
+
+        # 4. OpenAI
+        openai_key = getattr(settings, "OPENAI_API_KEY", "").strip()
+        if openai_key:
+            add_config(
+                LLMProviderConfig(
+                    provider="openai",
+                    base_url=getattr(settings, "OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
+                    api_key=openai_key,
+                    model=getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"),
+                )
+            )
+
+        # 5. Local LLM / Ollama (Always included at end of chain as final fallback)
+        add_config(self._get_local_provider_config())
+
+        # If an explicit provider override was requested, move it to the front of the chain
+        if provider_override and provider_override not in ("auto", "mock"):
+            explicit_config = next((c for c in chain if c.provider == provider_override), None)
+            if explicit_config:
+                chain.remove(explicit_config)
+                chain.insert(0, explicit_config)
+
+        return chain
+
+    def resolve_provider(self) -> LLMProviderConfig:
+        """Return the primary (first available) provider in the fallback chain."""
+        chain = self.get_provider_chain()
+        return chain[0] if chain else self._get_local_provider_config()
+
     def get_provider_info(self) -> dict:
-        config = self.resolve_provider()
+        chain = self.get_provider_chain()
+        primary = chain[0] if chain else self._get_local_provider_config()
         return {
-            "active_provider": config.provider,
-            "model": config.model,
-            "base_url": config.base_url,
-            "has_api_key": bool(config.api_key),
-            "fallback_provider": "local" if config.provider != "local" else None,
+            "active_provider": primary.provider,
+            "model": primary.model,
+            "base_url": primary.base_url,
+            "has_api_key": bool(primary.api_key),
+            "fallback_provider": "local",
+            "fallback_chain": [f"{c.provider} ({c.model})" for c in chain],
+            "total_providers_available": len(chain),
             "local_model": getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
             "local_url": getattr(settings, "VLLM_API_URL", "http://localhost:11434/v1"),
             "is_mock": self.use_mock,
@@ -178,32 +229,42 @@ class LLMService:
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            logger.warning(f"Error calling LLM provider '{config.provider}' ({config.model}): {e}")
+            logger.warning(f"LLM provider '{config.provider}' ({config.model}) execution failed: {e}")
             cache_key = f"{config.provider}:{config.base_url}"
             self._clients.pop(cache_key, None)
             return None
 
     def _call_llm(self, messages: list, temperature: float = 0.1, max_tokens: int = 1024) -> Optional[str]:
         """
-        Primary LLM execution entrypoint with automatic provider selection and
-        graceful fallback to local LLM if the external API key or proxy fails.
+        Execute LLM completion across the sequential provider fallback chain:
+        Tries each configured provider sequentially. If a provider fails
+        (network error, rate-limit, auth failure), logs a warning and tries
+        the next provider in the chain until reaching the local LLM.
         """
         if self.use_mock:
             return None
 
-        primary_config = self.resolve_provider()
-        content = self._execute_chat_completion(primary_config, messages, temperature, max_tokens)
-        if content is not None:
-            return content
+        chain = self.get_provider_chain()
+        attempted_providers = []
 
-        # If primary provider was an external cloud API or proxy and failed, fall back to local LLM
-        if primary_config.provider != "local":
-            logger.info(f"Primary provider '{primary_config.provider}' failed. Falling back to local LLM...")
-            local_config = self._get_local_provider_config()
-            content = self._execute_chat_completion(local_config, messages, temperature, max_tokens)
+        for idx, config in enumerate(chain):
+            attempted_providers.append(f"{config.provider} ({config.model})")
+            logger.info(f"Attempting LLM call using provider: '{config.provider}' (model: '{config.model}')")
+            content = self._execute_chat_completion(config, messages, temperature, max_tokens)
             if content is not None:
+                if idx > 0:
+                    logger.info(f"Successfully recovered using fallback provider '{config.provider}' after earlier failures.")
                 return content
 
+            # If not the last provider in the chain, log fallback attempt
+            if idx < len(chain) - 1:
+                next_provider = chain[idx + 1].provider
+                logger.warning(
+                    f"LLM provider '{config.provider}' ({config.model}) failed. "
+                    f"Falling back to next provider in chain: '{next_provider}'..."
+                )
+
+        logger.error(f"All LLM providers in fallback chain failed: {', '.join(attempted_providers)}")
         return None
 
     # Backward compatibility alias
