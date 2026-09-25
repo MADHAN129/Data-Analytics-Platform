@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api-client"
+import { apiCache } from "@/lib/api-cache"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -36,28 +37,40 @@ export default function DashboardsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [autoGenOpen, setAutoGenOpen] = useState(false)
 
-  const fetchDashboards = async () => {
-    setIsLoading(true)
+  const fetchDashboards = useCallback(async (forceFresh = false) => {
+    const cacheKey = `dashboards:page=${page}`
     try {
-      const data = await api.listDashboards({ page, per_page: perPage })
+      const { data } = await apiCache.swr(
+        cacheKey,
+        () => api.listDashboards({ page, per_page: perPage }),
+        {
+          ttlMs: 45000,
+          forceFresh,
+          onRevalidate: (fresh) => {
+            setDashboards(fresh.dashboards)
+            setTotal(fresh.total)
+          },
+        }
+      )
       setDashboards(data.dashboards)
       setTotal(data.total)
+      setIsLoading(false)
     } catch {
       toast({ title: "Error", description: "Failed to load dashboards", variant: "destructive" })
-    } finally {
       setIsLoading(false)
     }
-  }
+  }, [page, toast])
 
-  useEffect(() => { fetchDashboards() }, [page])
+  useEffect(() => { fetchDashboards() }, [fetchDashboards])
 
   const handleDelete = async () => {
     if (!deleteId) return
     try {
       await api.deleteDashboard(deleteId)
+      apiCache.invalidate("dashboards")
       toast({ title: "Dashboard deleted", variant: "success" })
       setDeleteId(null)
-      fetchDashboards()
+      fetchDashboards(true)
     } catch {
       toast({ title: "Error", description: "Failed to delete dashboard", variant: "destructive" })
     }

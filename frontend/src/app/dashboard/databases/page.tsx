@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api-client"
+import { apiCache } from "@/lib/api-cache"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -103,21 +104,33 @@ export default function DatabasesPage() {
 
   const perPage = 20
 
-  const fetchConnections = useCallback(async () => {
-    setIsLoading(true)
+  const fetchConnections = useCallback(async (forceFresh = false) => {
+    const cacheKey = `databases:page=${page}:search=${search}:filter=${connectionTypeFilter}`
     try {
-      const data = await api.listDatabases({
-        page,
-        per_page: perPage,
-        search: search || undefined,
-        connection_type: connectionTypeFilter || undefined,
-      })
+      const { data, isFromCache } = await apiCache.swr(
+        cacheKey,
+        () =>
+          api.listDatabases({
+            page,
+            per_page: perPage,
+            search: search || undefined,
+            connection_type: connectionTypeFilter || undefined,
+          }),
+        {
+          ttlMs: 45000,
+          forceFresh,
+          onRevalidate: (fresh) => {
+            setConnections(fresh.connections)
+            setTotal(fresh.total)
+          },
+        }
+      )
       setConnections(data.connections)
       setTotal(data.total)
+      setIsLoading(false)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to load databases", variant: "destructive" })
-    } finally {
       setIsLoading(false)
     }
   }, [page, perPage, search, connectionTypeFilter, toast])
@@ -157,10 +170,11 @@ export default function DatabasesPage() {
         ...form,
         port: Number(form.port),
       })
+      apiCache.invalidate("databases")
       toast({ title: "Connection created", variant: "success" })
       setCreateDialogOpen(false)
       resetForm()
-      fetchConnections()
+      fetchConnections(true)
 
       setIsTestingCreated(true)
       setTestResult(null)
@@ -193,10 +207,11 @@ export default function DatabasesPage() {
       data.port = Number(form.port)
       if (!data.password) delete data.password
       await api.updateDatabase(selectedConn.id, data)
+      apiCache.invalidate("databases")
       toast({ title: "Connection updated", variant: "success" })
       setEditDialogOpen(false)
       setSelectedConn(null)
-      fetchConnections()
+      fetchConnections(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to update connection", variant: "destructive" })
@@ -209,10 +224,11 @@ export default function DatabasesPage() {
     if (!selectedConn) return
     try {
       await api.deleteDatabase(selectedConn.id)
+      apiCache.invalidate("databases")
       toast({ title: "Connection deleted", variant: "success" })
       setDeleteDialogOpen(false)
       setSelectedConn(null)
-      fetchConnections()
+      fetchConnections(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to delete connection", variant: "destructive" })

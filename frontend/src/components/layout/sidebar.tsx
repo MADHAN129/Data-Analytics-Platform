@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -52,8 +52,17 @@ interface SidebarProps {
 
 export function Sidebar({ userRoles }: SidebarProps) {
   const pathname = usePathname()
+  const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)
   const isAdmin = userRoles?.some((r) => r === "Admin" || r === "SuperAdmin")
+
+  const handlePrefetch = (href: string) => {
+    try {
+      router.prefetch(href)
+    } catch {
+      // ignore
+    }
+  }
 
   return (
     <aside
@@ -64,7 +73,7 @@ export function Sidebar({ userRoles }: SidebarProps) {
     >
       <div className="flex h-14 items-center border-b border-sidebar-border px-4">
         {!collapsed && (
-          <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
+          <Link href="/dashboard" prefetch={true} className="flex items-center gap-2 font-semibold">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
               <BarChart3 className="h-4 w-4 text-primary-foreground" />
             </div>
@@ -84,7 +93,13 @@ export function Sidebar({ userRoles }: SidebarProps) {
       <ScrollArea className="flex-1 px-3 py-2">
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => (
-            <Link key={item.href} href={item.href}>
+            <Link
+              key={item.href}
+              href={item.href}
+              prefetch={true}
+              onMouseEnter={() => handlePrefetch(item.href)}
+              onFocus={() => handlePrefetch(item.href)}
+            >
               <span
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
@@ -111,7 +126,13 @@ export function Sidebar({ userRoles }: SidebarProps) {
                 <span className="px-3 py-1 text-xs text-sidebar-foreground/50">Administration</span>
               )}
               {adminItems.map((item) => (
-                <Link key={item.href} href={item.href}>
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  prefetch={true}
+                  onMouseEnter={() => handlePrefetch(item.href)}
+                  onFocus={() => handlePrefetch(item.href)}
+                >
                   <span
                     className={cn(
                       "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",

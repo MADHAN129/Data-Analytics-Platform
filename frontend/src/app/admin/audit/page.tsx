@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { api } from "@/lib/api-client"
+import { apiCache } from "@/lib/api-cache"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -24,24 +25,36 @@ export default function AdminAuditPage() {
 
   const perPage = 50
 
-  const fetchLogs = useCallback(async () => {
-    setIsLoading(true)
+  const fetchLogs = useCallback(async (forceFresh = false) => {
+    const cacheKey = `audit:page=${page}:search=${search}:action=${action}:status=${status}`
     try {
-      const data = await api.listAuditLogs({
-        page,
-        per_page: perPage,
-        search: search.trim() || undefined,
-        action: action.trim() ? action : undefined,
-        status: (status.trim() ? status : undefined) as "success" | "failure" | undefined,
-        sort_by: "created_at",
-        sort_order: "desc",
-      })
+      const { data } = await apiCache.swr(
+        cacheKey,
+        () =>
+          api.listAuditLogs({
+            page,
+            per_page: perPage,
+            search: search.trim() || undefined,
+            action: action.trim() ? action : undefined,
+            status: (status.trim() ? status : undefined) as "success" | "failure" | undefined,
+            sort_by: "created_at",
+            sort_order: "desc",
+          }),
+        {
+          ttlMs: 30000,
+          forceFresh,
+          onRevalidate: (fresh) => {
+            setLogs(fresh.logs)
+            setTotal(fresh.total)
+          },
+        }
+      )
       setLogs(data.logs)
       setTotal(data.total)
+      setIsLoading(false)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to load audit logs", variant: "destructive" })
-    } finally {
       setIsLoading(false)
     }
   }, [page, perPage, search, action, status, toast])

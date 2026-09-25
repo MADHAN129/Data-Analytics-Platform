@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { api } from "@/lib/api-client"
+import { apiCache } from "@/lib/api-cache"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -32,16 +33,27 @@ export default function AdminRolesPage() {
 
   const perPage = 20
 
-  const fetchRoles = useCallback(async () => {
-    setIsLoading(true)
+  const fetchRoles = useCallback(async (forceFresh = false) => {
+    const cacheKey = `roles:page=${page}`
     try {
-      const data = await api.listRoles({ page, per_page: perPage })
+      const { data } = await apiCache.swr(
+        cacheKey,
+        () => api.listRoles({ page, per_page: perPage }),
+        {
+          ttlMs: 45000,
+          forceFresh,
+          onRevalidate: (fresh) => {
+            setRoles(fresh.roles)
+            setTotal(fresh.total)
+          },
+        }
+      )
       setRoles(data.roles)
       setTotal(data.total)
+      setIsLoading(false)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to load roles", variant: "destructive" })
-    } finally {
       setIsLoading(false)
     }
   }, [page, perPage, toast])
@@ -50,7 +62,10 @@ export default function AdminRolesPage() {
 
   const fetchPermissions = async () => {
     try {
-      const data = await api.listPermissions()
+      const { data } = await apiCache.swr("permissions:all", () => api.listPermissions(), {
+        ttlMs: 60000,
+        onRevalidate: (fresh) => setPermissions(fresh.permissions),
+      })
       setPermissions(data.permissions)
     } catch {
       toast({ title: "Error", description: "Failed to load permissions", variant: "destructive" })
@@ -66,12 +81,13 @@ export default function AdminRolesPage() {
         description: newRoleDesc.trim() || undefined,
         permission_ids: selectedPermissionIds.length > 0 ? selectedPermissionIds : undefined,
       })
+      apiCache.invalidate("roles")
       toast({ title: "Role created", variant: "success" })
       setCreateDialogOpen(false)
       setNewRoleName("")
       setNewRoleDesc("")
       setSelectedPermissionIds([])
-      fetchRoles()
+      fetchRoles(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to create role", variant: "destructive" })
@@ -87,8 +103,9 @@ export default function AdminRolesPage() {
     }
     try {
       await api.deleteRole(role.id)
+      apiCache.invalidate("roles")
       toast({ title: "Role deleted", variant: "success" })
-      fetchRoles()
+      fetchRoles(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to delete role", variant: "destructive" })

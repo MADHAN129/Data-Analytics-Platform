@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { api } from "@/lib/api-client"
+import { apiCache } from "@/lib/api-cache"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -113,7 +114,10 @@ export default function AdminUsersPage() {
 
   const fetchRoles = useCallback(async () => {
     try {
-      const data = await api.listRoles()
+      const { data } = await apiCache.swr("roles:all", () => api.listRoles(), {
+        ttlMs: 60000,
+        onRevalidate: (fresh) => setAvailableRoles(fresh.roles || []),
+      })
       setAvailableRoles(data.roles || [])
     } catch {
       // Fallback roles if list fails
@@ -125,16 +129,27 @@ export default function AdminUsersPage() {
     }
   }, [])
 
-  const fetchUsers = useCallback(async () => {
-    setIsLoading(true)
+  const fetchUsers = useCallback(async (forceFresh = false) => {
+    const cacheKey = `users:page=${page}:search=${search}`
     try {
-      const data = await api.listUsers({ page, per_page: perPage, search: search || undefined })
+      const { data } = await apiCache.swr(
+        cacheKey,
+        () => api.listUsers({ page, per_page: perPage, search: search || undefined }),
+        {
+          ttlMs: 45000,
+          forceFresh,
+          onRevalidate: (fresh) => {
+            setUsers(fresh.users)
+            setTotal(fresh.total)
+          },
+        }
+      )
       setUsers(data.users)
       setTotal(data.total)
+      setIsLoading(false)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to load users", variant: "destructive" })
-    } finally {
       setIsLoading(false)
     }
   }, [page, perPage, search, toast])
@@ -162,10 +177,11 @@ export default function AdminUsersPage() {
         role: selectedRole,
         roles: [selectedRole],
       })
+      apiCache.invalidate("users")
       toast({ title: "User created successfully", variant: "success" })
       setAddDialogOpen(false)
       setNewUserForm({ ...defaultNewUserForm })
-      fetchUsers()
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({
@@ -197,7 +213,8 @@ export default function AdminUsersPage() {
         await api.activateUser(user.id)
         toast({ title: "User activated", variant: "success" })
       }
-      fetchUsers()
+      apiCache.invalidate("users")
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Operation failed", variant: "destructive" })
@@ -221,10 +238,11 @@ export default function AdminUsersPage() {
 
     try {
       await api.deleteUser(selectedUser.id)
+      apiCache.invalidate("users")
       toast({ title: "User deleted", variant: "success" })
       setDeleteDialogOpen(false)
       setSelectedUser(null)
-      fetchUsers()
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to delete user", variant: "destructive" })
@@ -255,9 +273,10 @@ export default function AdminUsersPage() {
         await api.assignRoleToUser(selectedUser.id, targetRole.id)
       }
 
+      apiCache.invalidate("users")
       toast({ title: `Role updated to ${targetRole.name}`, variant: "success" })
       setSelectedUser({ ...selectedUser, roles: [targetRole] })
-      fetchUsers()
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error updating role", description: error.detail || "Operation failed", variant: "destructive" })
