@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api-client"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -25,9 +25,11 @@ import {
   Database,
 } from "lucide-react"
 
-export default function ConversationsPage() {
+export function ConversationsPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const searchParams = useSearchParams()
+  const templateParam = searchParams.get("template")
   const [conversations, setConversations] = useState<ConversationResponse[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -35,6 +37,7 @@ export default function ConversationsPage() {
   const [creating, setCreating] = useState(false)
   const [databases, setDatabases] = useState<DatabaseConnectionResponse[]>([])
   const [selectedDb, setSelectedDb] = useState<string>("")
+  const [templateQuestion, setTemplateQuestion] = useState<string>("")
   const [dialogOpen, setDialogOpen] = useState(false)
 
   const perPage = 20
@@ -63,6 +66,16 @@ export default function ConversationsPage() {
       setDatabases([])
     }
     setSelectedDb("")
+    setTemplateQuestion("")
+    if (templateParam) {
+      try {
+        const t = await api.getTemplateById(Number(templateParam))
+        setTemplateQuestion(t.natural_language)
+        if (t.database_id) setSelectedDb(String(t.database_id))
+      } catch {
+        setTemplateQuestion("")
+      }
+    }
     setDialogOpen(true)
   }
 
@@ -75,7 +88,8 @@ export default function ConversationsPage() {
       )
       toast({ title: "Conversation created", variant: "success" })
       setDialogOpen(false)
-      router.push(`/dashboard/conversations/${conv.id}`)
+      const q = templateQuestion ? `?question=${encodeURIComponent(templateQuestion)}` : ""
+      router.push(`/dashboard/conversations/${conv.id}${q}`)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to create conversation", variant: "destructive" })
@@ -222,5 +236,13 @@ export default function ConversationsPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function ConversationsPageWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <ConversationsPage />
+    </Suspense>
   )
 }

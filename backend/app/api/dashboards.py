@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query as FastAPIQuery
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user
+from app.api.deps import require_permission, user_has_permission
 from app.models.user import User
 from app.models.dashboard import DashboardWidget
 from app.models.query import Query
@@ -20,6 +20,10 @@ from app.schemas.dashboard import (
 from app.services import dashboard_service
 
 router = APIRouter(prefix="/dashboards", tags=["dashboards"])
+
+
+def _manage_all(db: Session, user: User) -> bool:
+    return user_has_permission(db, user, "access.manage")
 
 
 def _dashboard_to_detail(dash) -> DashboardDetailResponse:
@@ -52,14 +56,27 @@ def _dashboard_to_list(dash) -> DashboardResponse:
     )
 
 
+def _get_owned_dashboard(db: Session, dashboard_id: int, user: User):
+    dash = dashboard_service.get_dashboard(
+        db, dashboard_id, user_id=user.id,
+        include_all=_manage_all(db, user),
+    )
+    if not dash:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    return dash
+
+
 @router.get("", response_model=DashboardListResponse)
 def list_dashboards(
     skip: int = FastAPIQuery(0, ge=0),
     limit: int = FastAPIQuery(50, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.read")),
     db: Session = Depends(get_db),
 ):
-    dashboards, total = dashboard_service.list_dashboards(db, skip, limit)
+    dashboards, total = dashboard_service.list_dashboards(
+        db, skip, limit, user_id=current_user.id,
+        include_all=_manage_all(db, current_user),
+    )
     items = [_dashboard_to_list(d) for d in dashboards]
     return DashboardListResponse(dashboards=items, total=total)
 
@@ -67,19 +84,17 @@ def list_dashboards(
 @router.get("/{dashboard_id}", response_model=DashboardDetailResponse)
 def get_dashboard(
     dashboard_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.read")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.get_dashboard(db, dashboard_id)
-    if not dash:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+    dash = _get_owned_dashboard(db, dashboard_id, current_user)
     return _dashboard_to_detail(dash)
 
 
 @router.post("", response_model=DashboardDetailResponse, status_code=201)
 def create_dashboard(
     data: DashboardCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.create")),
     db: Session = Depends(get_db),
 ):
     dash = dashboard_service.create_dashboard(db, data, user_id=current_user.id)
@@ -90,12 +105,10 @@ def create_dashboard(
 def update_dashboard(
     dashboard_id: int,
     data: DashboardUpdateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.update")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.get_dashboard(db, dashboard_id)
-    if not dash:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+    dash = _get_owned_dashboard(db, dashboard_id, current_user)
     dash = dashboard_service.update_dashboard(db, dash, data)
     return _dashboard_to_detail(dash)
 
@@ -103,12 +116,10 @@ def update_dashboard(
 @router.delete("/{dashboard_id}", status_code=204)
 def delete_dashboard(
     dashboard_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.delete")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.get_dashboard(db, dashboard_id)
-    if not dash:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+    dash = _get_owned_dashboard(db, dashboard_id, current_user)
     dashboard_service.delete_dashboard(db, dash)
 
 
@@ -116,15 +127,22 @@ def delete_dashboard(
 def add_widget(
     dashboard_id: int,
     data: WidgetConfig,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.update")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.get_dashboard(db, dashboard_id)
-    if not dash:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+    dash = _get_owned_dashboard(db, dashboard_id, current_user)
     config = data.config or {}
     if data.query_id and not config.get("sql"):
-        q = db.query(Query).filter(Query.id == data.query_id).first()
+        q = (
+            db.query(Query)
+            .filter(Query.id == data.query_id)
+            .filter(
+                Query.user_id == current_user.id
+                if not _manage_all(db, current_user)
+                else True
+            )
+            .first()
+        )
         if q and q.generated_sql:
             config["sql"] = q.generated_sql
             config["database_id"] = q.database_id
@@ -148,12 +166,10 @@ def update_widget(
     dashboard_id: int,
     widget_id: int,
     data: WidgetConfig,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.update")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.get_dashboard(db, dashboard_id)
-    if not dash:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+    dash = _get_owned_dashboard(db, dashboard_id, current_user)
     widget = (
         db.query(DashboardWidget)
         .filter(
@@ -166,7 +182,16 @@ def update_widget(
         raise HTTPException(status_code=404, detail="Widget not found")
     config = data.config or {}
     if data.query_id and not config.get("sql"):
-        q = db.query(Query).filter(Query.id == data.query_id).first()
+        q = (
+            db.query(Query)
+            .filter(Query.id == data.query_id)
+            .filter(
+                Query.user_id == current_user.id
+                if not _manage_all(db, current_user)
+                else True
+            )
+            .first()
+        )
         if q and q.generated_sql:
             config["sql"] = q.generated_sql
             config["database_id"] = q.database_id
@@ -189,12 +214,10 @@ def update_widget(
 def delete_widget(
     dashboard_id: int,
     widget_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.update")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.get_dashboard(db, dashboard_id)
-    if not dash:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+    dash = _get_owned_dashboard(db, dashboard_id, current_user)
     widget = (
         db.query(DashboardWidget)
         .filter(
@@ -212,12 +235,10 @@ def delete_widget(
 def update_layout(
     dashboard_id: int,
     data: LayoutUpdateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.update")),
     db: Session = Depends(get_db),
 ):
-    dash = dashboard_service.get_dashboard(db, dashboard_id)
-    if not dash:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
+    dash = _get_owned_dashboard(db, dashboard_id, current_user)
     widgets = dashboard_service.update_layout(db, dash, data)
     return [WidgetResponse.model_validate(w) for w in widgets]
 
@@ -225,7 +246,7 @@ def update_layout(
 @router.post("/auto-generate", response_model=DashboardDetailResponse, status_code=201)
 def auto_generate_dashboard(
     data: AutoGenerateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("dashboard.create")),
     db: Session = Depends(get_db),
 ):
     dash = dashboard_service.auto_generate_from_query(
