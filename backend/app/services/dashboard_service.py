@@ -283,6 +283,7 @@ def auto_generate_from_query(
 
         query = Query(
             user_id=dash.user_id,
+            company_id=dash.company_id,
             database_id=database_id,
             natural_language=natural_language,
             generated_sql=sql,

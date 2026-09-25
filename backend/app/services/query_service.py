@@ -13,6 +13,7 @@ from app.models.connection import DatabaseConnection
 from app.models.query import Query
 from app.models.conversation import Conversation
 from app.models.template import QueryTemplate
+from app.models.user import User
 from app.schemas.query import (
     QueryRequest, SQLExecutionRequest, FollowUpRequest,
     QueryResponse, QueryResult, VisualizationSuggestion,
@@ -689,6 +690,9 @@ def execute_natural_language_query(
     if not db_conn:
         raise HTTPException(status_code=404, detail="Database not found")
 
+    user = db.query(User).filter(User.id == user_id).first()
+    company_id = db_conn.company_id or (user.company_id if user else None)
+
     # Check if we should use MCP tools
     if use_mcp_tools is None:
         use_mcp_tools = getattr(settings, 'USE_MCP_TOOLS', False)
@@ -743,6 +747,7 @@ def execute_natural_language_query(
                 # Create query record
                 query_record = Query(
                     user_id=user_id,
+                    company_id=company_id,
                     database_id=data.database_id,
                     natural_language=data.natural_language,
                     generated_sql=sql,
@@ -802,6 +807,7 @@ def execute_natural_language_query(
     if intent_status in ("UNRELATED", "AMBIGUOUS"):
         query_record = Query(
             user_id=user_id,
+            company_id=company_id,
             database_id=data.database_id,
             natural_language=data.natural_language,
             generated_sql=None,
@@ -851,6 +857,7 @@ def execute_natural_language_query(
 
     query_record = Query(
         user_id=user_id,
+        company_id=company_id,
         database_id=data.database_id,
         natural_language=data.natural_language,
         generated_sql=sql,
@@ -981,11 +988,12 @@ def execute_raw_sql(
         db, data.database_id, user_id=user_id,
         include_all=_user_has_manage_permission(db, user_id),
     )
-    if not db_conn:
-        raise HTTPException(status_code=404, detail="Database not found")
+    user = db.query(User).filter(User.id == user_id).first()
+    company_id = db_conn.company_id or (user.company_id if user else None)
 
     query_record = Query(
         user_id=user_id,
+        company_id=company_id,
         database_id=data.database_id,
         natural_language=f"Execute raw SQL: {data.sql[:100]}",
         generated_sql=data.sql,

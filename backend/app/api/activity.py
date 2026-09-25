@@ -31,6 +31,16 @@ def get_activity_overview(
 ):
     company_id = current_user.company_id
 
+    # Pre-fetch users and databases mapping scoped to company
+    if company_id is not None:
+        all_users = {u.id: u for u in db.query(User).filter(User.company_id == company_id).all()}
+        all_dbs = {d.id: d for d in db.query(DatabaseConnection).filter(DatabaseConnection.company_id == company_id).all()}
+        company_user_ids = list(all_users.keys()) or [current_user.id]
+    else:
+        all_users = {current_user.id: current_user}
+        all_dbs = {d.id: d for d in db.query(DatabaseConnection).filter(DatabaseConnection.created_by == current_user.id).all()}
+        company_user_ids = [current_user.id]
+
     # 1. Total tokens calculation strictly scoped to the user's company
     query_tokens_q = db.query(func.coalesce(func.sum(QueryModel.tokens_used), 0))
     msg_tokens_q = db.query(func.coalesce(func.sum(ConversationMessage.tokens_used), 0)).join(
@@ -38,8 +48,12 @@ def get_activity_overview(
     )
 
     if company_id is not None:
-        query_tokens_q = query_tokens_q.filter(QueryModel.company_id == company_id)
-        msg_tokens_q = msg_tokens_q.filter(Conversation.company_id == company_id)
+        query_tokens_q = query_tokens_q.filter(
+            (QueryModel.company_id == company_id) | (QueryModel.user_id.in_(company_user_ids))
+        )
+        msg_tokens_q = msg_tokens_q.filter(
+            (Conversation.company_id == company_id) | (Conversation.user_id.in_(company_user_ids))
+        )
     else:
         query_tokens_q = query_tokens_q.filter(QueryModel.user_id == current_user.id)
         msg_tokens_q = msg_tokens_q.filter(Conversation.user_id == current_user.id)
@@ -51,7 +65,9 @@ def get_activity_overview(
     # 2. Total queries count strictly scoped to company
     queries_count_q = db.query(func.count(QueryModel.id))
     if company_id is not None:
-        queries_count_q = queries_count_q.filter(QueryModel.company_id == company_id)
+        queries_count_q = queries_count_q.filter(
+            (QueryModel.company_id == company_id) | (QueryModel.user_id.in_(company_user_ids))
+        )
     else:
         queries_count_q = queries_count_q.filter(QueryModel.user_id == current_user.id)
     total_queries = queries_count_q.scalar() or 0
@@ -65,21 +81,16 @@ def get_activity_overview(
     total_users = users_count_q.scalar() or 0
 
     # 4. Recent queries with user and database details
-    queries_q = db.query(QueryModel).order_by(desc(QueryModel.created_at)).limit(100)
+    queries_q = db.query(QueryModel)
     if company_id is not None:
-        queries_q = queries_q.filter(QueryModel.company_id == company_id)
+        queries_q = queries_q.filter(
+            (QueryModel.company_id == company_id) | (QueryModel.user_id.in_(company_user_ids))
+        )
     else:
         queries_q = queries_q.filter(QueryModel.user_id == current_user.id)
+    queries_q = queries_q.order_by(desc(QueryModel.created_at)).limit(100)
 
     raw_queries = queries_q.all()
-
-    # Pre-fetch users and databases mapping scoped to company
-    if company_id is not None:
-        all_users = {u.id: u for u in db.query(User).filter(User.company_id == company_id).all()}
-        all_dbs = {d.id: d for d in db.query(DatabaseConnection).filter(DatabaseConnection.company_id == company_id).all()}
-    else:
-        all_users = {current_user.id: current_user}
-        all_dbs = {d.id: d for d in db.query(DatabaseConnection).filter(DatabaseConnection.created_by == current_user.id).all()}
 
     recent_queries: List[ActivityQueryItem] = []
     for q in raw_queries:
@@ -107,11 +118,12 @@ def get_activity_overview(
         )
 
     # 5. Database lifecycle items strictly scoped to company
-    dbs_q = db.query(DatabaseConnection).order_by(desc(DatabaseConnection.created_at))
+    dbs_q = db.query(DatabaseConnection)
     if company_id is not None:
         dbs_q = dbs_q.filter(DatabaseConnection.company_id == company_id)
     else:
         dbs_q = dbs_q.filter(DatabaseConnection.created_by == current_user.id)
+    dbs_q = dbs_q.order_by(desc(DatabaseConnection.created_at))
     raw_dbs = dbs_q.all()
 
     database_lifecycle: List[ActivityDatabaseItem] = []
@@ -148,12 +160,12 @@ def get_activity_overview(
     audit_deleted_q = (
         db.query(AuditLog)
         .filter(AuditLog.resource_type == "database", AuditLog.action == "delete")
-        .order_by(desc(AuditLog.created_at))
     )
     if company_id is not None:
         audit_deleted_q = audit_deleted_q.filter(AuditLog.company_id == company_id)
     else:
         audit_deleted_q = audit_deleted_q.filter(AuditLog.user_id == current_user.id)
+    audit_deleted_q = audit_deleted_q.order_by(desc(AuditLog.created_at))
 
     for al in audit_deleted_q.all():
         if al.resource_id and al.resource_id not in seen_db_ids:
