@@ -134,12 +134,7 @@ def refresh_token(db: Session, token: str):
             detail="User not found or inactive",
         )
 
-    access_token = create_access_token({"sub": str(user.id)})
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    }
+    return build_token_response(db, user)
 
 
 def forgot_password(db: Session, data: ForgotPasswordRequest):

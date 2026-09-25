@@ -98,6 +98,13 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
+    if (!this.accessToken && typeof window !== "undefined") {
+      this.accessToken = localStorage.getItem("access_token")
+    }
+    if (!this._refreshToken && typeof window !== "undefined") {
+      this._refreshToken = localStorage.getItem("refresh_token")
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...(options.headers as Record<string, string>),
@@ -112,7 +119,7 @@ class ApiClient {
       headers,
     })
 
-    if (response.status === 401 && this._refreshToken) {
+    if (response.status === 401 && (this._refreshToken || (typeof window !== "undefined" && localStorage.getItem("refresh_token")))) {
       const refreshed = await this.tryRefresh()
       if (refreshed) {
         headers["Authorization"] = `Bearer ${this.accessToken}`
@@ -146,10 +153,12 @@ class ApiClient {
 
   private async tryRefresh(): Promise<boolean> {
     try {
+      const token = this._refreshToken || (typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null)
+      if (!token) return false
       const response = await fetch(`${API_URL}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: this._refreshToken }),
+        body: JSON.stringify({ refresh_token: token }),
       })
       if (response.ok) {
         const data: TokenResponse = await response.json()
