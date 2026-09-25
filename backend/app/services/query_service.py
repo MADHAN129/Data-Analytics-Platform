@@ -356,12 +356,25 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
             "ensure entities with valid data are returned by ordering with 'DESC NULLS LAST' and filtering WHERE numerator IS NOT NULL and denominator > 0 (or using INNER JOIN)."
         )
 
-    # Ranking single item guidance
-    if any(w in q_lower for w in ("highest", "lowest", "most", "least", "top", "best", "bottom")) and "summary" not in q_lower:
+    # Group breakdown vs Global single item ranking guidance
+    is_group_breakdown = (
+        any(w in q_lower for w in ("each", "every", "all", "per", "across", "breakdown", "group by", "for all"))
+        or " by " in q_lower
+        or "of each" in q_lower
+        or "in each" in q_lower
+        or "for each" in q_lower
+    )
+    if is_group_breakdown:
+        guidance.append(
+            "- GROUP BREAKDOWN AGGREGATION RULE: The question requests metrics for EACH / ALL entities or grouped dimensions (e.g. 'of each department', 'in each department', 'per region', 'by department', 'for every project'). "
+            "You MUST use GROUP BY on the grouping dimension and return records for ALL distinct groups. "
+            "NEVER use LIMIT 1, TOP 1, FETCH FIRST 1 ROWS, or FETCH FIRST 1 ROWS WITH TIES."
+        )
+    elif any(w in q_lower for w in ("highest", "lowest", "most", "least", "top", "best", "bottom")) and "summary" not in q_lower:
         if dialect == "Oracle SQL":
-            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity, ORDER BY the relevant metric DESC NULLS LAST (or ASC NULLS LAST for lowest) and append 'FETCH FIRST 1 ROWS WITH TIES'.")
+            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity overall across the entire dataset, ORDER BY the relevant metric DESC NULLS LAST (or ASC NULLS LAST for lowest) and append 'FETCH FIRST 1 ROWS WITH TIES'.")
         elif dialect in ("PostgreSQL", "MySQL", "SQLite"):
-            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity, ORDER BY the relevant metric (DESC NULLS LAST for highest/most, ASC NULLS LAST for lowest/least) and append 'LIMIT 1'.")
+            guidance.append("- RANKING RULE: For questions asking for the 'highest', 'lowest', 'most', or 'top' single entity overall across the entire dataset, ORDER BY the relevant metric (DESC NULLS LAST for highest/most, ASC NULLS LAST for lowest/least) and append 'LIMIT 1'.")
         elif dialect in ("SQL Server", "T-SQL"):
             guidance.append("- RANKING RULE: Use 'SELECT TOP 1 WITH TIES' with ORDER BY the relevant metric.")
 
