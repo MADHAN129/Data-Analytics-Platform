@@ -33,8 +33,10 @@ then `uvicorn app.main:app --reload` from `backend/`.
   `JSONB` → `JSON` before model imports, and gives every test a fresh
   in-memory SQLite DB (StaticPool). Never reorder the imports there.
 - CI: `.github/workflows/test.yml` runs backend tests + frontend lint/build.
-- The full docker-compose stack needs an NVIDIA runtime (ollama); on machines
-  without a GPU run postgres/redis only and set `LLM_USE_MOCK=true`.
+- LLM Providers:
+  * Supports OpenRouter (`OPENROUTER_API_KEY`), Grok/xAI (`GROK_API_KEY`), Local Proxy (`LOCAL_PROXY_URL`), OpenAI (`OPENAI_API_KEY`), and Local Ollama/vLLM (`VLLM_API_URL`).
+  * Auto-selects cloud API keys if present in `.env` with automatic fallback to local LLM on failure.
+  * For local dev without a GPU: provide an `OPENROUTER_API_KEY` / `GROK_API_KEY` in `.env` or set `LLM_USE_MOCK=true`.
 
 ## Conventions
 

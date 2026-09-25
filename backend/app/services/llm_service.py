@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
@@ -7,60 +9,206 @@ import httpx
 from app.config import settings
 from app.services.mcp_client import mcp_client
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMProviderConfig:
+    provider: str  # "openrouter", "grok", "local_proxy", "openai", "local", "mock"
+    base_url: str
+    api_key: str
+    model: str
+    headers: dict = field(default_factory=dict)
+    timeout_seconds: float = 120.0
+
 
 class LLMService:
     def __init__(self):
-        self.model_name = settings.LLM_MODEL
-        self.api_url = settings.VLLM_API_URL
-        self.api_key = settings.VLLM_API_KEY or "not-needed"
-        self._client: Optional[httpx.Client] = None
+        self._clients: dict[str, httpx.Client] = {}
+
+    @property
+    def use_mock(self) -> bool:
+        return getattr(settings, "LLM_USE_MOCK", False) or getattr(settings, "LLM_PROVIDER", "auto").lower() == "mock"
+
+    @property
+    def model_name(self) -> str:
+        return self.resolve_provider().model
+
+    @property
+    def api_url(self) -> str:
+        return self.resolve_provider().base_url
+
+    @property
+    def api_key(self) -> str:
+        return self.resolve_provider().api_key or "not-needed"
 
     @property
     def client(self) -> Optional[httpx.Client]:
-        if self._client is None:
-            try:
-                self._client = httpx.Client(
-                    base_url=self.api_url,
-                    timeout=httpx.Timeout(120.0, connect=10.0),
-                )
-            except Exception:
-                self._client = None
-        return self._client
+        config = self.resolve_provider()
+        return self._get_client(config)
 
-    def _get_db_dialect(self, connection_type: str) -> str:
-        dialect_map = {
-            "postgresql": "PostgreSQL",
-            "mysql": "MySQL",
-            "mariadb": "MySQL",
-            "sqlserver": "SQL Server",
-            "mongodb": "MongoDB (NoSQL)",
-            "oracle": "Oracle SQL",
+    def resolve_provider(self) -> LLMProviderConfig:
+        """
+        Dynamically determine the active LLM provider based on configured API keys
+        and the LLM_PROVIDER setting.
+        
+        Priority (when LLM_PROVIDER="auto"):
+        1. OpenRouter (if OPENROUTER_API_KEY is provided)
+        2. Grok / xAI (if GROK_API_KEY or XAI_API_KEY is provided)
+        3. Local Proxy (if LOCAL_PROXY_URL is provided)
+        4. OpenAI (if OPENAI_API_KEY is provided)
+        5. Local LLM / Ollama / vLLM (default / fallback)
+        """
+        provider_override = getattr(settings, "LLM_PROVIDER", "auto").lower()
+
+        if self.use_mock:
+            return LLMProviderConfig(
+                provider="mock",
+                base_url="",
+                api_key="",
+                model="mock",
+            )
+
+        # 1. OpenRouter
+        if provider_override == "openrouter" or (provider_override == "auto" and getattr(settings, "OPENROUTER_API_KEY", "")):
+            headers = {
+                "HTTP-Referer": getattr(settings, "OPENROUTER_SITE_URL", "http://localhost:3000"),
+                "X-Title": getattr(settings, "OPENROUTER_APP_NAME", "Data-Analyzer"),
+            }
+            return LLMProviderConfig(
+                provider="openrouter",
+                base_url=getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/"),
+                api_key=getattr(settings, "OPENROUTER_API_KEY", ""),
+                model=getattr(settings, "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct"),
+                headers=headers,
+            )
+
+        # 2. Grok / xAI
+        grok_key = getattr(settings, "GROK_API_KEY", "") or getattr(settings, "XAI_API_KEY", "")
+        if provider_override == "grok" or (provider_override == "auto" and grok_key):
+            return LLMProviderConfig(
+                provider="grok",
+                base_url=getattr(settings, "GROK_BASE_URL", "https://api.x.ai/v1").rstrip("/"),
+                api_key=grok_key,
+                model=getattr(settings, "GROK_MODEL", "grok-2-latest"),
+            )
+
+        # 3. Local Proxy
+        if provider_override == "local_proxy" or (provider_override == "auto" and getattr(settings, "LOCAL_PROXY_URL", "")):
+            return LLMProviderConfig(
+                provider="local_proxy",
+                base_url=getattr(settings, "LOCAL_PROXY_URL", "").rstrip("/"),
+                api_key=getattr(settings, "LOCAL_PROXY_API_KEY", ""),
+                model=getattr(settings, "LOCAL_PROXY_MODEL", "") or getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
+            )
+
+        # 4. OpenAI
+        if provider_override == "openai" or (provider_override == "auto" and getattr(settings, "OPENAI_API_KEY", "")):
+            return LLMProviderConfig(
+                provider="openai",
+                base_url=getattr(settings, "OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
+                api_key=getattr(settings, "OPENAI_API_KEY", ""),
+                model=getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"),
+            )
+
+        # 5. Local LLM / Ollama / vLLM (Default)
+        return self._get_local_provider_config()
+
+    def _get_local_provider_config(self) -> LLMProviderConfig:
+        return LLMProviderConfig(
+            provider="local",
+            base_url=getattr(settings, "VLLM_API_URL", "http://localhost:11434/v1").rstrip("/"),
+            api_key=getattr(settings, "VLLM_API_KEY", "") or "",
+            model=getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
+        )
+
+    def get_provider_info(self) -> dict:
+        config = self.resolve_provider()
+        return {
+            "active_provider": config.provider,
+            "model": config.model,
+            "base_url": config.base_url,
+            "has_api_key": bool(config.api_key),
+            "fallback_provider": "local" if config.provider != "local" else None,
+            "local_model": getattr(settings, "LLM_MODEL", "qwen2.5-coder:3b"),
+            "local_url": getattr(settings, "VLLM_API_URL", "http://localhost:11434/v1"),
+            "is_mock": self.use_mock,
         }
-        return dialect_map.get(connection_type, "SQL")
 
-    def _call_vllm(self, messages: list, temperature: float = 0.1, max_tokens: int = 1024) -> Optional[str]:
-        client = self.client
+    def _get_client(self, config: LLMProviderConfig) -> Optional[httpx.Client]:
+        if not config.base_url:
+            return None
+        cache_key = f"{config.provider}:{config.base_url}"
+        if cache_key not in self._clients:
+            try:
+                self._clients[cache_key] = httpx.Client(
+                    base_url=config.base_url,
+                    timeout=httpx.Timeout(config.timeout_seconds, connect=10.0),
+                )
+            except Exception as e:
+                logger.error(f"Failed to create httpx.Client for {config.provider}: {e}")
+                return None
+        return self._clients[cache_key]
+
+    def _execute_chat_completion(
+        self,
+        config: LLMProviderConfig,
+        messages: list,
+        temperature: float = 0.1,
+        max_tokens: int = 1024,
+    ) -> Optional[str]:
+        client = self._get_client(config)
         if client is None:
             return None
         try:
             payload = {
-                "model": self.model_name,
+                "model": config.model,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
             headers = {"Content-Type": "application/json"}
-            if self.api_key and self.api_key != "not-needed":
-                headers["Authorization"] = f"Bearer {self.api_key}"
+            if config.api_key and config.api_key != "not-needed":
+                headers["Authorization"] = f"Bearer {config.api_key}"
+            if config.headers:
+                headers.update(config.headers)
 
             resp = client.post("/chat/completions", json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
-            return content
-        except Exception:
-            self._client = None
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.warning(f"Error calling LLM provider '{config.provider}' ({config.model}): {e}")
+            cache_key = f"{config.provider}:{config.base_url}"
+            self._clients.pop(cache_key, None)
             return None
+
+    def _call_llm(self, messages: list, temperature: float = 0.1, max_tokens: int = 1024) -> Optional[str]:
+        """
+        Primary LLM execution entrypoint with automatic provider selection and
+        graceful fallback to local LLM if the external API key or proxy fails.
+        """
+        if self.use_mock:
+            return None
+
+        primary_config = self.resolve_provider()
+        content = self._execute_chat_completion(primary_config, messages, temperature, max_tokens)
+        if content is not None:
+            return content
+
+        # If primary provider was an external cloud API or proxy and failed, fall back to local LLM
+        if primary_config.provider != "local":
+            logger.info(f"Primary provider '{primary_config.provider}' failed. Falling back to local LLM...")
+            local_config = self._get_local_provider_config()
+            content = self._execute_chat_completion(local_config, messages, temperature, max_tokens)
+            if content is not None:
+                return content
+
+        return None
+
+    # Backward compatibility alias
+    def _call_vllm(self, messages: list, temperature: float = 0.1, max_tokens: int = 1024) -> Optional[str]:
+        return self._call_llm(messages, temperature, max_tokens)
 
     def _table_names_from_schema(self, schema_context: str) -> list[str]:
         lines = [line.strip() for line in schema_context.split("\n") if line.strip()]
