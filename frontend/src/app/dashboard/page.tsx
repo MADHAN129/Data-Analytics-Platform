@@ -94,10 +94,15 @@ export default function DashboardPage() {
       setTotalDashboards(dashTotal)
       setTotalWidgets(widgetsSum)
 
-      // 4. Insights Generated
+      // 4. Insights Generated (strictly scoped to this user's company)
       let storedReportsCount = 0
       if (typeof window !== "undefined") {
-        const stored = localStorage.getItem("generated_reports")
+        const companyKey = user?.company_id
+          ? `generated_reports_company_${user.company_id}`
+          : user?.id
+          ? `generated_reports_user_${user.id}`
+          : null
+        const stored = companyKey ? localStorage.getItem(companyKey) : null
         if (stored) {
           try {
             storedReportsCount = JSON.parse(stored).length
@@ -107,7 +112,7 @@ export default function DashboardPage() {
         }
       }
 
-      // Insights count aggregates AI queries, dashboard widget analytics, and executive reports
+      // Insights count aggregates AI queries, dashboard widget analytics, and executive reports for this company only
       const calculatedInsights = totQ + widgetsSum + storedReportsCount
       setInsightsGenerated(calculatedInsights)
     } catch {
@@ -116,7 +121,7 @@ export default function DashboardPage() {
       setLoading(false)
       isRefreshingRef.current = false
     }
-  }, [])
+  }, [user])
 
   useEffect(() => {
     refreshOverviewStats()

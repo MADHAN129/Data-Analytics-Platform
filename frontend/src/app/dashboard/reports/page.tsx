@@ -34,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { useAuthStore } from "@/store/auth-store"
 import {
   FileText,
   FileSpreadsheet,
@@ -91,6 +92,7 @@ export interface GeneratedReport {
 export default function ReportsPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const { user } = useAuthStore()
   const [reports, setReports] = useState<GeneratedReport[]>([])
   const [dashboards, setDashboards] = useState<DashboardResponse[]>([])
   const [loading, setLoading] = useState(true)
@@ -99,19 +101,33 @@ export default function ReportsPage() {
   const [previewReport, setPreviewReport] = useState<GeneratedReport | null>(null)
   const [isRegeneratingId, setIsRegeneratingId] = useState<number | null>(null)
 
-  // Load saved reports from local storage
+  const getStorageKey = useCallback(() => {
+    if (user?.company_id) return `generated_reports_company_${user.company_id}`
+    if (user?.id) return `generated_reports_user_${user.id}`
+    return null
+  }, [user])
+
+  // Load saved reports from local storage (scoped strictly to current company/tenant)
   const fetchReports = useCallback(() => {
     setLoading(true)
-    const stored = localStorage.getItem("generated_reports")
+    const key = getStorageKey()
+    if (!key) {
+      setReports([])
+      setLoading(false)
+      return
+    }
+    const stored = localStorage.getItem(key)
     if (stored) {
       try {
         setReports(JSON.parse(stored))
       } catch {
         setReports([])
       }
+    } else {
+      setReports([])
     }
     setLoading(false)
-  }, [])
+  }, [getStorageKey])
 
   // Fetch available dashboards
   const fetchDashboards = useCallback(async () => {
@@ -130,7 +146,10 @@ export default function ReportsPage() {
 
   const saveReports = (updated: GeneratedReport[]) => {
     setReports(updated)
-    localStorage.setItem("generated_reports", JSON.stringify(updated))
+    const key = getStorageKey()
+    if (key) {
+      localStorage.setItem(key, JSON.stringify(updated))
+    }
   }
 
   const handleDelete = (id: number) => {
