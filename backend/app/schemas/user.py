@@ -22,6 +22,7 @@ class UserResponse(BaseModel):
     full_name: str
     phone: Optional[str] = None
     avatar_url: Optional[str] = None
+    bio: Optional[str] = None
     auth_provider: str
     is_active: bool
     mfa_enabled: bool
@@ -36,6 +37,7 @@ class UpdateProfileRequest(BaseModel):
     full_name: Optional[str] = None
     phone: Optional[str] = None
     avatar_url: Optional[str] = None
+    bio: Optional[str] = None
 
 
 class CreateUserRequest(BaseModel):

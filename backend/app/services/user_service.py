@@ -29,7 +29,7 @@ def get_user_response(db: Session, user: User) -> UserResponse:
     ]
     return UserResponse(
         id=user.id, email=user.email, full_name=user.full_name,
-        phone=user.phone, avatar_url=user.avatar_url,
+        phone=user.phone, avatar_url=user.avatar_url, bio=user.bio,
         auth_provider=user.auth_provider, is_active=user.is_active,
         mfa_enabled=user.mfa_enabled, roles=roles,
         created_at=user.created_at, updated_at=user.updated_at,
@@ -83,6 +83,8 @@ def update_profile(db: Session, user_id: int, data: UpdateProfileRequest, curren
         user.phone = data.phone
     if data.avatar_url is not None:
         user.avatar_url = data.avatar_url
+    if data.bio is not None:
+        user.bio = data.bio
 
     db.commit()
     db.refresh(user)

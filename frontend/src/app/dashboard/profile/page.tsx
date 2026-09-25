@@ -1,8 +1,470 @@
 "use client"
 
-import { PlaceholderPage } from "@/components/shared/placeholder-page"
+import { useState, useEffect, useRef } from "react"
+import { api } from "@/lib/api-client"
+import type { UserResponse } from "@/types/api"
+import { useToast } from "@/components/ui/use-toast"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  User,
+  Mail,
+  Phone,
+  Shield,
+  KeyRound,
+  Camera,
+  Trash2,
+  Loader2,
+  CheckCircle2,
+  Calendar,
+  Sparkles,
+} from "lucide-react"
 
 export default function ProfilePage() {
-  return <PlaceholderPage title="Profile" description="Manage your account settings" />
-}
+  const { toast } = useToast()
+  const [user, setUser] = useState<UserResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
 
+  // Profile Form States
+  const [fullName, setFullName] = useState("")
+  const [phone, setPhone] = useState("")
+  const [bio, setBio] = useState("")
+  const [avatarUrl, setAvatarUrl] = useState("")
+
+  // Password Form States
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    loadUserProfile()
+  }, [])
+
+  const loadUserProfile = async () => {
+    try {
+      setLoading(true)
+      const userData = await api.getCurrentUser()
+      setUser(userData)
+      setFullName(userData.full_name || "")
+      setPhone(userData.phone || "")
+      setBio(userData.bio || "")
+      setAvatarUrl(userData.avatar_url || "")
+    } catch {
+      toast({
+        title: "Failed to load profile",
+        description: "Could not retrieve your user information. Please try refreshing.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "Image too large",
+        description: "Please select an image smaller than 5MB.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      setAvatarUrl(result)
+      toast({
+        title: "Profile photo attached",
+        description: "Click 'Save Changes' to update your profile.",
+      })
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleRemovePhoto = () => {
+    setAvatarUrl("")
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ""
+    }
+  }
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!fullName.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Full name is required.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setSavingProfile(true)
+      const updated = await api.updateProfile({
+        full_name: fullName.trim(),
+        phone: phone.trim() || undefined,
+        bio: bio.trim() || undefined,
+        avatar_url: avatarUrl || undefined,
+      })
+      setUser(updated)
+      toast({
+        title: "Profile updated",
+        description: "Your profile details have been saved successfully.",
+      })
+    } catch {
+      toast({
+        title: "Error saving profile",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingProfile(false)
+    }
+  }
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!currentPassword) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter your current password.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (newPassword.length < 8) {
+      toast({
+        title: "Validation Error",
+        description: "New password must be at least 8 characters long.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      toast({
+        title: "Validation Error",
+        description: "New password and confirmation do not match.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setChangingPassword(true)
+      await api.changePassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+      })
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
+      toast({
+        title: "Password changed",
+        description: "Your password has been successfully updated.",
+      })
+    } catch (err: unknown) {
+      const errorMsg =
+        (err as { message?: string })?.message || "Failed to change password. Please check your current password."
+      toast({
+        title: "Error changing password",
+        description: errorMsg,
+        variant: "destructive",
+      })
+    } finally {
+      setChangingPassword(false)
+    }
+  }
+
+  const getInitials = (name: string) => {
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-96 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6 pb-12">
+      {/* Page Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
+        <p className="text-muted-foreground">
+          Manage your personal details, profile picture, bio, and account security.
+        </p>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-3">
+        {/* Left Column: User Summary & Profile Photo Card */}
+        <div className="space-y-6 md:col-span-1">
+          <Card className="overflow-hidden">
+            <div className="h-24 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600" />
+            <CardContent className="relative pt-0 text-center">
+              {/* Profile Avatar */}
+              <div className="relative -mt-12 mb-4 inline-block">
+                <Avatar className="h-24 w-24 border-4 border-background shadow-md">
+                  {avatarUrl ? (
+                    <AvatarImage src={avatarUrl} alt={fullName} />
+                  ) : (
+                    <AvatarFallback className="bg-primary text-xl font-bold text-primary-foreground">
+                      {fullName ? getInitials(fullName) : <User className="h-10 w-10" />}
+                    </AvatarFallback>
+                  )}
+                </Avatar>
+                <label
+                  htmlFor="avatar-upload"
+                  className="absolute bottom-0 right-0 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-110"
+                  title="Upload profile photo"
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  <input
+                    id="avatar-upload"
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageUpload}
+                  />
+                </label>
+              </div>
+
+              <h2 className="text-xl font-bold">{fullName || "User Profile"}</h2>
+              <p className="text-sm text-muted-foreground">{user?.email}</p>
+
+              {/* Roles Badge List */}
+              <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                {user?.roles && user.roles.length > 0 ? (
+                  user.roles.map((r) => (
+                    <Badge key={r.id} variant="secondary" className="px-2.5 py-0.5 text-xs font-semibold">
+                      <Shield className="mr-1 h-3 w-3 text-primary" />
+                      {r.name}
+                    </Badge>
+                  ))
+                ) : (
+                  <Badge variant="outline" className="text-xs">
+                    Viewer
+                  </Badge>
+                )}
+                {user?.is_active && (
+                  <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                    Active
+                  </Badge>
+                )}
+              </div>
+
+              {avatarUrl && (
+                <div className="mt-4">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleRemovePhoto}
+                    className="text-xs text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="mr-1 h-3.5 w-3.5" />
+                    Remove photo
+                  </Button>
+                </div>
+              )}
+
+              <Separator className="my-5" />
+
+              {/* Account Meta */}
+              <div className="space-y-2 text-left text-xs text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5" /> Member Since
+                  </span>
+                  <span className="font-medium text-foreground">
+                    {user?.created_at ? new Date(user.created_at).toLocaleDateString() : "N/A"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" /> Auth Provider
+                  </span>
+                  <span className="font-medium capitalize text-foreground">
+                    {user?.auth_provider || "local"}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right Column: Edit Details and Change Password Cards */}
+        <div className="space-y-6 md:col-span-2">
+          {/* Personal Information Form */}
+          <Card>
+            <form onSubmit={handleSaveProfile}>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-primary" />
+                  <CardTitle>Personal Information</CardTitle>
+                </div>
+                <CardDescription>
+                  Update your public name, contact information, and biography.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="full-name">Full Name *</Label>
+                    <Input
+                      id="full-name"
+                      placeholder="Your full name"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email Address</Label>
+                    <div className="relative">
+                      <Input
+                        id="email"
+                        value={user?.email || ""}
+                        disabled
+                        className="bg-muted text-muted-foreground"
+                      />
+                      <Mail className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground opacity-60" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Phone Number</Label>
+                  <div className="relative">
+                    <Input
+                      id="phone"
+                      type="tel"
+                      placeholder="+1 (555) 000-0000"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                    />
+                    <Phone className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground opacity-60" />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="bio">Biography / About You</Label>
+                  <Textarea
+                    id="bio"
+                    placeholder="Write a brief description of your role, background, or data interests..."
+                    rows={4}
+                    value={bio}
+                    onChange={(e) => setBio(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Brief summary displayed on your profile.
+                  </p>
+                </div>
+              </CardContent>
+              <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
+                <Button type="submit" disabled={savingProfile}>
+                  {savingProfile ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Saving changes...
+                    </>
+                  ) : (
+                    "Save Changes"
+                  )}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+
+          {/* Change Password Form */}
+          <Card>
+            <form onSubmit={handleChangePassword}>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <KeyRound className="h-5 w-5 text-primary" />
+                  <CardTitle>Change Password</CardTitle>
+                </div>
+                <CardDescription>
+                  Ensure your account is using a secure and strong password.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="current-password">Current Password</Label>
+                  <Input
+                    id="current-password"
+                    type="password"
+                    placeholder="Enter your current password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="new-password">New Password</Label>
+                    <Input
+                      id="new-password"
+                      type="password"
+                      placeholder="Min. 8 characters"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="confirm-password">Confirm New Password</Label>
+                    <Input
+                      id="confirm-password"
+                      type="password"
+                      placeholder="Repeat new password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+              </CardContent>
+              <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
+                <Button type="submit" variant="secondary" disabled={changingPassword}>
+                  {changingPassword ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Updating password...
+                    </>
+                  ) : (
+                    "Update Password"
+                  )}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+        </div>
+      </div>
+    </div>
+  )
+}

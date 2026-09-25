@@ -51,6 +51,7 @@ export interface UserResponse {
   full_name: string
   phone: string | null
   avatar_url: string | null
+  bio?: string | null
   auth_provider: "local" | "azure_ad" | "google"
   is_active: boolean
   mfa_enabled: boolean
@@ -63,6 +64,7 @@ export interface UpdateProfileRequest {
   full_name?: string
   phone?: string
   avatar_url?: string
+  bio?: string
 }
 
 export interface CreateUserRequest {
