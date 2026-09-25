@@ -353,9 +353,10 @@ DATABASE CONTEXT AND SCHEMA:
 
 2. GROUP AGGREGATIONS ('IN EACH', 'PER', 'FOR EVERY', 'BY') VS GLOBAL EXTREMUM:
    - MULTI-GROUP BREAKDOWN:
-     * When a question requests a metric across grouped dimensions (using semantic indicators like 'in each <dimension>', 'per <dimension>', 'by <dimension>', 'for every <dimension>', 'breakdown by <dimension>', e.g. 'highest salary in each department', 'total sales per region', 'average order value by customer'):
+     * When a question requests a metric across grouped dimensions (using semantic indicators like 'of each <dimension>', 'in each <dimension>', 'for each <dimension>', 'per <dimension>', 'by <dimension>', 'for every <dimension>', 'breakdown by <dimension>', 'all <dimension>s', e.g. 'highest salary in each department', 'highest salary of each department', 'total sales per region', 'average order value by customer', 'total budget of all projects'):
        - The query MUST use `GROUP BY <dimension>` and return records for ALL distinct groups.
        - NEVER apply `LIMIT 1`, `TOP 1`, or `FETCH FIRST 1 ROW ONLY` to group breakdown questions.
+       - NEVER apply `FETCH FIRST 1 ROWS WITH TIES` to group breakdown questions.
      * When individual sub-entity records or names are requested per group (e.g. 'which employee has the highest salary in each department'):
        - Use standard window functions: `ROW_NUMBER() OVER (PARTITION BY <dimension> ORDER BY <metric> DESC)` in a CTE or subquery and filter `WHERE rn = 1`.
    - GLOBAL EXTREMUM / SINGLE WINNER:
