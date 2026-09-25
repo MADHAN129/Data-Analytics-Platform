@@ -129,13 +129,19 @@ def create_user(db: Session, data, current_user_id: int) -> UserResponse:
     db.commit()
     db.refresh(user)
 
-    # Assign roles (from role_ids or role names)
+    # Assign roles (from role_id, role, role_ids, or role names)
     assigned_role_ids = set(data.role_ids or [])
-    if data.roles:
-        for r_name in data.roles:
-            role_obj = db.query(Role).filter(Role.name == r_name).first()
-            if role_obj:
-                assigned_role_ids.add(role_obj.id)
+    if data.role_id:
+        assigned_role_ids.add(data.role_id)
+
+    roles_list = list(data.roles or [])
+    if data.role:
+        roles_list.append(data.role)
+
+    for r_name in roles_list:
+        role_obj = db.query(Role).filter(Role.name == r_name).first()
+        if role_obj:
+            assigned_role_ids.add(role_obj.id)
 
     # If no roles specified, default to Analyst
     if not assigned_role_ids:

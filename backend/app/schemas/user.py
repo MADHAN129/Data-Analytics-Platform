@@ -43,6 +43,8 @@ class CreateUserRequest(BaseModel):
     password: str
     full_name: str
     phone: Optional[str] = None
+    role: Optional[str] = None
+    role_id: Optional[int] = None
     roles: Optional[List[str]] = None
     role_ids: Optional[List[int]] = None
 

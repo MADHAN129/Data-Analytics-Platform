@@ -70,6 +70,8 @@ export interface CreateUserRequest {
   password: string
   full_name: string
   phone?: string
+  role?: string
+  role_id?: number
   roles?: string[]
   role_ids?: number[]
 }
