@@ -713,30 +713,32 @@ function WidgetChartRenderer({
   results: QueryResult
   suggestions?: VisualizationSuggestion[]
 }) {
-  const suggestion = useMemo(() => {
-    if (suggestions && suggestions.length > 0) {
-      if (widget.widget_type === "analytics") {
+  const targetSuggestion = useMemo(() => {
+    if (widget.widget_type === "analytics") {
+      if (suggestions && suggestions.length > 0) {
         return suggestions[0]
       }
-      const match = suggestions.find((s) => s.type === widget.widget_type)
-      if (match) return match
+      return {
+        type: results.row_count === 1 && results.columns.length <= 2
+          ? "kpi"
+          : (results.columns.length > 2 ? "table" : "bar_chart"),
+        title: widget.title,
+        config: (widget.config as Record<string, unknown>) || {},
+      } as VisualizationSuggestion
     }
+
+    const match = suggestions?.find((s) => s.type === widget.widget_type)
     return {
-      type: widget.widget_type === "analytics"
-        ? (results.row_count === 1 && results.columns.length <= 2
-            ? "kpi"
-            : (results.columns.length > 2 ? "table" : "bar_chart"))
-        : widget.widget_type,
-      title: widget.title,
-      config: (widget.config as Record<string, unknown>) || {},
+      type: widget.widget_type,
+      title: widget.title || match?.title,
+      config: {
+        ...(match?.config || {}),
+        ...((widget.config as Record<string, unknown>) || {}),
+      },
     } as VisualizationSuggestion
   }, [widget, suggestions, results])
 
-  if (widget.widget_type === "analytics" || widget.widget_type === suggestion.type) {
-    return <VisualizationRenderer results={results} suggestions={suggestions && suggestions.length > 0 ? suggestions : [suggestion]} />
-  }
-
-  return <VisualizationRenderer results={results} suggestions={suggestions || [suggestion]} />
+  return <VisualizationRenderer results={results} suggestions={[targetSuggestion]} />
 }
 
 function QueryPicker({
