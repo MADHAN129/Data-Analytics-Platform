@@ -303,96 +303,58 @@ class LLMService:
   * NEVER use the 'AS' keyword for table aliases (write 'FROM table_name t', NOT 'FROM table_name AS t').
   * NEVER use LIMIT. Use 'FETCH FIRST n ROWS ONLY' to limit rows.
   * String concatenation uses || (e.g. col1 || ' ' || col2).
-  * In GROUP BY queries, every column in the SELECT clause that is not an aggregate function (SUM, AVG, COUNT, etc.) MUST appear in the GROUP BY clause."""
-        elif dialect == "SQL Server":
+  * In GROUP BY queries, every column in the SELECT clause that is not an aggregate function (SUM, AVG, COUNT, etc.) MUST appear in the GROUP BY clause.
+  * For table / schema exploration queries, use: 'SELECT table_name FROM user_tables;'."""
+        elif dialect in ("SQL Server", "T-SQL"):
             dialect_rules = """
 - SQL SERVER SYNTAX RULES:
   * Use 'SELECT TOP n' to limit rows instead of LIMIT.
-  * String concatenation uses +."""
+  * String concatenation uses +.
+  * For table / schema exploration queries, use: 'SELECT table_name FROM information_schema.tables WHERE table_type = \\'BASE TABLE\\';'."""
         elif dialect == "PostgreSQL":
             dialect_rules = """
 - POSTGRESQL SYNTAX RULES:
   * String concatenation uses || or CONCAT().
-  * Use LIMIT n to limit rows."""
+  * Use LIMIT n to limit rows.
+  * For table / schema exploration queries, use: 'SELECT table_name FROM information_schema.tables WHERE table_schema = \\'public\\' AND table_type = \\'BASE TABLE\\';'."""
         elif dialect == "MySQL":
             dialect_rules = """
 - MYSQL SYNTAX RULES:
   * String concatenation uses CONCAT().
-  * Use LIMIT n to limit rows."""
+  * Use LIMIT n to limit rows.
+  * For table / schema exploration queries, use: 'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE();' (or 'SHOW TABLES;'). NEVER use 'table_schema = \\'public\\'')."""
+        elif dialect == "SQLite":
+            dialect_rules = """
+- SQLITE SYNTAX RULES:
+  * String concatenation uses ||.
+  * Use LIMIT n to limit rows.
+  * For table / schema exploration queries, use: 'SELECT name FROM sqlite_master WHERE type = \\'table\\' AND name NOT LIKE \\'sqlite_%\\';'."""
 
         return f"""You are an expert SQL engineer. Given a database schema and a natural language user question, generate a single valid {dialect} query that accurately answers the user's EXACT question.
 
 DATABASE CONTEXT AND SCHEMA:
 {schema_context}
 
-## EXACT SQL GENERATION RULES:
+## SQL GENERATION PRINCIPLES:
 
-1. NEVER SUBSTITUTE RELATED METRICS:
-   - Database columns that sound related are NOT interchangeable!
-   - In table PROJECTS:
-     * `BUDGET` = allocated project budget
-     * `SPENT` = actual project spending (amount spent, money spent, actual spending, total spending)
-   - NEVER replace `SPENT` -> `BUDGET` or `BUDGET` -> `SPENT`.
-   - In table EMPLOYEES:
-     * `SALARY` = employee salary
+1. ONLY USE VERIFIED REAL SCHEMA TABLES & COLUMNS:
+   - Use ONLY tables and columns that exist in the schema context above.
+   - Do NOT invent or hallucinate non-existent table or column names.
+   - For database schema / table listing questions (e.g. 'what tables exist', 'show tables in db'), use the dialect-specific system catalog query as specified below.
 
-2. EXACT METRIC MAPPINGS (MANDATORY):
-   * 'total employee salary cost' -> `SUM(EMPLOYEES.SALARY)` (or `SUM(salary)` in employee CTE)
-   * 'average employee salary' -> `AVG(EMPLOYEES.SALARY)` (or `AVG(salary)` in employee CTE)
-   * 'total project budget' -> `SUM(PROJECTS.BUDGET)` (or `SUM(budget)` in project CTE)
-   * 'total project spending' -> `SUM(PROJECTS.SPENT)` (or `SUM(spent)` in project CTE)
-   * 'project budget utilization percentage' -> `SUM(PROJECTS.SPENT) / SUM(PROJECTS.BUDGET) * 100` (or `CASE WHEN NVL(p.total_project_budget, 0) > 0 THEN NVL(p.total_project_spent, 0) / p.total_project_budget * 100 ELSE 0 END`)
-   * 'project spending relative to employee salary cost' -> `SUM(PROJECTS.SPENT) / SUM(EMPLOYEES.SALARY) * 100` (or `CASE WHEN NVL(e.total_salary, 0) > 0 THEN NVL(p.total_project_spent, 0) / e.total_salary * 100 ELSE 0 END`)
-   - NEVER calculate `BUDGET / SALARY * 100` when the user asks for project spending relative to salary!
+2. PREVENT ROW MULTIPLICATION (FAN-OUT PREVENTION):
+   - When calculating aggregated metrics from multiple one-to-many child tables related to the same parent table, NEVER join multiple child tables directly before aggregation in a single query.
+   - Pre-aggregate each child table independently in a Common Table Expression (WITH clause) grouped by the foreign key first, and then join the pre-aggregated CTEs.
 
-3. REQUESTED METRIC COMPLETENESS:
-   - Extract every metric requested by the user. If the user asks for multiple metrics in a single question:
-     1. Department name
-     2. Total employee salary cost
-     3. Average employee salary
-     4. Total project budget
-     5. Total project spending
-     6. Project budget utilization percentage
-     7. Project spending relative to employee salary percentage
-     ALL requested metrics must be calculated and selected in the final query. Do not omit metrics.
+3. ACCURATE AGGREGATIONS & METRICS:
+   - Use the exact columns representing requested metrics from the verified schema.
+   - Use COALESCE / NVL / NULLIF appropriately to prevent division by zero and handle NULL values cleanly.
 
-4. PRE-AGGREGATE FIRST, THEN JOIN (ROW MULTIPLICATION / FAN-OUT PREVENTION):
-   - When combining EMPLOYEES and PROJECTS by department, aggregate each table separately in independent CTEs before joining to DEPARTMENTS:
-     ```sql
-     WITH employee_totals AS (
-         SELECT department_id, SUM(salary) AS total_salary, AVG(salary) AS average_salary
-         FROM employees
-         GROUP BY department_id
-     ),
-     project_totals AS (
-         SELECT department_id, SUM(budget) AS total_project_budget, SUM(spent) AS total_project_spent
-         FROM projects
-         GROUP BY department_id
-     )
-     SELECT
-         d.department_name,
-         NVL(e.total_salary, 0) AS total_employee_salary,
-         NVL(e.average_salary, 0) AS average_employee_salary,
-         NVL(p.total_project_budget, 0) AS total_project_budget,
-         NVL(p.total_project_spent, 0) AS total_project_spending,
-         CASE WHEN NVL(p.total_project_budget, 0) > 0 THEN NVL(p.total_project_spent, 0) / p.total_project_budget * 100 ELSE 0 END AS project_budget_utilization_percentage,
-         CASE WHEN NVL(e.total_salary, 0) > 0 THEN NVL(p.total_project_spent, 0) / e.total_salary * 100 ELSE 0 END AS project_spending_vs_salary_percentage
-     FROM departments d
-     LEFT JOIN employee_totals e ON d.department_id = e.department_id
-     LEFT JOIN project_totals p ON d.department_id = p.department_id
-     ORDER BY project_spending_vs_salary_percentage DESC
-     FETCH FIRST 1 ROWS ONLY;
-     ```
+4. DIALECT COMPLIANCE:
+{dialect_rules}
 
-5. RANKING VALIDATION:
-   - For ranking (highest, lowest, top), order by the EXACT formula or metric requested (e.g. `ORDER BY project_spending_vs_salary_percentage DESC FETCH FIRST 1 ROWS ONLY`).
-
-6. SYNTAX & DIALECT:{dialect_rules}
-
-INTENT & RELEVANCE RULES:
-1. UNRELATED QUESTIONS: Output strictly `UNRELATED: ...` if question cannot be answered from schema.
-2. AMBIGUOUS QUESTIONS: Output strictly `AMBIGUOUS: ...` if question lacks specific metric.
-3. VALID DATABASE QUESTIONS: Generate a single valid {dialect} query strictly inside a ```sql ... ``` code block."""
+5. OUTPUT FORMAT:
+   - Provide ONLY the single executable {dialect} query enclosed strictly inside a ```sql ... ``` block."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
         if not raw or not raw.strip():
@@ -648,23 +610,15 @@ INTENT & RELEVANCE RULES:
             "1. EXACT QUESTION COMPLIANCE\n"
             "- Answer every requested part of the user's question.\n"
             "- Do NOT answer a similar question, substitute a related metric, invent a metric, or omit a requested metric.\n"
-            "- If the user asks for SPENT, use SPENT. If the user asks for BUDGET, use BUDGET. Never treat them as interchangeable.\n\n"
+            "- Use the exact columns and metrics present in the query results.\n\n"
             "2. COLUMN SEMANTIC ACCURACY\n"
-            "- PROJECTS.BUDGET = allocated project budget\n"
-            "- PROJECTS.SPENT = actual project spending\n"
-            "- EMPLOYEES.SALARY = employee salary\n"
-            "- AVG(EMPLOYEES.SALARY) = average employee salary\n"
-            "- SUM(EMPLOYEES.SALARY) = total employee salary cost\n"
-            "- Never replace SPENT -> BUDGET or BUDGET -> SPENT.\n\n"
-            "3. FORMULA ACCURACY\n"
-            "- Project budget utilization = total project spending / total project budget * 100 (SUM(SPENT) / SUM(BUDGET) * 100)\n"
-            "- Project spending relative to employee salary = total project spending / total employee salary * 100 (SUM(SPENT) / SUM(SALARY) * 100)\n"
-            "- These are DIFFERENT metrics. Never substitute one for the other.\n\n"
-            "4. REQUESTED METRIC COMPLETENESS\n"
-            "- Create an internal checklist of every metric requested by the user and ensure ALL requested metrics are presented.\n\n"
-            "5. RANKING QUESTIONS\n"
-            "- For questions containing highest, lowest, maximum, minimum, top, bottom, most, least: use ONLY the metric explicitly specified by the user.\n\n"
-            "6. EXACT ANSWER ONLY\n"
+            "- Represent each metric accurately based on the executed SQL and resulting data.\n"
+            "- Do not confuse distinct columns or substitute one metric for another.\n\n"
+            "3. REQUESTED METRIC COMPLETENESS\n"
+            "- Ensure all metrics and calculations requested by the user are clearly presented in the response.\n\n"
+            "4. RANKING QUESTIONS\n"
+            "- For questions containing highest, lowest, maximum, minimum, top, bottom, most, least: present the top entities ranked by the metric explicitly specified by the user.\n\n"
+            "5. EXACT ANSWER ONLY\n"
             "- Provide:\n"
             "  1. The direct answer.\n"
             "  2. Only the values needed to support the answer.\n"
@@ -734,6 +688,34 @@ INTENT & RELEVANCE RULES:
         schema_tables = self._extract_schema_details(schema_context)
         all_table_names = list(schema_tables.keys())
         all_columns = [col.lower() for cols in schema_tables.values() for col in cols]
+
+        # Check if user is asking to explore or list the tables/schema in the database
+        is_schema_prompt = (
+            any(kw in prompt_clean for kw in ("table", "tables", "schema", "schemas", "database", "structure", "entities"))
+            and any(kw in prompt_clean for kw in ("what", "which", "show", "list", "available", "exist", "all", "describe", "tell", "display", "see"))
+            and not any(kw in prompt_clean for kw in ("count", "sum", "average", "avg", "highest", "lowest", "calculate", "spent", "salary", "revenue", "price", "cost"))
+        )
+
+        if is_schema_prompt and all_table_names:
+            formatted_tables = "\n".join(f"- **`{t}`** ({len(schema_tables.get(t, []))} columns)" for t in all_table_names)
+            return {
+                "status": "clarify",
+                "message": (
+                    f"Here are the tables available in your connected database:\n\n"
+                    f"{formatted_tables}\n\n"
+                    f"Select an option below to explore any table or ask a specific question:"
+                ),
+                "options": [
+                    {
+                        "id": f"explore_{t.lower()}",
+                        "label": f"📊 Explore {t.replace('_', ' ').title()}",
+                        "prompt": f"Show summary and top 10 records from {t}",
+                        "description": f"Inspect sample records and columns in {t}",
+                        "icon": "📊",
+                    }
+                    for t in all_table_names[:6]
+                ],
+            }
 
         # Check if already specific:
         # Check for specific timeframe / specific grouping / specific filter keywords

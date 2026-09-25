@@ -3,6 +3,7 @@ Test suite for Agentic Analytics Workflow:
 - Intent analysis and clarification for broad questions
 - Executable SQL generation and execution
 - Structured clarification options and quick follow-up suggestions
+- Dynamic schema exploration and system catalog query support
 - Multi-tenant conversation message scoping
 """
 
@@ -19,8 +20,79 @@ from app.services.conversation_service import (
     get_messages,
     create_conversation,
 )
+from app.services.query_service import (
+    _validate_sql_before_execution,
+    _analyze_intent_and_resolve,
+)
 from app.models.conversation import Conversation, ConversationMessage
 from app.models.connection import DatabaseConnection
+
+
+def test_table_listing_intent_exploration():
+    """Test that asking 'what are the tables available in the DB' returns a structured tables overview with exploration cards."""
+    schema_context = (
+        "Table: dishes [id (INTEGER), name (VARCHAR), price (NUMERIC), category_id (INTEGER)]\n"
+        "Table: orders [id (INTEGER), order_date (TIMESTAMP), total (NUMERIC)]\n"
+        "Table: menu_categories [id (INTEGER), category_name (VARCHAR)]"
+    )
+    res = llm_service.analyze_intent_and_clarify("what are the tables available in the DB", schema_context)
+    assert res["status"] == "clarify"
+    assert "dishes" in res["message"]
+    assert "orders" in res["message"]
+    assert len(res["options"]) == 3
+    assert any("Explore Dishes" in opt["label"] for opt in res["options"])
+    assert any("Explore Orders" in opt["label"] for opt in res["options"])
+
+
+def test_sql_validation_system_catalogs():
+    """Test that standard system catalog queries pass preflight validation across dialects."""
+    table_cols = {
+        "DISHES": {"ID", "NAME", "PRICE"},
+        "ORDERS": {"ID", "ORDER_DATE", "TOTAL"}
+    }
+
+    # 1. MySQL information_schema table listing
+    mysql_sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE();"
+    is_valid, sanitized, err = _validate_sql_before_execution(mysql_sql, table_cols, "MySQL")
+    assert is_valid is True
+    assert err is None
+
+    # 2. MySQL SHOW TABLES
+    show_sql = "SHOW TABLES;"
+    is_valid, sanitized, err = _validate_sql_before_execution(show_sql, table_cols, "MySQL")
+    assert is_valid is True
+    assert err is None
+
+    # 3. PostgreSQL information_schema table listing
+    pg_sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
+    is_valid, sanitized, err = _validate_sql_before_execution(pg_sql, table_cols, "PostgreSQL")
+    assert is_valid is True
+    assert err is None
+
+    # 4. Oracle user_tables query
+    ora_sql = "SELECT table_name FROM user_tables;"
+    is_valid, sanitized, err = _validate_sql_before_execution(ora_sql, table_cols, "Oracle SQL")
+    assert is_valid is True
+    assert err is None
+
+    # 5. SQLite sqlite_master query
+    sqlite_sql = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%';"
+    is_valid, sanitized, err = _validate_sql_before_execution(sqlite_sql, table_cols, "SQLite")
+    assert is_valid is True
+    assert err is None
+
+
+def test_sql_validation_custom_database_tables():
+    """Test that custom database table names are dynamically displayed in validation error messages without being blank."""
+    table_cols = {
+        "RESTAURANTS": {"ID", "NAME", "CITY"},
+        "MENU_ITEMS": {"ITEM_ID", "ITEM_NAME", "PRICE"}
+    }
+    # Query referencing a non-existent table
+    invalid_sql = "SELECT * FROM NON_EXISTENT_TABLE;"
+    is_valid, sanitized, err = _validate_sql_before_execution(invalid_sql, table_cols, "MySQL")
+    assert is_valid is False
+    assert "Available tables are: MENU_ITEMS, RESTAURANTS" in err
 
 
 def test_intent_analysis_broad_sales_query():
@@ -30,7 +102,6 @@ def test_intent_analysis_broad_sales_query():
     assert res["status"] == "clarify"
     assert "sales" in res["message"].lower()
     assert len(res["options"]) >= 3
-    # Check that option items have id, label, prompt, description
     assert any("Today" in opt["label"] for opt in res["options"])
     assert any("Monthly" in opt["label"] for opt in res["options"])
 
@@ -38,7 +109,6 @@ def test_intent_analysis_broad_sales_query():
 def test_intent_analysis_specific_query():
     """Test that a specific and targeted query proceeds directly to execution without unnecessary clarification."""
     schema_context = "Table: sales [id (INTEGER), order_date (TIMESTAMP), total_amount (NUMERIC)]"
-    # Specific question specifying time period and metric
     res = llm_service.analyze_intent_and_clarify("show total sales revenue for today", schema_context)
     assert res["status"] == "direct"
 
