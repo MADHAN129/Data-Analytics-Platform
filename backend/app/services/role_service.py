@@ -5,20 +5,27 @@ from sqlalchemy.orm import Session
 
 from app.models.role import Role, RolePermission
 from app.models.permission import Permission
-from app.models.user import UserRole
+from app.models.user import User, UserRole
 from app.schemas.role import RoleResponse, CreateRoleRequest, UpdateRoleRequest
 from app.schemas.permission import PermissionResponse
 from app.services.audit_service import create_audit_log
 
 
-def get_role_response(db: Session, role: Role) -> RoleResponse:
+def get_role_response(db: Session, role: Role, company_id: Optional[int] = None) -> RoleResponse:
     perms = (
         db.query(Permission)
         .join(RolePermission, Permission.id == RolePermission.permission_id)
         .filter(RolePermission.role_id == role.id)
         .all()
     )
-    user_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+    user_count_query = (
+        db.query(UserRole)
+        .join(User, User.id == UserRole.user_id)
+        .filter(UserRole.role_id == role.id)
+    )
+    if company_id is not None:
+        user_count_query = user_count_query.filter(User.company_id == company_id)
+    user_count = user_count_query.count()
 
     permissions = [
         PermissionResponse(
@@ -35,13 +42,13 @@ def get_role_response(db: Session, role: Role) -> RoleResponse:
     )
 
 
-def list_roles(db: Session, page: int = 1, per_page: int = 20):
+def list_roles(db: Session, page: int = 1, per_page: int = 20, company_id: Optional[int] = None):
     total = db.query(Role).count()
     roles = db.query(Role).offset((page - 1) * per_page).limit(per_page).all()
-    return [get_role_response(db, r) for r in roles], total
+    return [get_role_response(db, r, company_id=company_id) for r in roles], total
 
 
-def create_role(db: Session, data: CreateRoleRequest, current_user_id: int) -> RoleResponse:
+def create_role(db: Session, data: CreateRoleRequest, current_user_id: int, company_id: Optional[int] = None) -> RoleResponse:
     from fastapi import HTTPException, status
 
     existing = db.query(Role).filter(Role.name == data.name).first()
@@ -61,10 +68,10 @@ def create_role(db: Session, data: CreateRoleRequest, current_user_id: int) -> R
     create_audit_log(db, current_user_id, "role.create", "role", str(role.id),
                      {"name": role.name, "permissions": data.permission_ids})
 
-    return get_role_response(db, role)
+    return get_role_response(db, role, company_id=company_id)
 
 
-def update_role(db: Session, role_id: int, data: UpdateRoleRequest, current_user_id: int) -> RoleResponse:
+def update_role(db: Session, role_id: int, data: UpdateRoleRequest, current_user_id: int, company_id: Optional[int] = None) -> RoleResponse:
     from fastapi import HTTPException, status
 
     role = db.query(Role).filter(Role.id == role_id).first()
@@ -79,14 +86,14 @@ def update_role(db: Session, role_id: int, data: UpdateRoleRequest, current_user
     if data.permission_ids is not None:
         db.query(RolePermission).filter(RolePermission.role_id == role_id).delete()
         for pid in data.permission_ids:
-            db.add(RolePermission(role_id=role_id, permission_id=pid))
+            db.add(RolePermission(role_id=role.id, permission_id=pid))
 
     db.commit()
     db.refresh(role)
 
     create_audit_log(db, current_user_id, "role.update", "role", str(role_id))
 
-    return get_role_response(db, role)
+    return get_role_response(db, role, company_id=company_id)
 
 
 def delete_role(db: Session, role_id: int, current_user_id: int):

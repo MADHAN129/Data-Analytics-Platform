@@ -155,3 +155,47 @@ class TestMultiTenancyIsolation:
         assert list_resp.status_code == 200
         assert list_resp.json()["total"] == 1
         assert list_resp.json()["connections"][0]["name"] == "MyCorp Production"
+
+    def test_role_user_count_scoped_to_company(self, client, db_session, permissions):
+        # Create SuperAdmin system role
+        _make_role(db_session, "SuperAdmin", list(permissions.values()), is_system=True)
+
+        # 1. Register Admin A (Company A)
+        resp_a = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "admin_company_a@test.com",
+                "password": "Password123!",
+                "full_name": "Company A Admin",
+                "company_name": "Company A",
+            },
+        )
+        assert resp_a.status_code == 201
+        token_a = resp_a.json()["access_token"]
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+
+        # 2. Register Admin B (Company B)
+        resp_b = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "admin_company_b@test.com",
+                "password": "Password123!",
+                "full_name": "Company B Admin",
+                "company_name": "Company B",
+            },
+        )
+        assert resp_b.status_code == 201
+        token_b = resp_b.json()["access_token"]
+        headers_b = {"Authorization": f"Bearer {token_b}"}
+
+        # Admin A lists roles -> SuperAdmin count should be 1 (only Company A's user)
+        roles_resp_a = client.get("/api/v1/roles", headers=headers_a)
+        assert roles_resp_a.status_code == 200
+        superadmin_role_a = next(r for r in roles_resp_a.json()["roles"] if r["name"] == "SuperAdmin")
+        assert superadmin_role_a["user_count"] == 1
+
+        # Admin B lists roles -> SuperAdmin count should be 1 (only Company B's user)
+        roles_resp_b = client.get("/api/v1/roles", headers=headers_b)
+        assert roles_resp_b.status_code == 200
+        superadmin_role_b = next(r for r in roles_resp_b.json()["roles"] if r["name"] == "SuperAdmin")
+        assert superadmin_role_b["user_count"] == 1
