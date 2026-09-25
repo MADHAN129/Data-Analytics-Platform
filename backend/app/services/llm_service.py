@@ -342,22 +342,33 @@ DATABASE CONTEXT AND SCHEMA:
    - Do NOT invent or hallucinate non-existent table or column names.
    - For database schema / table listing questions (e.g. 'what tables exist', 'show tables in db'), use the dialect-specific system catalog query as specified below.
 
-2. ENTITY IDENTIFICATION (MANDATORY):
+2. GROUP AGGREGATIONS ('IN EACH', 'PER', 'FOR EVERY', 'BY') VS GLOBAL EXTREMUM:
+   - MULTI-GROUP BREAKDOWN:
+     * When a question requests a metric across grouped dimensions (using semantic indicators like 'in each <dimension>', 'per <dimension>', 'by <dimension>', 'for every <dimension>', 'breakdown by <dimension>', e.g. 'highest salary in each department', 'total sales per region', 'average order value by customer'):
+       - The query MUST use `GROUP BY <dimension>` and return records for ALL distinct groups.
+       - NEVER apply `LIMIT 1`, `TOP 1`, or `FETCH FIRST 1 ROW ONLY` to group breakdown questions.
+     * When individual sub-entity records or names are requested per group (e.g. 'which employee has the highest salary in each department'):
+       - Use standard window functions: `ROW_NUMBER() OVER (PARTITION BY <dimension> ORDER BY <metric> DESC)` in a CTE or subquery and filter `WHERE rn = 1`.
+   - GLOBAL EXTREMUM / SINGLE WINNER:
+     * Apply `ORDER BY <metric> DESC LIMIT 1` (or dialect equivalent) ONLY when asking for the single overall winner/loser across the entire dataset without group partitioning (e.g. 'Which department has the highest total salary overall?', 'Who is the highest paid employee in the company?').
+
+3. ENTITY IDENTIFICATION (MANDATORY):
    - Whenever asking 'Which <entity>' (e.g. employee, project, department, client, vendor, vehicle, product), ALWAYS include the entity's primary identifying name/title column in the SELECT clause (e.g. for employees: FIRST_NAME, LAST_NAME or FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME; for projects: PROJECT_NAME; for departments: DEPARTMENT_NAME; for clients: CLIENT_NAME; for vendors: VENDOR_NAME; for products: PRODUCT_NAME) so the entity is explicitly named.
 
-3. ACCURATE METRIC MAPPING & DISAMBIGUATION:
+4. ACCURATE METRIC MAPPING & DISAMBIGUATION:
    - Strictly distinguish between 'spending/spent' (actual expenditure) and 'budget' (allocated limit):
      * 'Spending' / 'Spent' / 'Cost' = actual expenditure (e.g. PROJECTS.SPENT, SUM(PROJECTS.SPENT), EMPLOYEES.SALARY, OPERATING_EXPENSES).
      * 'Budget' = allocated ceiling limit (e.g. PROJECTS.BUDGET, SUM(PROJECTS.BUDGET), DEPARTMENTS.BUDGET).
      * 'Remaining Budget' / 'Unspent' = (BUDGET - SPENT) or (SUM(BUDGET) - SUM(SPENT)).
      * When ranking by 'highest spending', ORDER BY spending (e.g. SUM(PROJECTS.SPENT) DESC), NOT by budget.
-   - Use COALESCE / NVL / NULLIF appropriately to prevent division by zero and handle NULL values cleanly.
+   - Use COALESCE / NVL / NULLIF appropriately to prevent division by zero (e.g. `NULLIF(denominator, 0)`) and handle NULL values cleanly.
+   - Use `COUNT(DISTINCT column)` when counting unique entities, customers, or items.
 
-4. PREVENT ROW MULTIPLICATION (FAN-OUT PREVENTION):
+5. PREVENT ROW MULTIPLICATION (FAN-OUT PREVENTION):
    - When calculating aggregated metrics from multiple one-to-many child tables related to the same parent table (e.g. employee salaries and project spending per department), NEVER join multiple child tables directly before aggregation in a single query.
    - Pre-aggregate each child table independently in a Common Table Expression (WITH clause) grouped by the foreign key first, and then join the pre-aggregated CTEs using LEFT JOIN.
 
-5. TIME PERIOD & TEMPORAL INTEGRITY (MANDATORY RULE):
+6. TIME PERIOD & TEMPORAL INTEGRITY (MANDATORY RULE):
    - When the database contains multiple years with the same quarter names (or month names, e.g. 2024 Q1, 2024 Q2, 2025 Q1, 2025 Q2):
      * NEVER group by or rank by QUARTER alone (e.g. NEVER 'GROUP BY quarter').
      * '2024 Q2' and '2025 Q2' are distinct chronological periods and MUST NOT be combined.
@@ -369,10 +380,10 @@ DATABASE CONTEXT AND SCHEMA:
        - Return revenue, expenses, net profit, and profit margin belonging to that SAME exact period record.
      * NEVER SUM expenses, revenue, net profit, or metrics across different years merely because they share a quarter name.
 
-6. DIALECT COMPLIANCE:
+7. DIALECT COMPLIANCE:
 {dialect_rules}
 
-7. OUTPUT FORMAT:
+8. OUTPUT FORMAT:
    - Provide ONLY the single executable {dialect} query enclosed strictly inside a ```sql ... ``` block."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
@@ -466,8 +477,9 @@ DATABASE CONTEXT AND SCHEMA:
             f"2. Inspect the schema context above to find the exact verified table and column names.\n"
             f"3. If multiple one-to-many child tables are joined, pre-aggregate each child table in a separate CTE (WITH clause) grouped by the foreign key BEFORE joining.\n"
             f"4. If analyzing, grouping, or ranking quarters/months across years, include BOTH year and quarter (e.g. 'GROUP BY fiscal_year, quarter') so quarters from different years (e.g. 2024 Q2 and 2025 Q2) are never combined.\n"
-            f"5. Regenerate the COMPLETE corrected raw SQL query using ONLY verified tables and columns.\n"
-            f"6. Return ONLY the corrected raw SQL query strictly inside a ```sql ... ``` block."
+            f"5. If the question requests metrics 'in each', 'per', 'by', or 'for every' dimension, use GROUP BY across that dimension, return all groups, and NEVER apply a single-row LIMIT 1.\n"
+            f"6. Regenerate the COMPLETE corrected raw SQL query using ONLY verified tables and columns.\n"
+            f"7. Return ONLY the corrected raw SQL query strictly inside a ```sql ... ``` block."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -628,9 +640,12 @@ DATABASE CONTEXT AND SCHEMA:
             "You are the final answer extraction engine for an AI Analytics system.\n"
             "Your job is to answer the user's question EXACTLY AS ASKED using ONLY the validated SQL result and the user's original question.\n\n"
             "## EXACT ANSWER EXTRACTION RULES\n\n"
-            "1. EXACT QUESTION COMPLIANCE & ENTITY IDENTIFICATION\n"
-            "- Answer every requested part of the user's question.\n"
-            "- Explicitly name the entity (employee name, project name, department name, client, etc.) in the Direct Answer.\n"
+            "1. EXACT QUESTION COMPLIANCE & MULTI-GROUP VS SINGLE-ENTITY HANDLING\n"
+            "- Multi-Group / Grouped Breakdown Questions ('in each', 'per', 'for every', 'by', or queries returning multiple group rows):\n"
+            "  * Present the figures for ALL returned groups in the Direct Answer in a clear, concise breakdown list or bullet points.\n"
+            "  * NEVER collapse a multi-group result set into only the single top row.\n"
+            "- Single-Entity / Global Extremum Questions (e.g. 'Which entity has the single highest...'):\n"
+            "  * Explicitly name the single winning entity and its validated metric directly.\n"
             "- If multiple records/entities are tied for the highest or lowest value, list ALL tied entities clearly.\n"
             "- Do NOT answer a similar question, substitute a related metric, invent a metric, or omit a requested metric.\n\n"
             "2. COLUMN SEMANTIC & VALUE ACCURACY\n"
@@ -641,12 +656,12 @@ DATABASE CONTEXT AND SCHEMA:
             "- Ensure all metrics, columns, and calculations requested by the user are clearly presented.\n\n"
             "4. EXACT ANSWER ONLY\n"
             "- Provide:\n"
-            "  1. The direct answer naming the entity and its primary metric.\n"
+            "  1. The direct answer naming the entity/entities and primary metrics.\n"
             "  2. The exact values requested by the user.\n"
             "- Do NOT add unrelated insights, speculative explanations, or extraneous commentary.\n\n"
             "Format your output clearly:\n"
             "### 🎯 Direct Answer\n"
-            "State the exact direct answer concisely with the entity name and validated figures.\n\n"
+            "State the exact direct answer concisely with the entity name(s) and validated figures (listing all groups if a multi-group breakdown was requested).\n\n"
             "### 📊 Key Calculated Values\n"
             "List the specific metrics and calculated figures requested with proper formatting (currency $, %, commas).\n\n"
             "### 🛠️ Execution Trace & Verification\n"
