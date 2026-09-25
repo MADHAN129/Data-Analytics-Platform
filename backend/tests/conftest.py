@@ -118,7 +118,7 @@ def viewer(db_session, permissions):
 
 @pytest.fixture()
 def admin(db_session, permissions):
-    role = _make_role(db_session, "Admin", list(permissions.values()))
+    role = _make_role(db_session, "SuperAdmin", list(permissions.values()))
     return _make_user(db_session, "admin@test.com", [role])
 
 

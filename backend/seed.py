@@ -79,14 +79,10 @@ def seed():
 
         db.commit()
 
-        # Create roles
+        # Create roles (SuperAdmin, Analyst, Viewer)
         roles_data = {
             "SuperAdmin": {
                 "description": "Full system access with all permissions",
-                "is_system": True,
-            },
-            "Admin": {
-                "description": "Administrative access with user and role management",
                 "is_system": True,
             },
             "Analyst": {
@@ -118,10 +114,6 @@ def seed():
             # Assign permissions based on role
             if role_name == "SuperAdmin":
                 perm_ids = list(all_permissions.values())
-            elif role_name == "Admin":
-                admin_perms = [p for name, p in all_permissions.items()
-                              if not name.startswith("superadmin")]
-                perm_ids = admin_perms
             elif role_name == "Analyst":
                 analyst_perms = [
                     p for name, p in all_permissions.items()
@@ -150,6 +142,23 @@ def seed():
 
         db.commit()
 
+        # Clean up legacy 'Admin' role if present and migrate users to SuperAdmin
+        superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
+        legacy_admin_role = db.query(Role).filter(Role.name == "Admin").first()
+        if legacy_admin_role and superadmin_role:
+            admin_user_roles = db.query(UserRole).filter(UserRole.role_id == legacy_admin_role.id).all()
+            for aur in admin_user_roles:
+                has_superadmin = db.query(UserRole).filter(
+                    UserRole.user_id == aur.user_id,
+                    UserRole.role_id == superadmin_role.id,
+                ).first()
+                if not has_superadmin:
+                    db.add(UserRole(user_id=aur.user_id, role_id=superadmin_role.id))
+            db.query(UserRole).filter(UserRole.role_id == legacy_admin_role.id).delete()
+            db.query(RolePermission).filter(RolePermission.role_id == legacy_admin_role.id).delete()
+            db.query(Role).filter(Role.id == legacy_admin_role.id).delete()
+            db.commit()
+
         # Create admin user if not exists
         superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
         analyst_role = db.query(Role).filter(Role.name == "Analyst").first()
@@ -174,7 +183,8 @@ def seed():
                 db.add(UserRole(user_id=admin.id, role_id=superadmin_role.id))
                 db.commit()
 
-        # Reconcile user roles for all existing users so they hold proper permissions
+        # Reconcile user roles for all existing users so they hold proper clean permissions
+        viewer_role = db.query(Role).filter(Role.name == "Viewer").first()
         all_users = db.query(User).all()
         for user in all_users:
             user_roles = [ur.role_id for ur in db.query(UserRole).filter(UserRole.user_id == user.id).all()]
@@ -185,8 +195,17 @@ def seed():
             if is_admin_user and superadmin_role:
                 if superadmin_role.id not in user_roles:
                     db.add(UserRole(user_id=user.id, role_id=superadmin_role.id))
-            elif analyst_role and analyst_role.id not in user_roles and (not superadmin_role or superadmin_role.id not in user_roles):
-                db.add(UserRole(user_id=user.id, role_id=analyst_role.id))
+                # Remove redundant lower roles
+                if viewer_role and viewer_role.id in user_roles:
+                    db.query(UserRole).filter(UserRole.user_id == user.id, UserRole.role_id == viewer_role.id).delete()
+                if analyst_role and analyst_role.id in user_roles:
+                    db.query(UserRole).filter(UserRole.user_id == user.id, UserRole.role_id == analyst_role.id).delete()
+            elif analyst_role and (not superadmin_role or superadmin_role.id not in user_roles):
+                if analyst_role.id not in user_roles:
+                    db.add(UserRole(user_id=user.id, role_id=analyst_role.id))
+                # Remove redundant viewer role if analyst
+                if viewer_role and viewer_role.id in user_roles:
+                    db.query(UserRole).filter(UserRole.user_id == user.id, UserRole.role_id == viewer_role.id).delete()
 
         db.commit()
 
