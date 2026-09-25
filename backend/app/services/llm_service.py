@@ -254,37 +254,70 @@ DATABASE CONTEXT AND SCHEMA:
 {schema_context}
 
 CRITICAL RULES FOR SQL GENERATION:
-1. STRICT COLUMN GROUNDING: Every column you reference in SELECT, JOIN, WHERE, GROUP BY, or ORDER BY MUST exist under that specific table in the schema above.
-   - NEVER invent non-existent column names (e.g. do NOT write 'project_spending', 'total_employee_salary_cost', 'employee_count', 'average_salary').
-   - Use the actual column names from the schema: e.g. in table PROJECTS the spending column is 'SPENT', budget is 'BUDGET'. In EMPLOYEES salary is 'SALARY'.
-2. SINGLE TABLE COMPLETENESS: If all required metrics and columns exist in a single table (e.g. both SPENT and BUDGET are in table PROJECTS), query ONLY that table. Do NOT join other tables unnecessarily.
-3. PRE-AGGREGATE FIRST, THEN JOIN (ROW MULTIPLICATION / FAN-OUT PREVENTION):
-   - When a question involves multiple child tables that each have a one-to-many relationship to the same parent table (e.g. EMPLOYEES has many employees per department, and PROJECTS has many projects per department):
-     NEVER join multiple child tables directly in a single FROM clause before aggregation! (e.g. 5 employees * 2 projects produces 10 rows, multiplying salaries and spending!).
-     Instead, you MUST pre-aggregate each child table independently in a CTE (WITH clause) or subquery grouped by the parent key (department_id), and then join the aggregated totals to the parent table.
+1. ORACLE SCHEMA IS THE SOURCE OF TRUTH:
+   - EVERY table name, column name, and foreign key MUST exist in the schema context above.
+   - NEVER invent non-existent table names (e.g., do NOT generate 'STALL_BOOKING_TBL' or hallucinated tables). Only reference relevant analytics tables.
+   - NEVER invent non-existent column names (e.g., do NOT write 'project_spending', 'total_employee_salary_cost', 'income', 'total_company_income', 'sales_rep_id' in EMPLOYEES).
+   - Map natural language concepts directly to real database columns:
+     * 'project spending' -> PROJECTS.SPENT
+     * 'project budget' -> PROJECTS.BUDGET
+     * 'employee salary cost' / 'salary' -> EMPLOYEES.SALARY
+     * 'company revenue' / 'revenue' -> COMPANY_FINANCIALS.REVENUE
+     * 'company expenses' -> COMPANY_FINANCIALS.OPERATING_EXPENSES (or EXPENSES)
+     * 'net profit' -> COMPANY_FINANCIALS.NET_PROFIT
+     * 'sales revenue' -> SALES_RECORDS.TOTAL_REVENUE
+     * 'sales representative' -> SALES_RECORDS.SALES_REP_ID joined to EMPLOYEES.EMPLOYEE_ID
+
+2. PRE-AGGREGATE FIRST, THEN JOIN (ROW MULTIPLICATION / FAN-OUT PREVENTION):
+   - When a question compares or combines metrics from multiple child tables that each have a one-to-many relationship to a parent table (e.g. EMPLOYEES has many employees per department, and PROJECTS has many projects per department):
+     NEVER join multiple child tables directly in a single FROM clause before aggregation! (Directly joining EMPLOYEES and PROJECTS to DEPARTMENTS multiplies rows, e.g. 5 employees * 2 projects = 10 rows, producing wrong numbers!).
+   - Instead, PRE-AGGREGATE each child table independently in a Common Table Expression (WITH clause) grouped by department_id first, and then JOIN the aggregated CTEs to DEPARTMENTS:
+     ```sql
+     WITH employee_totals AS (
+         SELECT department_id, COUNT(*) AS employee_count, SUM(salary) AS total_salary
+         FROM employees
+         GROUP BY department_id
+     ),
+     project_totals AS (
+         SELECT department_id, SUM(budget) AS total_project_budget, SUM(spent) AS total_project_spent
+         FROM projects
+         GROUP BY department_id
+     )
+     SELECT
+         d.department_id,
+         d.department_name,
+         NVL(e.total_salary, 0) AS total_salary,
+         NVL(p.total_project_spent, 0) AS total_project_spent
+     FROM departments d
+     LEFT JOIN employee_totals e ON d.department_id = e.department_id
+     LEFT JOIN project_totals p ON d.department_id = p.department_id
+     WHERE NVL(p.total_project_spent, 0) > NVL(e.total_salary, 0);
+     ```
+
+3. SINGLE TABLE COMPLETENESS: If all required metrics and columns exist in a single table (e.g. both SPENT and BUDGET are in table PROJECTS), query ONLY that table. Do NOT join other tables unnecessarily.
+
 4. NO SELECT ALIASES IN HAVING OR WHERE (ORACLE SQL):
    - In Oracle SQL, column aliases defined in SELECT (e.g. `AS total_spent`) CANNOT be referenced in HAVING or WHERE clauses.
-   - Instead, wrap the query in a CTE (WITH clause) or subquery, and filter in the outer WHERE clause:
-     `WITH dept_totals AS (SELECT d.department_name, NVL(e.total_salary, 0) AS total_salary, NVL(p.total_spent, 0) AS total_spent FROM ...) SELECT * FROM dept_totals WHERE total_spent > total_salary;`
-5. FILTERING BY ENTITY OR CATEGORY NAMES: When the user question mentions an entity name or category (e.g. 'Engineering', 'Q2', 'Completed'):
-   - Look at the [Sample Values] in the schema to find which table and column holds that value (e.g. DEPARTMENTS.DEPARTMENT_NAME contains 'Engineering').
-   - You MUST include a WHERE clause filtering on that column: e.g. `WHERE D.DEPARTMENT_NAME = 'Engineering'`.
-   - If querying a related table (e.g. EMPLOYEES), JOIN the parent table on the foreign key relationship:
-     `SELECT AVG(E.SALARY) FROM EMPLOYEES E JOIN DEPARTMENTS D ON E.DEPARTMENT_ID = D.DEPARTMENT_ID WHERE D.DEPARTMENT_NAME = 'Engineering';`
+   - Wrap the query in a CTE (WITH clause) or subquery, and filter in the outer WHERE clause.
+
+5. VALID FOREIGN KEY JOINS ONLY:
+   - Verify that join columns actually exist in both tables.
+   - `SALES_RECORDS.SALES_REP_ID` relates to `EMPLOYEES.EMPLOYEE_ID`. (Do NOT write `EMPLOYEES.SALES_REP_ID`).
+
 6. 'WHO', 'WHICH', AND RANKING QUESTIONS:
-   - When asked 'Who ...' (e.g. 'Who has highest salary?', 'Who is the top sales rep?'): SELECT the person's identity (`FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME`) together with the metric, and use `ORDER BY <metric> DESC FETCH FIRST 1 ROWS ONLY`.
+   - When asked 'Who ...': SELECT person's identity (`FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME`) together with the metric, and `ORDER BY <metric> DESC FETCH FIRST 1 ROWS ONLY`.
    - When asked 'Which department...', 'Which project...', or 'Which quarter...': SELECT the entity name (`DEPARTMENT_NAME`, `PROJECT_NAME`, `QUARTER`, etc.) together with the metric, and `ORDER BY <metric> DESC FETCH FIRST 1 ROWS ONLY`.
-7. INDEPENDENT TABLES & MULTI-METRIC CTEs: Independent tables that have no foreign key relationship to other tables (such as company-wide financial tables) must NOT be joined directly in a single FROM clause. Compute each metric in its own Common Table Expression (WITH clause) using FETCH FIRST 1 ROWS ONLY and combine the single-row CTEs using CROSS JOIN.
-8. AGGREGATIONS & GROUP BY: All non-aggregated columns in SELECT must appear in GROUP BY.
-9. SYNTAX & DIALECT:{dialect_rules}
-10. ROW LIMIT: Include FETCH FIRST 20 ROWS ONLY for multi-row queries unless answering a top 1 ranking question.
+
+7. INDEPENDENT DOMAINS & MULTI-METRIC CTEs:
+   - Independent tables with no foreign keys (like `COMPANY_FINANCIALS`) must not be joined directly to other tables. Compute each metric in its own single-row CTE (WITH clause) with `FETCH FIRST 1 ROWS ONLY` and combine them via `CROSS JOIN`.
+
+8. SYNTAX & DIALECT:{dialect_rules}
+9. ROW LIMIT: Include FETCH FIRST 20 ROWS ONLY for multi-row queries unless answering a top 1 ranking question.
 
 INTENT & RELEVANCE RULES:
-1. UNRELATED QUESTIONS: If the user question is completely unrelated to the available tables and columns in the schema (such as general knowledge, weather, movies, sports, recipes, or outside domains not in the schema), do NOT generate any SQL query. Output strictly:
-   UNRELATED: The connected database does not contain information to answer this question.
-2. AMBIGUOUS QUESTIONS: If the user asks a question with subjective or undefined criteria (e.g. 'Who is the best?', 'Which is greatest?') with no specified metric, do NOT guess. Output strictly:
-   AMBIGUOUS: The question is ambiguous. Please clarify which metric you would like to evaluate (e.g., salary, revenue, budget, performance).
-3. VALID DATABASE QUESTIONS: Generate a single valid {dialect} query that accurately answers the question. Output your query strictly inside a ```sql ... ``` code block. Return ONLY the ```sql ... ``` block without explanation or conversational text."""
+1. UNRELATED QUESTIONS: Output strictly `UNRELATED: ...` if question cannot be answered from schema.
+2. AMBIGUOUS QUESTIONS: Output strictly `AMBIGUOUS: ...` if question lacks specific metric.
+3. VALID DATABASE QUESTIONS: Generate a single valid {dialect} query strictly inside a ```sql ... ``` code block."""
 
     def _fixup_sql(self, raw: str, dialect: str = "") -> str:
         if not raw or not raw.strip():
@@ -367,15 +400,16 @@ INTENT & RELEVANCE RULES:
         dialect = self._get_db_dialect(connection_type)
         system_prompt = self._build_schema_prompt(schema_context, dialect)
         fix_prompt = (
-            f"The following {dialect} query failed with a database error.\n\n"
+            f"The following {dialect} query failed preflight structural validation or database execution.\n\n"
             f"User Question: {natural_language}\n\n"
-            f"Failed SQL:\n{sql}\n\n"
-            f"Database Error:\n{error}\n\n"
-            f"INSTRUCTIONS TO FIX DYNAMICALLY:\n"
-            f"1. Understand what caused the error (e.g. ORA-00904 = column does not exist, ORA-00918 = ambiguous column, ORA-00937 = non-aggregated column in SELECT missing from GROUP BY).\n"
-            f"2. Inspect the schema context above to find the exact table and column names.\n"
-            f"3. Regenerate the corrected query using ONLY tables and columns verified in the schema.\n"
-            f"4. Return ONLY the corrected raw SQL query without conversational text."
+            f"Previous SQL:\n{sql}\n\n"
+            f"Validation/Database Error Diagnostic:\n{error}\n\n"
+            f"INSTRUCTIONS TO DYNAMICALLY REGENERATE:\n"
+            f"1. DO NOT guess column names or perform string replacements.\n"
+            f"2. Inspect the schema context above to find the exact verified table and column names.\n"
+            f"3. If multiple one-to-many child tables are joined, pre-aggregate each child table in a separate CTE (WITH clause) grouped by department_id BEFORE joining.\n"
+            f"4. Regenerate the COMPLETE corrected raw SQL query using ONLY verified tables and columns.\n"
+            f"5. Return ONLY the corrected raw SQL query strictly inside a ```sql ... ``` block."
         )
         messages = [
             {"role": "system", "content": system_prompt},

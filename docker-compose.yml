@@ -44,8 +44,8 @@ services:
     environment:
       DATABASE_URL: postgresql://user:pass@postgres:5432/agentic
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-chars-long!}
       CORS_ORIGINS: '["http://localhost:3000", "http://localhost:3001"]'
       SMTP_HOST: mailhog
       SMTP_PORT: "1025"
@@ -72,7 +72,7 @@ services:
       # OpenAI API
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      MCP_API_KEY: ${MCP_API_KEY:?Set MCP_API_KEY in .env}
+      MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-api-key-change-in-prod}
       MCP_ENABLED: "true"
       USE_MCP_TOOLS: "true"
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

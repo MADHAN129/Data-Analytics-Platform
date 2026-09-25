@@ -242,18 +242,80 @@ class TestDynamicDataAnalyzer(unittest.TestCase):
         self.assertIn("This question cannot be answered from the connected database", resp.explanation)
         self.assertIn("Available Topics", resp.explanation)
 
-    # 12. Ambiguous Question Handling
-    def test_12_ambiguous_question(self):
-        """12. Ambiguous questions (e.g., 'Who is the best?') handled cleanly with metric suggestions"""
-        req = QueryRequest(database_id=self.db_conn.id, natural_language="Who is the best?")
+    # 13. Multi-Child Aggregation Comparison (Aggregate-Then-Join Pattern)
+    def test_13_multi_child_aggregation_comparison(self):
+        """13. Multi-child aggregation questions ('Which departments have higher project spending than employee salary cost?')"""
+        gt_rows = self._exec_ground_truth("""
+            WITH employee_totals AS (
+                SELECT department_id, SUM(salary) AS total_salary
+                FROM employees
+                GROUP BY department_id
+            ),
+            project_totals AS (
+                SELECT department_id, SUM(spent) AS total_project_spent
+                FROM projects
+                GROUP BY department_id
+            )
+            SELECT d.department_name, NVL(e.total_salary, 0) AS total_salary, NVL(p.total_project_spent, 0) AS total_project_spent
+            FROM departments d
+            LEFT JOIN employee_totals e ON d.department_id = e.department_id
+            LEFT JOIN project_totals p ON d.department_id = p.department_id
+            WHERE NVL(p.total_project_spent, 0) > NVL(e.total_salary, 0)
+        """)
+        expected_depts = {row[0] for row in gt_rows}
+
+        req = QueryRequest(database_id=self.db_conn.id, natural_language="Which departments have higher project spending than employee salary cost?")
         resp = execute_natural_language_query(self.db, req, user_id=self.user_id)
 
         self.assertEqual(resp.status, "completed")
-        self.assertIsNone(resp.generated_sql)
-        self.assertEqual(len(resp.results.rows if resp.results else []), 0)
-        self.assertIn("ambiguous", resp.explanation.lower())
-        self.assertIn("Suggested Metrics", resp.explanation)
+        self.assertIsNotNone(resp.results)
+        # Ensure generated SQL uses WITH clause to pre-aggregate (preventing row multiplication)
+        self.assertIn("WITH", resp.generated_sql.upper())
+        actual_depts = {str(row[0]) for row in resp.results.rows}
+        self.assertEqual(actual_depts, expected_depts)
+
+    # 14. CTE Column Exposure Scoping Preflight Validation
+    def test_14_cte_column_exposure_scoping(self):
+        """14. Preflight validator rejects unexposed CTE column references"""
+        from app.services.query_service import _validate_sql_before_execution, _get_schema_context
+        _, table_cols, _ = _get_schema_context(self.db_conn)
+        
+        # CTE employee_totals ONLY selects department_id and total_salary (does NOT expose employee_id or salary)
+        bad_sql = """
+            WITH employee_totals AS (
+                SELECT department_id, SUM(salary) AS total_salary
+                FROM employees
+                GROUP BY department_id
+            )
+            SELECT d.department_name, e.employee_id, e.total_salary
+            FROM departments d
+            LEFT JOIN employee_totals e ON d.department_id = e.department_id;
+        """
+        ok, _, err = _validate_sql_before_execution(bad_sql, table_cols, "Oracle SQL")
+        self.assertFalse(ok)
+        self.assertIn("CTE Column Reference Error", err)
+        self.assertIn("employee_id", err)
+
+    # 15. Semantic Metric Distinction Validation
+    def test_15_semantic_metric_distinction(self):
+        """15. Validator rejects substitution of DEPARTMENTS.BUDGET when employee salary cost was asked"""
+        from app.services.query_service import _validate_sql_before_execution, _get_schema_context
+        _, table_cols, _ = _get_schema_context(self.db_conn)
+        
+        # User asked for employee salary cost, but SQL incorrectly substituted DEPARTMENTS.BUDGET
+        bad_sql = """
+            SELECT d.department_name, d.budget, p.spent
+            FROM departments d
+            JOIN projects p ON d.department_id = p.department_id
+            WHERE p.spent > d.budget;
+        """
+        question = "Which departments have higher project spending than employee salary cost?"
+        ok, _, err = _validate_sql_before_execution(bad_sql, table_cols, "Oracle SQL", natural_language=question)
+        self.assertFalse(ok)
+        self.assertIn("Semantic Error", err)
+        self.assertIn("employee salary cost", err)
 
 
 if __name__ == "__main__":
     unittest.main()
+

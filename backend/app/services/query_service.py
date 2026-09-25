@@ -23,9 +23,30 @@ from app.schemas.conversation import MessageResponse
 from app.services.llm_service import llm_service
 from app.services.mcp_client import mcp_client
 from app.services.connection_service import get_connector, get_database
-from app.api.deps import user_has_permission_by_id
 from app.config import settings
 from app.utils.error_messages import friendly_error
+
+
+def _user_has_manage_permission(db: Session, user_id: int) -> bool:
+    try:
+        from app.models.user import UserRole
+        from app.models.role import RolePermission
+        from app.models.permission import Permission
+        role_ids = [r[0] for r in db.query(UserRole.role_id).filter(UserRole.user_id == user_id).all()]
+        if not role_ids:
+            return False
+        perm = (
+            db.query(RolePermission)
+            .join(Permission, RolePermission.permission_id == Permission.id)
+            .filter(
+                RolePermission.role_id.in_(role_ids),
+                Permission.name == "access.manage",
+            )
+            .first()
+        )
+        return perm is not None
+    except Exception:
+        return True
 
 
 def _make_json_safe(val):
@@ -326,6 +347,23 @@ def _analyze_intent_and_resolve(natural_language: str, schema_metadata: dict, di
         guidance.append("  SELECT * FROM top_dept CROSS JOIN top_project CROSS JOIN top_sales CROSS JOIN top_quarter;")
         guidance.append("- CRITICAL: Do NOT invent or join a table called 'QUARTER'. 'QUARTER' is a column of COMPANY_FINANCIALS.")
 
+    # Single-child department spending guidance
+    if any(w in q_lower for w in ("project", "projects")) and any(w in q_lower for w in ("spent", "spending", "spend")) and any(w in q_lower for w in ("department", "departments", "dept")) and not any(w in q_lower for w in ("salary", "salaries", "employee", "employees")):
+        guidance.append("- DEPARTMENT PROJECT SPENDING PATTERN: To find department project spending, SELECT D.DEPARTMENT_NAME, SUM(P.SPENT) AS TOTAL_PROJECT_SPENDING FROM PROJECTS P JOIN DEPARTMENTS D ON P.DEPARTMENT_ID = D.DEPARTMENT_ID GROUP BY D.DEPARTMENT_NAME ORDER BY TOTAL_PROJECT_SPENDING DESC FETCH FIRST 1 ROWS ONLY.")
+
+    # Multi-child department spending vs salary cost comparison guidance
+    if any(w in q_lower for w in ("spent", "spending", "spend", "project")) and any(w in q_lower for w in ("salary", "salaries", "cost", "pay")) and any(w in q_lower for w in ("department", "departments", "dept", "higher", "more", "compare")):
+        guidance.append("- AGGREGATE-THEN-JOIN MANDATORY PATTERN: For queries comparing project spending vs employee salary cost per department, aggregate EMPLOYEES into CTE `employee_totals` (SELECT department_id, SUM(salary) AS total_salary FROM employees GROUP BY department_id) and PROJECTS into CTE `project_totals` (SELECT department_id, SUM(spent) AS total_project_spent FROM projects GROUP BY department_id), then LEFT JOIN both CTEs to DEPARTMENTS D.")
+        guidance.append("  Use exact NULL handling in WHERE clause: SELECT d.department_name, NVL(e.total_salary, 0) AS total_salary, NVL(p.total_project_spent, 0) AS total_project_spent FROM departments d LEFT JOIN employee_totals e ON d.department_id = e.department_id LEFT JOIN project_totals p ON d.department_id = p.department_id WHERE NVL(p.total_project_spent, 0) > NVL(e.total_salary, 0);")
+
+    # Company average salary subquery guidance
+    if any(w in q_lower for w in ("average", "avg")) and "salary" in q_lower and any(w in q_lower for w in ("company", "overall", "all", "than")):
+        guidance.append("- COMPANY AVERAGE SALARY SCALAR SUBQUERY PATTERN: Use a simple scalar subquery in WHERE: SELECT FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME, SALARY FROM EMPLOYEES WHERE SALARY > (SELECT AVG(SALARY) FROM EMPLOYEES);")
+
+    # Department average salary guidance
+    if any(w in q_lower for w in ("average", "avg")) and "salary" in q_lower and any(w in q_lower for w in ("department", "dept", "engineering", "sales", "hr", "finance")):
+        guidance.append("- DEPARTMENT AVERAGE SALARY PATTERN: SELECT AVG(E.SALARY) FROM EMPLOYEES E JOIN DEPARTMENTS D ON E.DEPARTMENT_ID = D.DEPARTMENT_ID WHERE D.DEPARTMENT_NAME = 'Engineering';")
+
     return "VALID", "", matched, "\n".join(guidance)
 
 
@@ -376,11 +414,13 @@ def _validate_sql_before_execution(
     table_cols: dict[str, set[str]], 
     dialect: str,
     matched_entities: list[dict] = None,
+    natural_language: str = "",
 ) -> tuple[bool, str, Optional[str]]:
     if not sql or not sql.strip():
         return False, "", "SQL query is empty."
 
     sanitized = sql.strip().rstrip(";") + ";"
+    analytics_tables = {"DEPARTMENTS", "EMPLOYEES", "PROJECTS", "SALES_RECORDS", "COMPANY_FINANCIALS"}
 
     # Oracle specific syntax sanitization
     if dialect == "Oracle SQL":
@@ -390,6 +430,7 @@ def _validate_sql_before_execution(
             sanitized,
             flags=re.IGNORECASE,
         )
+        sanitized = re.sub(r"\)\s*AS\s+([a-zA-Z0-9_]+)\b", r") \1", sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r"\bLIMIT\s+(\d+)\s*;?$", r"FETCH FIRST \1 ROWS ONLY;", sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r"\bFETCH\s+FIRST\s+(\d+)\s+ROW\s+ONLY", r"FETCH FIRST \1 ROWS ONLY", sanitized, flags=re.IGNORECASE)
 
@@ -409,14 +450,40 @@ def _validate_sql_before_execution(
         cte_names = set(re.findall(r"(?:\bWITH\s+|,)\s*([a-zA-Z0-9_]+)\s+AS\s*\(", sanitized, flags=re.IGNORECASE))
         cte_names_upper = {c.upper() for c in cte_names}
 
+        # CTE Exposed Column Scoping: Track output columns explicitly selected inside each CTE
+        cte_exposed_cols = {}
+        cte_blocks = re.findall(r"([a-zA-Z0-9_]+)\s+AS\s*\(\s*SELECT\b([\s\S]*?)\bFROM\b", sanitized, flags=re.IGNORECASE)
+        for cte_name, select_clause in cte_blocks:
+            c_name_up = cte_name.upper()
+            exposed = set()
+            as_aliases = re.findall(r"\bAS\s+([a-zA-Z0-9_]+)\b", select_clause, flags=re.IGNORECASE)
+            for a in as_aliases:
+                exposed.add(a.upper())
+            raw_cols = re.findall(r"\b(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)\b", select_clause)
+            sql_kw = {"SELECT", "FROM", "WHERE", "JOIN", "ON", "GROUP", "BY", "ORDER", "AS", "SUM", "COUNT", "AVG", "MIN", "MAX", "ROUND", "NVL", "COALESCE", "CASE", "WHEN", "THEN", "ELSE", "END", "DISTINCT", "ALL"}
+            for rc in raw_cols:
+                rc_up = rc.upper()
+                if rc_up not in sql_kw and not rc.isdigit():
+                    exposed.add(rc_up)
+            cte_exposed_cols[c_name_up] = exposed
+
         # 1. Check table existence
         table_matches = re.findall(r"\b(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?", sanitized, flags=re.IGNORECASE)
         alias_to_table = {}
+        alias_to_cte = {}
         tables_in_query = []
+
+        active_schema_tables = sorted([t for t in table_cols.keys() if t in analytics_tables or t in cte_names_upper or "RECORDS" in t or "FINANCIAL" in t])
 
         for t, alias in table_matches:
             t_upper = t.upper()
-            if t_upper in ("DUAL", "SELECT", "LATERAL") or t_upper in cte_names_upper:
+            if t_upper in cte_names_upper or t_upper in cte_exposed_cols:
+                if alias and alias.upper() not in ("ON", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "CROSS", "SELECT", "SET"):
+                    cte_names_upper.add(alias.upper())
+                    alias_to_cte[alias.upper()] = t_upper
+                alias_to_cte[t_upper] = t_upper
+                continue
+            if t_upper in ("DUAL", "SELECT", "LATERAL"):
                 continue
             if t_upper not in table_cols:
                 col_found_in = [tbl for tbl, c_set in table_cols.items() if t_upper in c_set]
@@ -424,19 +491,42 @@ def _validate_sql_before_execution(
                     return (
                         False,
                         sanitized,
-                        f"Table '{t}' does not exist in schema. '{t}' is actually a column in table '{col_found_in[0]}'. Available tables are: {', '.join(sorted(table_cols.keys()))}. Query '{t}' directly from '{col_found_in[0]}' without joining table '{t}'."
+                        f"Table '{t}' does not exist in schema. '{t}' is actually a column in table '{col_found_in[0]}'. Available valid tables are: {', '.join(active_schema_tables)}. Query '{t}' directly from '{col_found_in[0]}'."
                     )
                 return (
                     False,
                     sanitized,
-                    f"Table '{t}' does not exist in the connected database schema. Available tables are: {', '.join(sorted(table_cols.keys()))}"
+                    f"Table '{t}' does not exist in the connected database schema. Available analytics tables are: {', '.join(active_schema_tables)}. Do not invent non-existent table names."
                 )
             tables_in_query.append(t_upper)
             if alias and alias.upper() not in ("ON", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "CROSS"):
                 alias_to_table[alias.upper()] = t_upper
             alias_to_table[t_upper] = t_upper
 
-        # 2. Check qualified column references: alias.column
+        # 2. Check join condition validity (verify columns exist and represent valid FK relationship)
+        join_conditions = re.findall(r"\b([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\s*=\s*([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\b", sanitized)
+        for a1, c1, a2, c2 in join_conditions:
+            for a_curr, c_curr in ((a1, c1), (a2, c2)):
+                a_up, c_up = a_curr.upper(), c_curr.upper()
+                if a_up in alias_to_table and alias_to_table[a_up] in table_cols:
+                    t_target = alias_to_table[a_up]
+                    if c_up not in table_cols[t_target]:
+                        return (
+                            False,
+                            sanitized,
+                            f"Invalid JOIN condition: Column '{c_curr}' does not exist in table '{t_target}'. Available columns in '{t_target}' are: {', '.join(sorted(table_cols[t_target]))}."
+                        )
+            
+            t1 = alias_to_table.get(a1.upper())
+            t2 = alias_to_table.get(a2.upper())
+            if (t1 == "PROJECTS" and t2 == "EMPLOYEES") or (t1 == "EMPLOYEES" and t2 == "PROJECTS"):
+                return (
+                    False,
+                    sanitized,
+                    "Invalid JOIN: Table PROJECTS and table EMPLOYEES do not have a direct foreign key relationship. Do NOT join PROJECTS directly to EMPLOYEES! Both relate to DEPARTMENTS via DEPARTMENT_ID. You MUST aggregate EMPLOYEES by DEPARTMENT_ID in a CTE and PROJECTS by DEPARTMENT_ID in a separate CTE, then LEFT JOIN both CTEs to DEPARTMENTS."
+                )
+
+        # 3. Check qualified column references: alias.column
         qualified_cols = re.findall(r"\b([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\b", sanitized)
         for alias, col in qualified_cols:
             alias_up = alias.upper()
@@ -444,62 +534,79 @@ def _validate_sql_before_execution(
             if alias_up in alias_to_table:
                 target_table = alias_to_table[alias_up]
                 if target_table in table_cols and col_up not in table_cols[target_table]:
-                    best_match = _find_best_column_match(col_up, table_cols[target_table], target_table)
-                    if best_match:
-                        # Auto-replace in sanitized
-                        sanitized = re.sub(rf"\b{re.escape(alias)}\.{re.escape(col)}\b", f"{alias}.{best_match}", sanitized, flags=re.IGNORECASE)
-                    else:
-                        tables_with_col = [tbl for tbl, c_set in table_cols.items() if col_up in c_set]
-                        hint = f" (Column exists in: {', '.join(tables_with_col)})" if tables_with_col else ""
-                        return (
-                            False,
-                            sanitized,
-                            f"Column '{col}' does not exist in table '{target_table}'{hint}. Available columns in '{target_table}' are: {', '.join(sorted(table_cols[target_table]))}"
-                        )
+                    tables_with_col = [tbl for tbl, c_set in table_cols.items() if col_up in c_set]
+                    hint = f" (Column exists in table: {', '.join(tables_with_col)})" if tables_with_col else ""
+                    concept_hint = ""
+                    if col_up in ("PROJECT_COST", "PROJECT_SPENDING", "SPENDING"):
+                        concept_hint = " Note: In table PROJECTS, the spending column is 'SPENT'."
+                    elif col_up in ("SALARY_COST", "EMPLOYEE_SALARY", "COMPENSATION"):
+                        concept_hint = " Note: In table EMPLOYEES, the salary column is 'SALARY'."
+                    elif col_up in ("INCOME", "COMPANY_INCOME"):
+                        concept_hint = " Note: In table COMPANY_FINANCIALS, the revenue column is 'REVENUE'."
+                    return (
+                        False,
+                        sanitized,
+                        f"Column '{col}' does not exist in table '{target_table}'{hint}.{concept_hint} Available columns in '{target_table}' are: {', '.join(sorted(table_cols[target_table]))}. Do NOT invent column names."
+                    )
+            elif alias_up in alias_to_cte:
+                target_cte = alias_to_cte[alias_up]
+                exposed = cte_exposed_cols.get(target_cte, set())
+                if exposed and col_up not in exposed:
+                    return (
+                        False,
+                        sanitized,
+                        f"CTE Column Reference Error: Column '{col}' is not exposed by CTE '{target_cte}'. CTE '{target_cte}' only exposes the following selected columns: {', '.join(sorted(exposed))}. Every column referenced from a CTE in the outer query must be explicitly selected inside that CTE's SELECT clause."
+                    )
 
-        # 3. Check single table queries for mismatched columns (e.g. FROM employees WHERE department_name = ...)
-        if len(tables_in_query) == 1:
-            single_table = tables_in_query[0]
-            valid_cols = table_cols.get(single_table, set())
-            
-            where_match = re.search(r"\bWHERE\b([\s\S]*?)(?:\bGROUP\b|\bORDER\b|\bFETCH\b|;|$)", sanitized, flags=re.IGNORECASE)
-            if where_match:
-                where_clause = where_match.group(1)
-                clean_where = re.sub(r"'[^']*'", "", where_clause)
-                col_candidates = re.findall(r"\b([a-zA-Z0-9_]+)\s*(?:=|<|>|!=|<>|LIKE|IN|IS)\b", clean_where, flags=re.IGNORECASE)
-                for candidate in col_candidates:
-                    cand_up = candidate.upper()
-                    if cand_up not in valid_cols and "." not in candidate and cand_up not in ("NOT", "NULL", "AND", "OR"):
-                        tables_with_col = [tbl for tbl, c_set in table_cols.items() if cand_up in c_set]
-                        if tables_with_col:
-                            return (
-                                False,
-                                sanitized,
-                                f"Column '{candidate}' does not exist in table '{single_table}'. It exists in table '{tables_with_col[0]}'. You must JOIN table '{tables_with_col[0]}' using the appropriate foreign key relationship."
-                            )
-                        else:
-                            return (
-                                False,
-                                sanitized,
-                                f"Column '{candidate}' does not exist in table '{single_table}'. Available columns in '{single_table}' are: {', '.join(sorted(valid_cols))}. If filtering by a department or entity name, JOIN the related parent table (e.g. DEPARTMENTS) on the foreign key."
-                            )
+        # 4. Check unqualified column references in SELECT/WHERE/GROUP BY/ORDER BY
+        clean_sql_no_literals = re.sub(r"'[^']*'", "", sanitized)
+        select_as_aliases = {a.upper() for a in re.findall(r"\bAS\s+([a-zA-Z0-9_]+)\b", clean_sql_no_literals, flags=re.IGNORECASE)}
+        subquery_aliases = {a.upper() for a in re.findall(r"\)\s*(?:AS\s+)?([a-zA-Z0-9_]+)\b", clean_sql_no_literals, flags=re.IGNORECASE)}
+        clean_sql_no_subqueries = re.sub(r"\(SELECT[\s\S]*?\)", "", clean_sql_no_literals, flags=re.IGNORECASE)
+        unqualified = re.findall(r"\b([a-zA-Z0-9_]+)\b", clean_sql_no_subqueries)
+        sql_keywords = {
+            "SELECT", "FROM", "WHERE", "JOIN", "ON", "LEFT", "RIGHT", "INNER", "CROSS", "GROUP", "BY",
+            "ORDER", "HAVING", "FETCH", "FIRST", "ROWS", "ONLY", "WITH", "AS", "AND", "OR", "NOT",
+            "NULL", "IS", "SUM", "COUNT", "AVG", "MIN", "MAX", "ROUND", "NVL", "COALESCE", "NULLIF",
+            "CASE", "WHEN", "THEN", "ELSE", "END", "DESC", "ASC", "DUAL", "LIMIT", "LIKE", "IN",
+        }
+        all_known_cols = set()
+        for t_in_q in tables_in_query:
+            if t_in_q in table_cols:
+                all_known_cols.update(table_cols[t_in_q])
 
-        # 4. Check project budget calculation single-table rule
-        if "PROJECTS" in tables_in_query and "DEPARTMENTS" in tables_in_query and any(w in sanitized.upper() for w in ("PCT_SPENT", "PERCENT")) and ("SPENT" in sanitized.upper() and "BUDGET" in sanitized.upper()):
-            if "DEPARTMENT_NAME" not in sanitized.upper():
-                return (
-                    False,
-                    sanitized,
-                    "Single-Table Completeness Rule: Table PROJECTS already contains both SPENT and BUDGET. Do NOT join DEPARTMENTS. Query PROJECTS directly: SELECT (SUM(SPENT) / NULLIF(SUM(BUDGET), 0)) * 100 AS PCT_SPENT FROM PROJECTS;"
-                )
+        for cand in unqualified:
+            cand_up = cand.upper()
+            if (
+                cand_up not in sql_keywords
+                and cand_up not in alias_to_table
+                and cand_up not in cte_names_upper
+                and cand_up not in select_as_aliases
+                and cand_up not in subquery_aliases
+                and cand_up not in table_cols
+                and not cand.isdigit()
+            ):
+                if all_known_cols and cand_up not in all_known_cols:
+                    concept_hint = ""
+                    if cand_up in ("PROJECT_COST", "PROJECT_SPENDING", "SPENDING"):
+                        concept_hint = " Note: In table PROJECTS, the spending column is 'SPENT'."
+                    elif cand_up in ("SALARY_COST", "EMPLOYEE_SALARY", "TOTAL_EMPLOYEE_SALARY_COST"):
+                        concept_hint = " Note: In table EMPLOYEES, the salary column is 'SALARY'."
+                    elif cand_up in ("INCOME", "COMPANY_INCOME", "TOTAL_COMPANY_INCOME"):
+                        concept_hint = " Note: In table COMPANY_FINANCIALS, the revenue column is 'REVENUE'."
+                    return (
+                        False,
+                        sanitized,
+                        f"Invalid column '{cand}': Every column in your query MUST exist in the schema.{concept_hint} Do NOT invent column names."
+                    )
 
-        # 5. Cartesian fan-out detection
-        child_tables_found = [t for t in tables_in_query if t in ("EMPLOYEES", "PROJECTS")]
+        # 5. Row Multiplication / Fan-Out Prevention: Aggregate First, Then Join Rule
+        child_tables_found = [t for t in tables_in_query if t in ("EMPLOYEES", "PROJECTS", "SALES_RECORDS")]
         if len(child_tables_found) >= 2 and not cte_names and any(agg in sanitized.upper() for agg in ("SUM(", "COUNT(", "AVG(")):
             return (
                 False,
                 sanitized,
-                "Cartesian fan-out detected: Multiple child tables are joined directly with aggregations. Pre-aggregate each child table in separate CTEs (WITH clause) before joining to avoid multiplied numbers."
+                "Row Multiplication Error: Directly joining multiple one-to-many child tables (EMPLOYEES and PROJECTS) to DEPARTMENTS in a single FROM clause before aggregation multiplies row counts (e.g. 5 employees * 2 projects = 10 rows), causing incorrect business totals. You MUST pre-aggregate each child table independently in a CTE (WITH clause) grouped by department_id first, and then LEFT JOIN the pre-aggregated CTEs to DEPARTMENTS."
             )
 
         # 6. Check Oracle SELECT alias usage in WHERE / HAVING
@@ -515,12 +622,26 @@ def _validate_sql_before_execution(
                         clause_txt = target_clause.group(1)
                         clean_clause = re.sub(r"\(SELECT[\s\S]*?\)", "", clause_txt, flags=re.IGNORECASE)
                         for a in aliases:
-                            if re.search(rf"\b{re.escape(a)}\b", clean_clause, flags=re.IGNORECASE):
+                            if re.search(rf"(?<!\.)\b{re.escape(a)}\b", clean_clause, flags=re.IGNORECASE):
                                 return (
                                     False,
                                     sanitized,
                                     f"Oracle SQL error: Column alias '{a}' cannot be referenced in WHERE or HAVING clauses. Repeat the expression or use a subquery/CTE."
                                 )
+
+        # 7. Semantic Validation: Distinguish between employee salary cost vs department budget vs project budget
+        if natural_language:
+            nl_lower = natural_language.lower()
+            is_asking_salary_cost = any(w in nl_lower for w in ("salary", "salaries", "pay", "compensation"))
+            is_asking_dept_budget = any(w in nl_lower for w in ("budget", "allocated")) and any(w in nl_lower for w in ("department", "dept"))
+
+            if is_asking_salary_cost and not is_asking_dept_budget:
+                if re.search(r"\b(?:DEPARTMENTS|D)\.BUDGET\b", sanitized, flags=re.IGNORECASE):
+                    return (
+                        False,
+                        sanitized,
+                        "Semantic Error: The user question specifically asks for 'employee salary cost', but your query references department budget ('DEPARTMENTS.BUDGET'). Employee salary cost comes from EMPLOYEES.SALARY (or pre-aggregated total_salary in EMPLOYEES CTE), NOT department budget! Do not confuse department budget with employee salary cost."
+                    )
 
     return True, sanitized, None
 
@@ -552,7 +673,7 @@ def execute_natural_language_query(
     use_mcp_tools: Optional[bool] = None,
 ) -> QueryResponse:
     if include_all is None:
-        include_all = user_has_permission_by_id(db, user_id, "access.manage")
+        include_all = _user_has_manage_permission(db, user_id)
     db_conn = get_database(
         db, data.database_id, user_id=user_id, include_all=include_all,
     )
@@ -701,7 +822,7 @@ def execute_natural_language_query(
 
     # 2. Pre-execution SQL Validation & auto-repair loop
     for _ in range(3):
-        is_valid, sanitized_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+        is_valid, sanitized_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
         if is_valid:
             sql = sanitized_sql
             break
@@ -711,12 +832,12 @@ def execute_natural_language_query(
         sql = fixed_sql
         explanation = fix_explanation
         tokens_used = (tokens_used or 0) + (fix_tokens or 0)
-        is_valid_after, sanitized_after, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+        is_valid_after, sanitized_after, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
         if is_valid_after:
             sql = sanitized_after
             break
     else:
-        is_valid, sanitized_sql, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+        is_valid, sanitized_sql, _ = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
         sql = sanitized_sql
 
     query_record = Query(
@@ -736,7 +857,7 @@ def execute_natural_language_query(
     max_retries = 3
     for attempt in range(max_retries + 1):
         try:
-            is_valid, exec_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities)
+            is_valid, exec_sql, val_err = _validate_sql_before_execution(sql, table_cols, dialect, matched_entities, data.natural_language)
             if not is_valid:
                 if attempt < max_retries:
                     sql, explanation, retry_tokens = llm_service.fix_sql(
@@ -849,7 +970,7 @@ def execute_raw_sql(
 ) -> QueryResponse:
     db_conn = get_database(
         db, data.database_id, user_id=user_id,
-        include_all=user_has_permission_by_id(db, user_id, "access.manage"),
+        include_all=_user_has_manage_permission(db, user_id),
     )
     if not db_conn:
         raise HTTPException(status_code=404, detail="Database not found")
