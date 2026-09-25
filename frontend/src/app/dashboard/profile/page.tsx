@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { api } from "@/lib/api-client"
 import type { UserResponse } from "@/types/api"
 import { useToast } from "@/components/ui/use-toast"
@@ -25,27 +26,24 @@ import {
   CheckCircle2,
   Calendar,
   Sparkles,
+  Sliders,
+  ChevronRight,
 } from "lucide-react"
 
 export default function ProfilePage() {
+  const router = useRouter()
   const { toast } = useToast()
   const { setUser: setAuthUser } = useAuthStore()
   const [user, setUser] = useState<UserResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingProfile, setSavingProfile] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
-  const [changingPassword, setChangingPassword] = useState(false)
 
   // Profile Form States
   const [fullName, setFullName] = useState("")
   const [phone, setPhone] = useState("")
   const [bio, setBio] = useState("")
   const [avatarUrl, setAvatarUrl] = useState("")
-
-  // Password Form States
-  const [currentPassword, setCurrentPassword] = useState("")
-  const [newPassword, setNewPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -200,66 +198,6 @@ export default function ProfilePage() {
     }
   }
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!currentPassword) {
-      toast({
-        title: "Validation Error",
-        description: "Please enter your current password.",
-        variant: "destructive",
-      })
-      return
-    }
-    if (newPassword.length < 8) {
-      toast({
-        title: "Validation Error",
-        description: "New password must be at least 8 characters long.",
-        variant: "destructive",
-      })
-      return
-    }
-    if (newPassword !== confirmPassword) {
-      toast({
-        title: "Password Mismatch",
-        description: "New password and confirm password do not match. Please ensure both passwords match.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    try {
-      setChangingPassword(true)
-      const res = await api.changePassword({
-        current_password: currentPassword,
-        new_password: newPassword,
-      })
-      setCurrentPassword("")
-      setNewPassword("")
-      setConfirmPassword("")
-      toast({
-        title: "Password Changed Successfully",
-        description: res?.message || "Your password has been successfully updated.",
-      })
-    } catch (err: unknown) {
-      const errorObj = err as { detail?: string | { msg?: string }[]; message?: string }
-      let errorMsg = "Current password is incorrect. Please check your current password and try again."
-      if (typeof errorObj?.detail === "string") {
-        errorMsg = errorObj.detail
-      } else if (Array.isArray(errorObj?.detail) && errorObj.detail.length > 0) {
-        errorMsg = errorObj.detail[0].msg || errorMsg
-      } else if (errorObj?.message) {
-        errorMsg = errorObj.message
-      }
-      toast({
-        title: "Incorrect Password",
-        description: errorMsg,
-        variant: "destructive",
-      })
-    } finally {
-      setChangingPassword(false)
-    }
-  }
-
   const getInitials = (name: string) => {
     return name
       .split(" ")
@@ -283,7 +221,7 @@ export default function ProfilePage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
         <p className="text-muted-foreground">
-          Manage your personal details, profile picture, bio, and account security.
+          Manage your personal details, profile picture, bio, and role permissions.
         </p>
       </div>
 
@@ -391,7 +329,7 @@ export default function ProfilePage() {
           </Card>
         </div>
 
-        {/* Right Column: Edit Details and Change Password Cards */}
+        {/* Right Column: Edit Details and Security Shortcut Cards */}
         <div className="space-y-6 md:col-span-2">
           {/* Personal Information Form */}
           <Card>
@@ -474,69 +412,34 @@ export default function ProfilePage() {
             </form>
           </Card>
 
-          {/* Change Password Form */}
-          <Card>
-            <form onSubmit={handleChangePassword}>
-              <CardHeader>
+          {/* Security & Password Redirect Card */}
+          <Card className="border-dashed bg-muted/20">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <KeyRound className="h-5 w-5 text-primary" />
-                  <CardTitle>Change Password</CardTitle>
+                  <CardTitle className="text-base">Password & Account Security</CardTitle>
                 </div>
-                <CardDescription>
-                  Ensure your account is using a secure and strong password.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="current-password">Current Password</Label>
-                  <Input
-                    id="current-password"
-                    type="password"
-                    placeholder="Enter your current password"
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="new-password">New Password</Label>
-                    <Input
-                      id="new-password"
-                      type="password"
-                      placeholder="Min. 8 characters"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="confirm-password">Confirm New Password</Label>
-                    <Input
-                      id="confirm-password"
-                      type="password"
-                      placeholder="Repeat new password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
-                <Button type="submit" disabled={changingPassword} className="bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm">
-                  {changingPassword ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Updating password...
-                    </>
-                  ) : (
-                    "Update Password"
-                  )}
-                </Button>
-              </CardFooter>
-            </form>
+                <Badge variant="outline" className="text-xs">
+                  Settings
+                </Badge>
+              </div>
+              <CardDescription>
+                Password changes, two-factor authentication, theme customization, and notification preferences are managed in Settings.
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="pt-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => router.push("/admin/settings")}
+              >
+                <Sliders className="h-4 w-4 text-primary" />
+                <span>Go to Settings & Security</span>
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            </CardFooter>
           </Card>
         </div>
       </div>
