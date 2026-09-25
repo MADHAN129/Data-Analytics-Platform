@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { api } from "@/lib/api-client"
-import { Loader2, CheckCircle } from "lucide-react"
+import { Loader2, CheckCircle, KeyRound, ArrowLeft } from "lucide-react"
 
 const resetSchema = z
   .object({
@@ -44,13 +44,22 @@ export function ResetPasswordForm() {
 
   const onSubmit = async (data: ResetFormData) => {
     if (!token) {
-      toast({ title: "Error", description: "Missing reset token", variant: "destructive" })
+      toast({
+        title: "Error",
+        description: "Missing or invalid reset token. Please request a new link.",
+        variant: "destructive",
+      })
       return
     }
+
     setIsSubmitting(true)
     try {
-      await api.resetPassword({ token, new_password: data.password })
+      await api.resetPassword({ token: token.trim(), new_password: data.password })
       setIsDone(true)
+      toast({
+        title: "Success",
+        description: "Password reset successful! You can now sign in with your new password.",
+      })
     } catch {
       toast({
         title: "Error",
@@ -64,17 +73,25 @@ export function ResetPasswordForm() {
 
   if (!token) {
     return (
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-destructive">Invalid reset link</CardTitle>
+      <Card className="w-full max-w-md shadow-lg border-muted">
+        <CardHeader className="space-y-1 text-center">
+          <CardTitle className="text-2xl font-bold text-destructive">Invalid or Missing Link</CardTitle>
           <CardDescription>
-            This reset link is missing a token. Please request a new password reset.
+            This reset link is missing a valid token. Please request a new password reset link.
           </CardDescription>
         </CardHeader>
-        <CardFooter>
+        <CardFooter className="flex flex-col gap-3 pt-2">
           <Button className="w-full" onClick={() => router.push("/forgot-password")}>
-            Request new reset
+            Request New Reset Link
           </Button>
+          <button
+            type="button"
+            onClick={() => router.push("/login")}
+            className="text-xs text-muted-foreground hover:underline inline-flex items-center justify-center"
+          >
+            <ArrowLeft className="mr-1 h-3 w-3" />
+            Back to sign in
+          </button>
         </CardFooter>
       </Card>
     )
@@ -82,27 +99,32 @@ export function ResetPasswordForm() {
 
   if (isDone) {
     return (
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <div className="flex justify-center">
+      <Card className="w-full max-w-md shadow-lg border-muted">
+        <CardHeader className="space-y-1 text-center">
+          <div className="flex justify-center mb-2">
             <CheckCircle className="h-12 w-12 text-emerald-500" />
           </div>
-          <CardTitle className="text-center text-2xl font-bold">Password reset</CardTitle>
-          <CardDescription className="text-center">
+          <CardTitle className="text-2xl font-bold">Password reset</CardTitle>
+          <CardDescription>
             Your password has been reset successfully.
           </CardDescription>
         </CardHeader>
-        <CardFooter className="flex justify-center">
-          <Button onClick={() => router.push("/login")}>Sign in with new password</Button>
+        <CardFooter className="flex justify-center pt-2">
+          <Button className="w-full" onClick={() => router.push("/login")}>
+            Sign in with new password
+          </Button>
         </CardFooter>
       </Card>
     )
   }
 
   return (
-    <Card className="w-full max-w-md">
+    <Card className="w-full max-w-md shadow-lg border-muted">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl font-bold">Set new password</CardTitle>
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-5 w-5 text-primary" />
+          <CardTitle className="text-2xl font-bold">Set new password</CardTitle>
+        </div>
         <CardDescription>Enter your new password below.</CardDescription>
       </CardHeader>
       <form onSubmit={handleSubmit(onSubmit)}>
@@ -119,12 +141,13 @@ export function ResetPasswordForm() {
               <p className="text-sm text-destructive">{errors.password.message}</p>
             )}
           </div>
+
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm password</Label>
             <Input
               id="confirmPassword"
               type="password"
-              placeholder="Repeat your password"
+              placeholder="Repeat your new password"
               {...register("confirmPassword")}
             />
             {errors.confirmPassword && (
@@ -132,19 +155,38 @@ export function ResetPasswordForm() {
             )}
           </div>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex flex-col gap-4">
           <Button type="submit" className="w-full" disabled={isSubmitting}>
             {isSubmitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Resetting...
+                Resetting password...
               </>
             ) : (
               "Reset password"
             )}
           </Button>
+          <div className="flex items-center justify-between w-full text-xs text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => router.push("/forgot-password")}
+              className="text-primary hover:underline inline-flex items-center"
+            >
+              Request new link
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/login")}
+              className="text-muted-foreground hover:underline inline-flex items-center"
+            >
+              <ArrowLeft className="mr-1 h-3 w-3" />
+              Back to sign in
+            </button>
+          </div>
         </CardFooter>
       </form>
     </Card>
   )
 }
+
+
