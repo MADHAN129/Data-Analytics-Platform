@@ -98,6 +98,26 @@ def delete_user(
     current_user: User = Depends(require_permission("user.delete")),
     db: Session = Depends(get_db),
 ):
+    from fastapi import HTTPException, status
+    from app.api.deps import is_user_superadmin
+
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account",
+        )
+    user = user_service.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and user.company_id != current_user.company_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if is_user_superadmin(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete the company SuperAdmin",
+        )
+
     user_service.delete_user(db, user_id, current_user.id)
     return MessageResponse(message="User deleted")
 
@@ -108,9 +128,12 @@ def activate_user(
     current_user: User = Depends(require_permission("user.update")),
     db: Session = Depends(get_db),
 ):
+    from fastapi import HTTPException, status
+
     user = user_service.get_user_by_id(db, user_id)
     if not user:
-        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and user.company_id != current_user.company_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     user.is_active = True
     db.commit()
@@ -124,10 +147,26 @@ def deactivate_user(
     current_user: User = Depends(require_permission("user.update")),
     db: Session = Depends(get_db),
 ):
+    from fastapi import HTTPException, status
+    from app.api.deps import is_user_superadmin
+
     user = user_service.get_user_by_id(db, user_id)
     if not user:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if int(current_user.id) == int(user_id) or (current_user.email and current_user.email.lower() == user.email.lower()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot deactivate your own account",
+        )
+    if current_user.company_id and user.company_id != current_user.company_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if is_user_superadmin(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot deactivate the company SuperAdmin",
+        )
+
     user.is_active = False
     db.commit()
     create_audit_log(db, current_user.id, "user.deactivate", "user", str(user_id))
@@ -158,16 +197,40 @@ def assign_role_to_user(
     current_user: User = Depends(require_permission("access.manage")),
     db: Session = Depends(get_db),
 ):
+    from fastapi import HTTPException, status
+    from app.models.role import Role
+    from app.api.deps import is_user_superadmin
+
     role_id = data.get("role_id")
     if not role_id:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="role_id is required")
+
+    target_user = user_service.get_user_by_id(db, user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and target_user.company_id != current_user.company_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+
+    if role.name == "SuperAdmin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SuperAdmin role cannot be assigned. There can only be one SuperAdmin (the Company Owner).",
+        )
+
+    if is_user_superadmin(db, target_user) and not is_user_superadmin(db, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot modify roles of the company SuperAdmin.",
+        )
 
     existing = db.query(UserRole).filter(
         UserRole.user_id == user_id, UserRole.role_id == role_id
     ).first()
     if existing:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Role already assigned")
 
     ur = UserRole(user_id=user_id, role_id=role_id, assigned_by=current_user.id)
@@ -185,11 +248,33 @@ def remove_role_from_user(
     current_user: User = Depends(require_permission("access.manage")),
     db: Session = Depends(get_db),
 ):
+    from fastapi import HTTPException, status
+    from app.models.role import Role
+    from app.api.deps import is_user_superadmin
+
+    target_user = user_service.get_user_by_id(db, user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if current_user.company_id and target_user.company_id != current_user.company_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if is_user_superadmin(db, target_user):
+        role = db.query(Role).filter(Role.id == role_id).first()
+        if role and role.name == "SuperAdmin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot remove SuperAdmin role from company SuperAdmin",
+            )
+        if not is_user_superadmin(db, current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot modify roles of the company SuperAdmin",
+            )
+
     ur = db.query(UserRole).filter(
         UserRole.user_id == user_id, UserRole.role_id == role_id
     ).first()
     if not ur:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
 
     db.delete(ur)

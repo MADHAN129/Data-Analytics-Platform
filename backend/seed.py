@@ -124,18 +124,22 @@ def seed():
 
         db.commit()
 
-        # Create roles (SuperAdmin, Analyst, Viewer)
+        # Create roles (SuperAdmin, Admin, Analyst, Viewer)
         roles_data = {
             "SuperAdmin": {
-                "description": "Full system access with all permissions",
+                "description": "Company owner with full unrestricted system access",
+                "is_system": True,
+            },
+            "Admin": {
+                "description": "Company administrator with user, database, query, and audit management",
                 "is_system": True,
             },
             "Analyst": {
-                "description": "Can query data and create dashboards",
+                "description": "Can create connections, query data and build dashboards",
                 "is_system": True,
             },
             "Viewer": {
-                "description": "Can view dashboards and reports",
+                "description": "Can view shared dashboards and reports",
                 "is_system": True,
             },
         }
@@ -146,6 +150,8 @@ def seed():
             existing_role = db.query(Role).filter(Role.name == role_name).first()
             if existing_role:
                 role = existing_role
+                role.description = role_info["description"]
+                role.is_system = role_info["is_system"]
             else:
                 role = Role(
                     name=role_name,
@@ -159,6 +165,12 @@ def seed():
             # Assign permissions based on role
             if role_name == "SuperAdmin":
                 perm_ids = list(all_permissions.values())
+            elif role_name == "Admin":
+                admin_perms = [
+                    p for name, p in all_permissions.items()
+                    if not name.startswith(("role.create", "role.delete", "role.update"))
+                ]
+                perm_ids = admin_perms
             elif role_name == "Analyst":
                 analyst_perms = [
                     p for name, p in all_permissions.items()
@@ -187,39 +199,26 @@ def seed():
 
         db.commit()
 
-        # Clean up legacy 'Admin' role if present and migrate users to SuperAdmin
+        # Create initial SuperAdmin user if not exists
         superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
-        legacy_admin_role = db.query(Role).filter(Role.name == "Admin").first()
-        if legacy_admin_role and superadmin_role:
-            admin_user_roles = db.query(UserRole).filter(UserRole.role_id == legacy_admin_role.id).all()
-            for aur in admin_user_roles:
-                has_superadmin = db.query(UserRole).filter(
-                    UserRole.user_id == aur.user_id,
-                    UserRole.role_id == superadmin_role.id,
-                ).first()
-                if not has_superadmin:
-                    db.add(UserRole(user_id=aur.user_id, role_id=superadmin_role.id))
-            db.query(UserRole).filter(UserRole.role_id == legacy_admin_role.id).delete()
-            db.query(RolePermission).filter(RolePermission.role_id == legacy_admin_role.id).delete()
-            db.query(Role).filter(Role.id == legacy_admin_role.id).delete()
-            db.commit()
-
-        # Create admin user if not exists
-        superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
+        admin_role = db.query(Role).filter(Role.name == "Admin").first()
         analyst_role = db.query(Role).filter(Role.name == "Analyst").first()
-        admin_email = "admin@agentic.com"
+        viewer_role = db.query(Role).filter(Role.name == "Viewer").first()
+
+        admin_email = os.environ.get("ADMIN_EMAIL") or os.environ.get("FIRST_SUPERUSER") or "admin@agentic.com"
+        admin_name = os.environ.get("ADMIN_NAME") or os.environ.get("FIRST_SUPERUSER_NAME") or "System Admin"
         existing_admin = db.query(User).filter(User.email == admin_email).first()
         if not existing_admin:
             # Prefer ADMIN_PASSWORD from the environment; otherwise generate a
             # strong random one. Never use a hardcoded default.
-            admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+            admin_password = os.environ.get("ADMIN_PASSWORD") or os.environ.get("FIRST_SUPERUSER_PASSWORD") or secrets.token_urlsafe(12)
             from app.models.company import Company
             default_company = db.query(Company).first()
             company_id = default_company.id if default_company else None
             admin = User(
                 email=admin_email,
                 password_hash=get_password_hash(admin_password),
-                full_name="System Admin",
+                full_name=admin_name,
                 company_id=company_id,
                 is_active=True,
             )
@@ -231,35 +230,22 @@ def seed():
                 default_company.owner_id = admin.id
                 db.commit()
 
-            # Assign SuperAdmin role
+            # Assign SuperAdmin role to initial system admin
             if superadmin_role:
                 db.add(UserRole(user_id=admin.id, role_id=superadmin_role.id))
                 db.commit()
 
-        # Reconcile user roles for all existing users so they hold proper clean permissions
-        viewer_role = db.query(Role).filter(Role.name == "Viewer").first()
-        all_users = db.query(User).all()
-        for user in all_users:
-            user_roles = [ur.role_id for ur in db.query(UserRole).filter(UserRole.user_id == user.id).all()]
-            is_admin_user = (
-                user.email.lower().startswith("admin@")
-                or (user.full_name and "admin" in user.full_name.lower())
-            )
-            if is_admin_user and superadmin_role:
-                if superadmin_role.id not in user_roles:
-                    db.add(UserRole(user_id=user.id, role_id=superadmin_role.id))
-                # Remove redundant lower roles
-                if viewer_role and viewer_role.id in user_roles:
-                    db.query(UserRole).filter(UserRole.user_id == user.id, UserRole.role_id == viewer_role.id).delete()
-                if analyst_role and analyst_role.id in user_roles:
-                    db.query(UserRole).filter(UserRole.user_id == user.id, UserRole.role_id == analyst_role.id).delete()
-            elif analyst_role and (not superadmin_role or superadmin_role.id not in user_roles):
-                if analyst_role.id not in user_roles:
-                    db.add(UserRole(user_id=user.id, role_id=analyst_role.id))
-                # Remove redundant viewer role if analyst
-                if viewer_role and viewer_role.id in user_roles:
-                    db.query(UserRole).filter(UserRole.user_id == user.id, UserRole.role_id == viewer_role.id).delete()
-
+        # Reconcile user roles for all existing users: company owner is SuperAdmin
+        from app.models.company import Company
+        all_companies = db.query(Company).all()
+        for comp in all_companies:
+            if comp.owner_id and superadmin_role:
+                owner_has_superadmin = db.query(UserRole).filter(
+                    UserRole.user_id == comp.owner_id,
+                    UserRole.role_id == superadmin_role.id,
+                ).first()
+                if not owner_has_superadmin:
+                    db.add(UserRole(user_id=comp.owner_id, role_id=superadmin_role.id))
         db.commit()
 
         print("Seed completed successfully!")

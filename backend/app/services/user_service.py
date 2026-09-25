@@ -110,10 +110,23 @@ def update_profile(db: Session, user_id: int, data: UpdateProfileRequest, curren
 
 
 def delete_user(db: Session, user_id: int, current_user_id: int):
+    from fastapi import HTTPException, status
+    from app.api.deps import is_user_superadmin
+
+    if user_id == current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account",
+        )
     user = get_user_by_id(db, user_id)
     if not user:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if is_user_superadmin(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete the company SuperAdmin",
+        )
 
     user.is_active = False
     db.commit()
@@ -156,10 +169,19 @@ def create_user(db: Session, data, current_user_id: int) -> UserResponse:
     if data.role:
         roles_list.append(data.role)
 
+    superadmin_role = db.query(Role).filter(Role.name == "SuperAdmin").first()
+    admin_role = db.query(Role).filter(Role.name == "Admin").first()
+
     for r_name in roles_list:
         role_obj = db.query(Role).filter(Role.name == r_name).first()
         if role_obj:
             assigned_role_ids.add(role_obj.id)
+
+    # If SuperAdmin was requested for a new user, prevent duplicate SuperAdmin and assign Admin
+    if superadmin_role and superadmin_role.id in assigned_role_ids:
+        assigned_role_ids.remove(superadmin_role.id)
+        if admin_role:
+            assigned_role_ids.add(admin_role.id)
 
     # If no roles specified, default to Analyst
     if not assigned_role_ids:

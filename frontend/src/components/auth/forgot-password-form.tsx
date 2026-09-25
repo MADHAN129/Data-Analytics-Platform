@@ -32,21 +32,24 @@ export function ForgotPasswordForm() {
     defaultValues: { email: "" },
   })
 
+  const mailboxUrl = process.env.NEXT_PUBLIC_MAILHOG_URL || "http://localhost:8025"
+
   const onSubmit = async (data: ForgotFormData) => {
     setIsSubmitting(true)
     try {
       await api.forgotPassword(data)
+      setIsSent(true)
       toast({
         title: "Reset link sent",
-        description: "Redirecting to MailHog inbox...",
+        description: "If the account exists, password reset instructions have been sent.",
       })
-      window.location.href = "http://localhost:8025"
     } catch {
       toast({
         title: "Error",
         description: "Something went wrong. Please try again.",
         variant: "destructive",
       })
+    } finally {
       setIsSubmitting(false)
     }
   }
@@ -72,12 +75,12 @@ export function ForgotPasswordForm() {
               In this environment, outgoing emails are captured locally by MailHog.
             </p>
             <a
-              href="http://localhost:8025"
+              href={mailboxUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
             >
-              Open Mailbox (localhost:8025) ↗
+              Open Mailbox ↗
             </a>
           </div>
         </CardContent>

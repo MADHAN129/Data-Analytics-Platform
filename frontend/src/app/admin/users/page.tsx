@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { api } from "@/lib/api-client"
+import { apiCache } from "@/lib/api-cache"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { UserResponse, RoleResponse, CreateUserRequest } from "@/types/api"
+import { useAuthStore } from "@/store/auth-store"
 import { getInitials, formatDate } from "@/lib/utils"
 import {
   Loader2,
@@ -57,6 +59,8 @@ const defaultNewUserForm: NewUserFormData = {
 }
 
 export default function AdminUsersPage() {
+  const { user: currentUser, setUser } = useAuthStore()
+  const [me, setMe] = useState<UserResponse | null>(currentUser)
   const [users, setUsers] = useState<UserResponse[]>([])
   const [availableRoles, setAvailableRoles] = useState<RoleResponse[]>([])
   const [total, setTotal] = useState(0)
@@ -64,7 +68,41 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [selectedUser, setSelectedUser] = useState<UserResponse | null>(null)
+
+  useEffect(() => {
+    if (currentUser) {
+      setMe(currentUser)
+    } else {
+      api.getCurrentUser()
+        .then((u) => {
+          setMe(u)
+          setUser(u)
+        })
+        .catch(() => {})
+    }
+  }, [currentUser, setUser])
+
+  const isUserSelf = useCallback((targetUser: UserResponse) => {
+    const effectiveMe = me || currentUser
+    if (!effectiveMe) return false
+    const matchId = Boolean(
+      effectiveMe.id !== undefined &&
+      targetUser.id !== undefined &&
+      String(effectiveMe.id) === String(targetUser.id)
+    )
+    const matchEmail = Boolean(
+      effectiveMe.email &&
+      targetUser.email &&
+      effectiveMe.email.trim().toLowerCase() === targetUser.email.trim().toLowerCase()
+    )
+    return matchId || matchEmail
+  }, [me, currentUser])
   
+  const isSuperAdminUser = useCallback((targetUser: UserResponse | null) => {
+    if (!targetUser) return false
+    return targetUser.roles.some((r) => r.name === "SuperAdmin")
+  }, [])
+
   // Dialogs
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [roleDialogOpen, setRoleDialogOpen] = useState(false)
@@ -81,28 +119,43 @@ export default function AdminUsersPage() {
 
   const fetchRoles = useCallback(async () => {
     try {
-      const data = await api.listRoles()
+      const { data } = await apiCache.swr("roles:all", () => api.listRoles(), {
+        ttlMs: 60000,
+        onRevalidate: (fresh) => setAvailableRoles(fresh.roles || []),
+      })
       setAvailableRoles(data.roles || [])
     } catch {
       // Fallback roles if list fails
       setAvailableRoles([
-        { id: 1, name: "SuperAdmin", description: "Full system access with all permissions", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
-        { id: 2, name: "Analyst", description: "Can create connections, query data and build dashboards", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
-        { id: 3, name: "Viewer", description: "Can view shared dashboards and reports", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
+        { id: 1, name: "SuperAdmin", description: "Company owner with full unrestricted system access", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
+        { id: 2, name: "Admin", description: "Company administrator with user, database, and audit management", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
+        { id: 3, name: "Analyst", description: "Can create connections, query data and build dashboards", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
+        { id: 4, name: "Viewer", description: "Can view shared dashboards and reports", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
       ])
     }
   }, [])
 
-  const fetchUsers = useCallback(async () => {
-    setIsLoading(true)
+  const fetchUsers = useCallback(async (forceFresh = false) => {
+    const cacheKey = `users:page=${page}:search=${search}`
     try {
-      const data = await api.listUsers({ page, per_page: perPage, search: search || undefined })
+      const { data } = await apiCache.swr(
+        cacheKey,
+        () => api.listUsers({ page, per_page: perPage, search: search || undefined }),
+        {
+          ttlMs: 45000,
+          forceFresh,
+          onRevalidate: (fresh) => {
+            setUsers(fresh.users)
+            setTotal(fresh.total)
+          },
+        }
+      )
       setUsers(data.users)
       setTotal(data.total)
+      setIsLoading(false)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to load users", variant: "destructive" })
-    } finally {
       setIsLoading(false)
     }
   }, [page, perPage, search, toast])
@@ -130,10 +183,11 @@ export default function AdminUsersPage() {
         role: selectedRole,
         roles: [selectedRole],
       })
+      apiCache.invalidate("users")
       toast({ title: "User created successfully", variant: "success" })
       setAddDialogOpen(false)
       setNewUserForm({ ...defaultNewUserForm })
-      fetchUsers()
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({
@@ -147,6 +201,15 @@ export default function AdminUsersPage() {
   }
 
   const handleToggleStatus = async (user: UserResponse) => {
+    if (isUserSelf(user)) {
+      toast({
+        title: "Action Not Allowed",
+        description: "You cannot deactivate or modify the status of your own account.",
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsToggling(true)
     try {
       if (user.is_active) {
@@ -156,7 +219,8 @@ export default function AdminUsersPage() {
         await api.activateUser(user.id)
         toast({ title: "User activated", variant: "success" })
       }
-      fetchUsers()
+      apiCache.invalidate("users")
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Operation failed", variant: "destructive" })
@@ -167,12 +231,24 @@ export default function AdminUsersPage() {
 
   const handleDeleteUser = async () => {
     if (!selectedUser) return
+    if (isUserSelf(selectedUser)) {
+      toast({
+        title: "Action Not Allowed",
+        description: "You cannot delete your own account.",
+        variant: "destructive",
+      })
+      setDeleteDialogOpen(false)
+      setSelectedUser(null)
+      return
+    }
+
     try {
       await api.deleteUser(selectedUser.id)
+      apiCache.invalidate("users")
       toast({ title: "User deleted", variant: "success" })
       setDeleteDialogOpen(false)
       setSelectedUser(null)
-      fetchUsers()
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error", description: error.detail || "Failed to delete user", variant: "destructive" })
@@ -203,9 +279,10 @@ export default function AdminUsersPage() {
         await api.assignRoleToUser(selectedUser.id, targetRole.id)
       }
 
+      apiCache.invalidate("users")
       toast({ title: `Role updated to ${targetRole.name}`, variant: "success" })
       setSelectedUser({ ...selectedUser, roles: [targetRole] })
-      fetchUsers()
+      fetchUsers(true)
     } catch (err: unknown) {
       const error = err as { detail?: string }
       toast({ title: "Error updating role", description: error.detail || "Operation failed", variant: "destructive" })
@@ -218,19 +295,29 @@ export default function AdminUsersPage() {
     {
       key: "user",
       header: "User",
-      cell: (user) => (
-        <div className="flex items-center gap-3">
-          <Avatar className="h-9 w-9">
-            <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
-              {getInitials(user.full_name)}
-            </AvatarFallback>
-          </Avatar>
-          <div>
-            <p className="font-medium">{user.full_name}</p>
-            <p className="text-xs text-muted-foreground">{user.email}</p>
+      cell: (user) => {
+        const isSelf = isUserSelf(user)
+        return (
+          <div className="flex items-center gap-3">
+            <Avatar className="h-9 w-9">
+              <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
+                {getInitials(user.full_name)}
+              </AvatarFallback>
+            </Avatar>
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="font-medium">{user.full_name}</p>
+                {isSelf && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-primary/40 text-primary bg-primary/5 font-semibold">
+                    You
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">{user.email}</p>
+            </div>
           </div>
-        </div>
-      ),
+        )
+      },
     },
     {
       key: "roles",
@@ -244,13 +331,15 @@ export default function AdminUsersPage() {
                 variant="secondary"
                 className={`text-xs ${
                   role.name === "SuperAdmin"
-                    ? "bg-purple-500/10 text-purple-700 border-purple-200"
+                    ? "bg-purple-500/10 text-purple-700 border-purple-200 font-semibold"
+                    : role.name === "Admin"
+                    ? "bg-emerald-500/10 text-emerald-700 border-emerald-200 font-medium"
                     : role.name === "Analyst"
                     ? "bg-blue-500/10 text-blue-700 border-blue-200"
                     : "bg-slate-500/10 text-slate-700 border-slate-200"
                 }`}
               >
-                {role.name}
+                {role.name === "SuperAdmin" ? "★ SuperAdmin" : role.name}
               </Badge>
             ))
           ) : (
@@ -285,47 +374,94 @@ export default function AdminUsersPage() {
     {
       key: "actions",
       header: "",
-      cell: (user) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => { setSelectedUser(user); setRoleDialogOpen(true) }}>
-              <Shield className="mr-2 h-4 w-4" />
-              Manage Roles
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => handleToggleStatus(user)}
-              disabled={isToggling}
-              className={user.is_active ? "text-amber-600" : "text-emerald-600"}
-            >
-              {user.is_active ? (
-                <>
-                  <UserX className="mr-2 h-4 w-4" />
-                  Deactivate User
-                </>
-              ) : (
-                <>
-                  <UserCheck className="mr-2 h-4 w-4" />
-                  Activate User
-                </>
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => { setSelectedUser(user); setDeleteDialogOpen(true) }}
-              className="text-destructive"
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete User
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
+      cell: (user) => {
+        const isSelf = isUserSelf(user)
+        const isSuperAdmin = isSuperAdminUser(user)
+        const cannotDeactivate = isSelf || isSuperAdmin
+        const cannotDelete = isSelf || isSuperAdmin
+        const cannotManageRoles = isSuperAdmin
+
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => {
+                  if (!cannotManageRoles) {
+                    setSelectedUser(user)
+                    setRoleDialogOpen(true)
+                  }
+                }}
+                disabled={cannotManageRoles}
+                className={cannotManageRoles ? "text-muted-foreground opacity-40 cursor-not-allowed" : ""}
+                title={isSuperAdmin ? "Company SuperAdmin role is permanent and cannot be modified" : undefined}
+              >
+                <Shield className="mr-2 h-4 w-4" />
+                Manage Roles
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => !cannotDeactivate && handleToggleStatus(user)}
+                disabled={cannotDeactivate || isToggling}
+                className={
+                  cannotDeactivate
+                    ? "text-muted-foreground opacity-40 cursor-not-allowed"
+                    : user.is_active
+                    ? "text-amber-600 focus:text-amber-600 focus:bg-amber-50"
+                    : "text-emerald-600 focus:text-emerald-600 focus:bg-emerald-50"
+                }
+                title={
+                  isSelf
+                    ? "You cannot change the status of your own account"
+                    : isSuperAdmin
+                    ? "Company SuperAdmin cannot be deactivated"
+                    : undefined
+                }
+              >
+                {user.is_active ? (
+                  <>
+                    <UserX className="mr-2 h-4 w-4" />
+                    <span>Deactivate User</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck className="mr-2 h-4 w-4" />
+                    <span>Activate User</span>
+                  </>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  if (cannotDelete) return
+                  setSelectedUser(user)
+                  setDeleteDialogOpen(true)
+                }}
+                disabled={cannotDelete}
+                className={
+                  cannotDelete
+                    ? "text-muted-foreground opacity-40 cursor-not-allowed"
+                    : "text-destructive focus:text-destructive focus:bg-destructive/10"
+                }
+                title={
+                  isSelf
+                    ? "You cannot delete your own account"
+                    : isSuperAdmin
+                    ? "Company SuperAdmin cannot be deleted"
+                    : undefined
+                }
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                <span>Delete User</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      },
     },
   ]
 
@@ -431,8 +567,13 @@ export default function AdminUsersPage() {
             <div className="space-y-2">
               <Label>Select Role *</Label>
               <div className="space-y-2 rounded-lg border p-2 bg-muted/20">
-                {availableRoles.length > 0 ? (
-                  availableRoles.map((role) => {
+                {(availableRoles.length > 0 ? availableRoles : [
+                  { id: 2, name: "Admin", description: "Company administrator with user, database, and audit management", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
+                  { id: 3, name: "Analyst", description: "Can create connections, query data and build dashboards", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
+                  { id: 4, name: "Viewer", description: "Can view shared dashboards and reports", is_system: true, permissions: [], user_count: 0, created_at: "", updated_at: "" },
+                ])
+                  .filter((role) => role.name !== "SuperAdmin")
+                  .map((role) => {
                     const isSelected = newUserForm.role === role.name
                     return (
                       <div
@@ -454,9 +595,9 @@ export default function AdminUsersPage() {
                         <div className="space-y-0.5 flex-1">
                           <div className="text-sm font-semibold flex items-center justify-between">
                             <span>{role.name}</span>
-                            {role.name === "SuperAdmin" && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-purple-500/10 text-purple-700 border-purple-200">
-                                Full Access
+                            {role.name === "Admin" && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-emerald-500/10 text-emerald-700 border-emerald-200">
+                                Administrator
                               </Badge>
                             )}
                             {role.name === "Analyst" && (
@@ -474,32 +615,7 @@ export default function AdminUsersPage() {
                         </div>
                       </div>
                     )
-                  })
-                ) : (
-                  ["SuperAdmin", "Analyst", "Viewer"].map((rName) => {
-                    const isSelected = newUserForm.role === rName
-                    return (
-                      <div
-                        key={rName}
-                        onClick={() => setNewUserForm({ ...newUserForm, role: rName })}
-                        className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-all ${
-                          isSelected
-                            ? "bg-primary/10 border-primary/40 shadow-sm"
-                            : "bg-background border-border hover:bg-muted/50"
-                        }`}
-                      >
-                        <div
-                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                            isSelected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/60"
-                          }`}
-                        >
-                          {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-background" />}
-                        </div>
-                        <span className="text-sm font-medium">{rName}</span>
-                      </div>
-                    )
-                  })
-                )}
+                  })}
               </div>
             </div>
 
@@ -530,78 +646,94 @@ export default function AdminUsersPage() {
           <DialogHeader>
             <DialogTitle>Manage User Role</DialogTitle>
             <DialogDescription>
-              Assign a single active role for <span className="font-semibold text-foreground">{selectedUser?.full_name}</span> ({selectedUser?.email})
+              Assign role for <span className="font-semibold text-foreground">{selectedUser?.full_name}</span> ({selectedUser?.email})
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-4">
-            {availableRoles.map((role) => {
-              const isAssigned = selectedUser?.roles.some((r) => r.id === role.id || r.name === role.name)
-              const isUpdating = isUpdatingRole === role.id
+          {isSuperAdminUser(selectedUser) ? (
+            <div className="rounded-lg border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 p-4 text-center my-4 space-y-2">
+              <div className="flex justify-center">
+                <Shield className="h-8 w-8 text-purple-600 dark:text-purple-400" />
+              </div>
+              <p className="text-sm font-semibold text-purple-900 dark:text-purple-300">
+                Company SuperAdmin (Owner)
+              </p>
+              <p className="text-xs text-purple-700 dark:text-purple-400">
+                This account holds primary company ownership. The SuperAdmin role cannot be removed or demoted.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 py-4">
+              {availableRoles
+                .filter((role) => role.name !== "SuperAdmin")
+                .map((role) => {
+                  const isAssigned = selectedUser?.roles.some((r) => r.id === role.id || r.name === role.name)
+                  const isUpdating = isUpdatingRole === role.id
 
-              return (
-                <div
-                  key={role.id}
-                  onClick={() => !isUpdating && !isAssigned && handleSetRoleForSelectedUser(role)}
-                  className={`flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer ${
-                    isAssigned
-                      ? "bg-primary/10 border-primary/40 shadow-sm"
-                      : "bg-card hover:bg-muted/50 border-border"
-                  }`}
-                >
-                  <div className="space-y-1 pr-4">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                          isAssigned ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/60"
-                        }`}
-                      >
-                        {isAssigned && <div className="h-1.5 w-1.5 rounded-full bg-background" />}
+                  return (
+                    <div
+                      key={role.id}
+                      onClick={() => !isUpdating && !isAssigned && handleSetRoleForSelectedUser(role)}
+                      className={`flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer ${
+                        isAssigned
+                          ? "bg-primary/10 border-primary/40 shadow-sm"
+                          : "bg-card hover:bg-muted/50 border-border"
+                      }`}
+                    >
+                      <div className="space-y-1 pr-4">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                              isAssigned ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/60"
+                            }`}
+                          >
+                            {isAssigned && <div className="h-1.5 w-1.5 rounded-full bg-background" />}
+                          </div>
+                          <span className="font-medium text-sm">{role.name}</span>
+                          {role.name === "Admin" && (
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-emerald-500/10 text-emerald-700 border-emerald-200">
+                              Administrator
+                            </Badge>
+                          )}
+                          {role.name === "Analyst" && (
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-blue-500/10 text-blue-700 border-blue-200">
+                              Default
+                            </Badge>
+                          )}
+                          {role.name === "Viewer" && (
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-slate-500/10 text-slate-700 border-slate-200">
+                              Read Only
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground pl-6">{role.description}</p>
                       </div>
-                      <span className="font-medium text-sm">{role.name}</span>
-                      {role.name === "SuperAdmin" && (
-                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-purple-500/10 text-purple-700 border-purple-200">
-                          Full Access
-                        </Badge>
-                      )}
-                      {role.name === "Analyst" && (
-                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-blue-500/10 text-blue-700 border-blue-200">
-                          Default
-                        </Badge>
-                      )}
-                      {role.name === "Viewer" && (
-                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-slate-500/10 text-slate-700 border-slate-200">
-                          Read Only
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground pl-6">{role.description}</p>
-                  </div>
 
-                  <div>
-                    {isUpdating ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                    ) : isAssigned ? (
-                      <Badge variant="success" className="text-xs">
-                        Active
-                      </Badge>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleSetRoleForSelectedUser(role)
-                        }}
-                      >
-                        Select
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                      <div>
+                        {isUpdating ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        ) : isAssigned ? (
+                          <Badge variant="success" className="text-xs">
+                            Active
+                          </Badge>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleSetRoleForSelectedUser(role)
+                            }}
+                          >
+                            Select
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+            </div>
+          )}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setRoleDialogOpen(false)}>

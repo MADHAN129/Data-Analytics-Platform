@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useCallback } from "react"
 import { api } from "@/lib/api-client"
+import { apiCache } from "@/lib/api-cache"
 import { useToast } from "@/components/ui/use-toast"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -48,11 +49,19 @@ export default function ActivityPage() {
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("all")
   const [selectedQueryForSql, setSelectedQueryForSql] = useState<ActivityQueryItem | null>(null)
 
-  const fetchActivity = async () => {
-    setLoading(true)
+  const fetchActivity = useCallback(async (forceFresh = false) => {
     try {
-      const res = await api.getActivityOverview(30)
+      const { data: res } = await apiCache.swr(
+        "activity:overview:30",
+        () => api.getActivityOverview(30),
+        {
+          ttlMs: 20000,
+          forceFresh,
+          onRevalidate: (fresh) => setData(fresh),
+        }
+      )
       setData(res)
+      setLoading(false)
     } catch (err: unknown) {
       const errorObj = err as { detail?: string }
       toast({
@@ -60,14 +69,13 @@ export default function ActivityPage() {
         description: errorObj?.detail || "Could not fetch platform activity logs.",
         variant: "destructive",
       })
-    } finally {
       setLoading(false)
     }
-  }
+  }, [toast])
 
   useEffect(() => {
     fetchActivity()
-  }, [])
+  }, [fetchActivity])
 
   // Filtered queries
   const filteredQueries = useMemo(() => {
@@ -141,7 +149,7 @@ export default function ActivityPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={fetchActivity}
+            onClick={() => fetchActivity(true)}
             disabled={loading}
             className="flex items-center gap-2 shadow-sm"
           >

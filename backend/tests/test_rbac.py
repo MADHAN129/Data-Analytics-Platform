@@ -78,14 +78,14 @@ class TestRBACApiGates:
                 "full_name": "New Team Member",
                 "email": "newuser@example.com",
                 "password": "strongPassword123!",
-                "roles": ["SuperAdmin"],
+                "roles": ["Admin"],
             },
             headers=auth_headers(admin),
         )
         assert r.status_code == 201
         data = r.json()
         assert data["email"] == "newuser@example.com"
-        assert any(role["name"] == "SuperAdmin" for role in data["roles"])
+        assert any(role["name"] == "Admin" for role in data["roles"])
 
     def test_analyst_cannot_create_user(self, client, analyst):
         r = client.post(
@@ -98,6 +98,60 @@ class TestRBACApiGates:
             headers=auth_headers(analyst),
         )
         assert r.status_code == 403
+
+
+class TestSuperAdminHierarchyAndImmunity:
+    def test_admin_cannot_deactivate_superadmin(self, client, admin, company_admin):
+        r = client.post(
+            f"/api/v1/users/{admin.id}/deactivate",
+            headers=auth_headers(company_admin),
+        )
+        assert r.status_code == 403
+        assert "cannot deactivate the company superadmin" in r.json()["detail"].lower()
+
+    def test_admin_cannot_delete_superadmin(self, client, admin, company_admin):
+        r = client.delete(
+            f"/api/v1/users/{admin.id}",
+            headers=auth_headers(company_admin),
+        )
+        assert r.status_code == 403
+        assert "cannot delete the company superadmin" in r.json()["detail"].lower()
+
+    def test_admin_cannot_assign_superadmin_role(self, client, company_admin, analyst, permissions, db_session):
+        from app.models.role import Role
+        superadmin_role = db_session.query(Role).filter(Role.name == "SuperAdmin").first()
+        r = client.post(
+            f"/api/v1/users/{analyst.id}/roles",
+            json={"role_id": superadmin_role.id},
+            headers=auth_headers(company_admin),
+        )
+        assert r.status_code == 403
+        assert "superadmin role cannot be assigned" in r.json()["detail"].lower()
+
+    def test_admin_cannot_modify_superadmin_roles(self, client, admin, company_admin, permissions, db_session):
+        from app.models.role import Role
+        superadmin_role = db_session.query(Role).filter(Role.name == "SuperAdmin").first()
+        r = client.delete(
+            f"/api/v1/users/{admin.id}/roles/{superadmin_role.id}",
+            headers=auth_headers(company_admin),
+        )
+        assert r.status_code == 403
+
+    def test_admin_can_deactivate_regular_user(self, client, company_admin, analyst):
+        r = client.post(
+            f"/api/v1/users/{analyst.id}/deactivate",
+            headers=auth_headers(company_admin),
+        )
+        assert r.status_code == 200
+        assert r.json()["message"] == "User deactivated"
+
+    def test_superadmin_can_deactivate_admin(self, client, admin, company_admin):
+        r = client.post(
+            f"/api/v1/users/{company_admin.id}/deactivate",
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 200
+        assert r.json()["message"] == "User deactivated"
 
 
 class TestSystemRoleProtection:
@@ -123,3 +177,23 @@ class TestSystemRoleProtection:
             headers=auth_headers(admin),
         )
         assert r.status_code == 400
+
+
+class TestUserSelfProtection:
+    def test_user_cannot_deactivate_own_account(self, client, admin):
+        r = client.post(
+            f"/api/v1/users/{admin.id}/deactivate",
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 400
+        assert "cannot deactivate your own account" in r.json()["detail"].lower()
+
+    def test_user_cannot_delete_own_account(self, client, admin):
+        r = client.delete(
+            f"/api/v1/users/{admin.id}",
+            headers=auth_headers(admin),
+        )
+        assert r.status_code == 400
+        assert "cannot delete your own account" in r.json()["detail"].lower()
+
+

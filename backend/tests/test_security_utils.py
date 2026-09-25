@@ -27,7 +27,9 @@ class TestTokens:
 
     def test_tampered_token_rejected(self):
         token = create_access_token({"sub": "7"})
-        assert decode_token(token[:-2] + "xx") is None
+        parts = token.split(".")
+        tampered = f"{parts[0]}.{parts[1]}.invalid_signature"
+        assert decode_token(tampered) is None
 
 
 class TestSecretEncryption:
