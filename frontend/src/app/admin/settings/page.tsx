@@ -178,7 +178,7 @@ export default function SettingsPage() {
         {/* APPEARANCE & THEME MODES TAB */}
         {/* ========================================================================= */}
         <TabsContent value="appearance" className="space-y-6">
-          {/* Theme Mode Selector Card (Button Model) */}
+          {/* Theme & Display Mode Toggle Card */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
@@ -186,52 +186,33 @@ export default function SettingsPage() {
                 <CardTitle className="text-base">Theme & Display Mode</CardTitle>
               </div>
               <CardDescription className="text-xs">
-                Choose between Light mode, Night / Dark mode, or follow your operating system preferences.
+                Switch between dark/black night mode and white daylight theme.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="inline-flex items-center rounded-lg border bg-muted/60 p-1">
-                {/* Light Mode Button */}
-                <button
-                  type="button"
-                  onClick={() => setMode("light")}
-                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all ${
-                    mode === "light"
-                      ? "bg-blue-600 text-white shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <Sun className={`h-4 w-4 ${mode === "light" ? "text-amber-300" : "text-amber-500"}`} />
-                  <span>Light Mode</span>
-                </button>
-
-                {/* Night / Dark Mode Button */}
-                <button
-                  type="button"
-                  onClick={() => setMode("dark")}
-                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all ${
-                    mode === "dark"
-                      ? "bg-blue-600 text-white shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <Moon className={`h-4 w-4 ${mode === "dark" ? "text-indigo-200" : "text-indigo-400"}`} />
-                  <span>Night / Dark Mode</span>
-                </button>
-
-                {/* System Default Button */}
-                <button
-                  type="button"
-                  onClick={() => setMode("system")}
-                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all ${
-                    mode === "system"
-                      ? "bg-blue-600 text-white shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <Laptop className="h-4 w-4" />
-                  <span>System Default</span>
-                </button>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    {mode === "dark" ? (
+                      <Moon className="h-4 w-4 text-indigo-400" />
+                    ) : (
+                      <Sun className="h-4 w-4 text-amber-500" />
+                    )}
+                    <Label htmlFor="night-mode-switch" className="text-sm font-medium">
+                      Night Mode
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {mode === "dark"
+                      ? "Theme is Black (Night / Dark mode enabled)."
+                      : "Theme is White (Light mode enabled)."}
+                  </p>
+                </div>
+                <Switch
+                  id="night-mode-switch"
+                  checked={mode === "dark"}
+                  onCheckedChange={(checked) => setMode(checked ? "dark" : "light")}
+                />
               </div>
             </CardContent>
           </Card>
