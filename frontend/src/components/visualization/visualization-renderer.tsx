@@ -8,12 +8,20 @@ import {
 } from "recharts"
 import type { QueryResult, VisualizationSuggestion } from "@/types/api"
 
-const COLORS = [
-  "hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))",
-  "hsl(var(--chart-4))", "hsl(var(--chart-5))",
+const FALLBACK_COLORS = [
+  "#3b82f6", // Blue
+  "#10b981", // Emerald
+  "#f59e0b", // Amber
+  "#ef4444", // Rose
+  "#8b5cf6", // Purple
+  "#06b6d4", // Cyan
+  "#ec4899", // Pink
+  "#f97316", // Orange
+  "#14b8a6", // Teal
+  "#6366f1", // Indigo
+  "#84cc16", // Lime
+  "#eab308", // Yellow
 ]
-
-const FALLBACK_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7"]
 
 function getColor(i: number): string {
   if (typeof document !== "undefined") {
@@ -24,21 +32,44 @@ function getColor(i: number): string {
 }
 
 function isNumeric(val: unknown): boolean {
-  if (typeof val === "number") return true
+  if (typeof val === "number") return !isNaN(val)
   if (typeof val === "string") {
-    const n = Number(val)
-    return !isNaN(n) && val.trim() !== ""
+    const cleaned = val.replace(/[$€£,%\s]/g, "")
+    const n = Number(cleaned)
+    return !isNaN(n) && cleaned.trim() !== ""
   }
   return false
 }
 
+function parseNumeric(val: unknown): number {
+  if (typeof val === "number") return isNaN(val) ? 0 : val
+  if (typeof val === "string") {
+    const cleaned = val.replace(/[$€£,%\s]/g, "")
+    const n = Number(cleaned)
+    return isNaN(n) ? 0 : n
+  }
+  return 0
+}
+
+function formatNumber(val: unknown): string {
+  if (typeof val === "number") {
+    return val.toLocaleString(undefined, { maximumFractionDigits: 2 })
+  }
+  if (typeof val === "string" && isNumeric(val)) {
+    return parseNumeric(val).toLocaleString(undefined, { maximumFractionDigits: 2 })
+  }
+  return String(val ?? "")
+}
+
 function pickNumericCol(results: QueryResult): string | null {
   for (const col of results.columns) {
-    const sample = results.rows.find((r) => {
-      const val = r[results.columns.indexOf(col)]
-      return val !== null && val !== undefined
-    })
-    if (sample && isNumeric(sample[results.columns.indexOf(col)])) return col
+    const colIdx = results.columns.indexOf(col)
+    const nonNullValues = results.rows
+      .map((r) => r[colIdx])
+      .filter((v) => v !== null && v !== undefined && v !== "")
+    if (nonNullValues.length > 0 && nonNullValues.every((v) => isNumeric(v))) {
+      return col
+    }
   }
   return null
 }
@@ -46,64 +77,94 @@ function pickNumericCol(results: QueryResult): string | null {
 function pickStringCol(results: QueryResult, exclude?: string): string | null {
   for (const col of results.columns) {
     if (col === exclude) continue
-    const sample = results.rows.find((r) => {
-      const val = r[results.columns.indexOf(col)]
-      return val !== null && val !== undefined
-    })
-    if (sample && !isNumeric(sample[results.columns.indexOf(col)])) return col
+    const colIdx = results.columns.indexOf(col)
+    const nonNullValues = results.rows
+      .map((r) => r[colIdx])
+      .filter((v) => v !== null && v !== undefined && v !== "")
+    if (nonNullValues.length > 0 && !nonNullValues.every((v) => isNumeric(v))) {
+      return col
+    }
   }
   return null
 }
 
 function buildData(results: QueryResult) {
+  const numericCols = new Set<string>()
+  for (const col of results.columns) {
+    const colIdx = results.columns.indexOf(col)
+    const nonNullValues = results.rows
+      .map((r) => r[colIdx])
+      .filter((v) => v !== null && v !== undefined && v !== "")
+    if (nonNullValues.length > 0 && nonNullValues.every((v) => isNumeric(v))) {
+      numericCols.add(col)
+    }
+  }
+
   return results.rows.map((row) => {
     const item: Record<string, unknown> = {}
-    results.columns.forEach((col, i) => { item[col] = row[i] })
+    results.columns.forEach((col, i) => {
+      const val = row[i]
+      if (numericCols.has(col)) {
+        item[col] = parseNumeric(val)
+      } else {
+        item[col] = val !== null && val !== undefined ? String(val) : ""
+      }
+    })
     return item
   })
 }
 
 function fixBarConfig(results: QueryResult, config?: Record<string, unknown>) {
-  const xKey = config?.x as string | undefined
-  const yKey = config?.y as string | undefined
-  let x = xKey || results.columns[0]
-  let y = yKey || results.columns[1] || results.columns[0]
+  const numCol = pickNumericCol(results)
+  const strCol = pickStringCol(results)
+
+  let x = (config?.x as string) || (config?.label as string) || strCol || results.columns[0]
+  let y = (config?.y as string) || (config?.value as string) || numCol || results.columns[1] || results.columns[0]
+
   const data = buildData(results)
-  if (data.length > 0) {
-    const xSample = data[0][x]
-    const ySample = data[0][y]
-    if (isNumeric(xSample) && !isNumeric(ySample)) {
+  if (data.length > 0 && results.columns.length > 0) {
+    const xIdx = results.columns.indexOf(x)
+    const yIdx = results.columns.indexOf(y)
+
+    const isXNum = xIdx >= 0 && isNumeric(results.rows[0]?.[xIdx])
+    const isYNum = yIdx >= 0 && isNumeric(results.rows[0]?.[yIdx])
+
+    if (isXNum && !isYNum) {
       const tmp = x; x = y; y = tmp
+    } else if (!isYNum && numCol) {
+      y = numCol
     }
-    if (isNumeric(y)) {
-      const catCol = pickStringCol(results, y)
-      if (catCol) x = catCol
-    } else {
-      const numCol = pickNumericCol(results)
-      if (numCol) y = numCol
+
+    if (x === y && strCol && strCol !== y) {
+      x = strCol
     }
   }
   return { data, x, y }
 }
 
 function fixPieConfig(results: QueryResult, config?: Record<string, unknown>) {
-  const labelKey = (config?.label as string) || results.columns[0]
-  const valueKey = (config?.value as string) || results.columns[1] || results.columns[0]
-  let label = labelKey
-  let value = valueKey
+  const numCol = pickNumericCol(results)
+  const strCol = pickStringCol(results)
+
+  let label = (config?.label as string) || (config?.x as string) || strCol || results.columns[0]
+  let value = (config?.value as string) || (config?.y as string) || numCol || results.columns[1] || results.columns[0]
+
   const data = buildData(results)
-  if (data.length > 0) {
-    const vSample = data[0][value]
-    const lSample = data[0][label]
-    if (isNumeric(lSample) && !isNumeric(vSample)) {
+  if (data.length > 0 && results.columns.length > 0) {
+    const labelIdx = results.columns.indexOf(label)
+    const valueIdx = results.columns.indexOf(value)
+
+    const isLabelNum = labelIdx >= 0 && isNumeric(results.rows[0]?.[labelIdx])
+    const isValueNum = valueIdx >= 0 && isNumeric(results.rows[0]?.[valueIdx])
+
+    if (isLabelNum && !isValueNum) {
       const tmp = label; label = value; value = tmp
+    } else if (!isValueNum && numCol) {
+      value = numCol
     }
-    if (isNumeric(value)) {
-      const catCol = pickStringCol(results, value)
-      if (catCol) label = catCol
-    } else {
-      const numCol = pickNumericCol(results)
-      if (numCol) value = numCol
+
+    if (label === value && strCol && strCol !== value) {
+      label = strCol
     }
   }
   return { data, label, value }
@@ -112,69 +173,121 @@ function fixPieConfig(results: QueryResult, config?: Record<string, unknown>) {
 function BarChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, x, y } = fixBarConfig(results, config)
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-        <XAxis dataKey={x} className="text-xs" tick={{ fontSize: 12 }} />
-        <YAxis className="text-xs" tick={{ fontSize: 12 }} />
-        <Tooltip />
-        <Bar dataKey={y} fill={getColor(0)} radius={[4, 4, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
+    <div className="w-full h-[320px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 10, right: 10, bottom: 25, left: 10 }}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+          <XAxis dataKey={x} className="text-xs" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" height={45} />
+          <YAxis className="text-xs" tick={{ fontSize: 11 }} tickFormatter={(val) => formatNumber(val)} />
+          <Tooltip
+            formatter={(val: unknown) => [formatNumber(val), y || "Value"]}
+            contentStyle={{
+              backgroundColor: "hsl(var(--popover))",
+              borderColor: "hsl(var(--border))",
+              borderRadius: "0.5rem",
+              color: "hsl(var(--popover-foreground))",
+              fontSize: "12px",
+            }}
+          />
+          <Bar dataKey={y} fill={getColor(0)} radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
 function PieChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, label, value } = fixPieConfig(results, config)
+
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey={value}
-          nameKey={label}
-          cx="50%" cy="50%" outerRadius={100}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          label={(entry: any) => `${entry.name ?? entry[label]} (${entry.value ?? entry[value]})`}
-        >
-          {data.map((_, i) => (
-            <Cell key={i} fill={getColor(i)} />
-          ))}
-        </Pie>
-        <Tooltip />
-        <Legend />
-      </PieChart>
-    </ResponsiveContainer>
+    <div className="w-full h-[340px] flex flex-col items-center justify-center">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart margin={{ top: 15, right: 15, bottom: 15, left: 15 }}>
+          <Pie
+            data={data}
+            dataKey={value}
+            nameKey={label}
+            cx="50%"
+            cy="45%"
+            outerRadius={95}
+            innerRadius={35}
+            paddingAngle={2}
+            label={({ name, percent }: { name?: string; percent?: number }) => {
+              const p = ((percent ?? 0) * 100).toFixed(1)
+              return `${name ?? ""}: ${p}%`
+            }}
+            labelLine={true}
+          >
+            {data.map((_, i) => (
+              <Cell key={i} fill={getColor(i)} stroke="hsl(var(--background))" strokeWidth={1.5} />
+            ))}
+          </Pie>
+          <Tooltip
+            formatter={(val: unknown) => [formatNumber(val), (config?.value as string) || value || "Value"]}
+            contentStyle={{
+              backgroundColor: "hsl(var(--popover))",
+              borderColor: "hsl(var(--border))",
+              borderRadius: "0.5rem",
+              color: "hsl(var(--popover-foreground))",
+              fontSize: "12px",
+            }}
+          />
+          <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }} />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
 function LineChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, x, y } = fixBarConfig(results, config)
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-        <XAxis dataKey={x} className="text-xs" tick={{ fontSize: 12 }} />
-        <YAxis className="text-xs" tick={{ fontSize: 12 }} />
-        <Tooltip />
-        <Line type="monotone" dataKey={y} stroke={getColor(0)} strokeWidth={2} dot={{ r: 3 }} />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="w-full h-[320px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 10, right: 10, bottom: 25, left: 10 }}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+          <XAxis dataKey={x} className="text-xs" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" height={45} />
+          <YAxis className="text-xs" tick={{ fontSize: 11 }} tickFormatter={(val) => formatNumber(val)} />
+          <Tooltip
+            formatter={(val: unknown) => [formatNumber(val), y || "Value"]}
+            contentStyle={{
+              backgroundColor: "hsl(var(--popover))",
+              borderColor: "hsl(var(--border))",
+              borderRadius: "0.5rem",
+              color: "hsl(var(--popover-foreground))",
+              fontSize: "12px",
+            }}
+          />
+          <Line type="monotone" dataKey={y} stroke={getColor(0)} strokeWidth={2} dot={{ r: 4 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
 function AreaChartView({ results, config }: { results: QueryResult; config?: Record<string, unknown> }) {
   const { data, x, y } = fixBarConfig(results, config)
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <AreaChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-        <XAxis dataKey={x} className="text-xs" tick={{ fontSize: 12 }} />
-        <YAxis className="text-xs" tick={{ fontSize: 12 }} />
-        <Tooltip />
-        <Area type="monotone" dataKey={y} stroke={getColor(0)} fill={getColor(0)} fillOpacity={0.2} />
-      </AreaChart>
-    </ResponsiveContainer>
+    <div className="w-full h-[320px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 10, right: 10, bottom: 25, left: 10 }}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+          <XAxis dataKey={x} className="text-xs" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" height={45} />
+          <YAxis className="text-xs" tick={{ fontSize: 11 }} tickFormatter={(val) => formatNumber(val)} />
+          <Tooltip
+            formatter={(val: unknown) => [formatNumber(val), y || "Value"]}
+            contentStyle={{
+              backgroundColor: "hsl(var(--popover))",
+              borderColor: "hsl(var(--border))",
+              borderRadius: "0.5rem",
+              color: "hsl(var(--popover-foreground))",
+              fontSize: "12px",
+            }}
+          />
+          <Area type="monotone" dataKey={y} stroke={getColor(0)} fill={getColor(0)} fillOpacity={0.2} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
@@ -187,7 +300,7 @@ function KpiView({ results }: { results: QueryResult }) {
   return (
     <div className="flex flex-col items-center justify-center py-6">
       <p className="text-sm text-muted-foreground">{numCol || firstCol}</p>
-      <p className="text-4xl font-bold tracking-tight">{String(val ?? "—")}</p>
+      <p className="text-4xl font-bold tracking-tight">{formatNumber(val)}</p>
     </div>
   )
 }
