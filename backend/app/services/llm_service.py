@@ -612,7 +612,53 @@ DATABASE CONTEXT AND SCHEMA:
         y_label = metric_col.replace("_", " ").title()
         x_label = dim_col.replace("_", " ").title()
 
-        if is_time_series:
+        nl_lower = natural_language.lower()
+        wants_line = any(w in nl_lower for w in ["line chart", "line graph", "line plot", "as a line", "line-chart", "trend line"])
+        wants_area = any(w in nl_lower for w in ["area chart", "area graph", "area plot", "as an area", "area-chart"])
+        wants_pie = any(w in nl_lower for w in ["pie chart", "pie graph", "pie plot", "as a pie", "pie-chart", "donut chart", "donut"])
+        wants_bar = any(w in nl_lower for w in ["bar chart", "bar graph", "bar plot", "as a bar", "bar-chart", "column chart", "histogram"])
+
+        if wants_line:
+            suggestions.append({
+                "type": "line_chart",
+                "title": f"{y_label} Trend by {x_label}" if is_time_series else f"{y_label} by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "asc" if is_time_series else "none"},
+            })
+            suggestions.append({
+                "type": "bar_chart",
+                "title": f"{y_label} by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "desc"},
+            })
+            if row_count <= 10:
+                suggestions.append({
+                    "type": "pie_chart",
+                    "title": f"{y_label} Distribution by {x_label}",
+                    "config": {"label": dim_col, "value": metric_col},
+                })
+        elif wants_area:
+            suggestions.append({
+                "type": "area_chart",
+                "title": f"{y_label} Area by {x_label}",
+                "config": {"x": dim_col, "y": metric_col},
+            })
+            suggestions.append({
+                "type": "line_chart",
+                "title": f"{y_label} Trend by {x_label}" if is_time_series else f"{y_label} by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "asc" if is_time_series else "none"},
+            })
+        elif wants_pie or (not is_time_series and not wants_bar and "distribution" in nl_lower and row_count <= 10):
+            if row_count <= 10:
+                suggestions.append({
+                    "type": "pie_chart",
+                    "title": f"{y_label} Distribution by {x_label}",
+                    "config": {"label": dim_col, "value": metric_col},
+                })
+            suggestions.append({
+                "type": "bar_chart",
+                "title": f"{y_label} by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "desc"},
+            })
+        elif is_time_series:
             suggestions.append({
                 "type": "line_chart",
                 "title": f"{y_label} Trend by {x_label}",
@@ -622,6 +668,11 @@ DATABASE CONTEXT AND SCHEMA:
                 "type": "area_chart",
                 "title": f"{y_label} Area by {x_label}",
                 "config": {"x": dim_col, "y": metric_col},
+            })
+            suggestions.append({
+                "type": "bar_chart",
+                "title": f"{y_label} by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "desc"},
             })
         else:
             suggestions.append({
@@ -635,6 +686,11 @@ DATABASE CONTEXT AND SCHEMA:
                     "title": f"{y_label} Distribution by {x_label}",
                     "config": {"label": dim_col, "value": metric_col},
                 })
+            suggestions.append({
+                "type": "line_chart",
+                "title": f"{y_label} by {x_label}",
+                "config": {"x": dim_col, "y": metric_col, "sort": "none"},
+            })
 
         suggestions.append({"type": "table", "title": "Data Table", "config": {}})
         return suggestions
