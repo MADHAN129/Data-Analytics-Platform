@@ -16,6 +16,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
 import {
+  Tabs, TabsList, TabsTrigger, TabsContent,
+} from "@/components/ui/tabs"
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -25,15 +28,16 @@ import { useDashboardWs, type LiveWidgetData } from "@/hooks/use-dashboard-ws"
 import { formatDate } from "@/lib/utils"
 import type {
   WidgetResponse, DashboardDetailResponse, QueryResponse,
-  VisualizationSuggestion, QueryResult,
+  VisualizationSuggestion, QueryResult, DatabaseConnectionResponse,
 } from "@/types/api"
 import {
   AlertCircle, ArrowLeft, Download, Plus, Trash2, Loader2, Settings, GripVertical, Pencil,
-  BarChart3, PieChart, LineChart, AreaChart, Table2, LayoutDashboard,
+  BarChart3, PieChart, LineChart, AreaChart, Table2, LayoutDashboard, Sparkles, Database,
   RefreshCw, Wifi, WifiOff, ServerOff,
 } from "lucide-react"
 
 const WIDGET_TYPES = [
+  { value: "analytics", label: "Analytics", icon: Sparkles },
   { value: "kpi", label: "KPI", icon: LayoutDashboard },
   { value: "bar_chart", label: "Bar Chart", icon: BarChart3 },
   { value: "pie_chart", label: "Pie Chart", icon: PieChart },
@@ -214,7 +218,12 @@ export default function DashboardDetailPage() {
     }
   }
 
-  const handleAddWidget = async (widgetType: string, widgetTitle: string, queryId?: number) => {
+  const handleAddWidget = async (
+    widgetType: string,
+    widgetTitle: string,
+    queryId?: number,
+    config?: Record<string, unknown>
+  ) => {
     const maxY = dash ? Math.max(0, ...dash.widgets.map((w) => w.position_y + w.height)) : 0
     try {
       const widget = await api.addWidget(dashboardId, {
@@ -225,6 +234,7 @@ export default function DashboardDetailPage() {
         width: 6,
         height: 4,
         query_id: queryId,
+        config: config || {},
       })
       setDash((prev) => prev ? { ...prev, widgets: [...prev.widgets, widget] } : prev)
       setAddWidgetOpen(false)
@@ -705,18 +715,25 @@ function WidgetChartRenderer({
 }) {
   const suggestion = useMemo(() => {
     if (suggestions && suggestions.length > 0) {
+      if (widget.widget_type === "analytics") {
+        return suggestions[0]
+      }
       const match = suggestions.find((s) => s.type === widget.widget_type)
       if (match) return match
     }
     return {
-      type: widget.widget_type,
+      type: widget.widget_type === "analytics"
+        ? (results.row_count === 1 && results.columns.length <= 2
+            ? "kpi"
+            : (results.columns.length > 2 ? "table" : "bar_chart"))
+        : widget.widget_type,
       title: widget.title,
       config: (widget.config as Record<string, unknown>) || {},
     } as VisualizationSuggestion
-  }, [widget, suggestions])
+  }, [widget, suggestions, results])
 
-  if (widget.widget_type === suggestion.type) {
-    return <VisualizationRenderer results={results} suggestions={[suggestion]} />
+  if (widget.widget_type === "analytics" || widget.widget_type === suggestion.type) {
+    return <VisualizationRenderer results={results} suggestions={suggestions && suggestions.length > 0 ? suggestions : [suggestion]} />
   }
 
   return <VisualizationRenderer results={results} suggestions={suggestions || [suggestion]} />
@@ -767,13 +784,41 @@ function AddWidgetDialog({
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
-  onAdd: (type: string, title: string, queryId?: number) => void
+  onAdd: (type: string, title: string, queryId?: number, config?: Record<string, unknown>) => void
 }) {
+  const { toast } = useToast()
+  const [activeTab, setActiveTab] = useState<"analytics" | "manual">("analytics")
+
+  // Analytics feature state
+  const [databases, setDatabases] = useState<DatabaseConnectionResponse[]>([])
+  const [selectedDbId, setSelectedDbId] = useState<string>("")
+  const [nlQuestion, setNlQuestion] = useState("")
+  const [aiWidgetType, setAiWidgetType] = useState("auto")
+  const [aiTitle, setAiTitle] = useState("")
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [loadingDbs, setLoadingDbs] = useState(false)
+
+  // Manual mode state
   const [widgetType, setWidgetType] = useState("kpi")
   const [widgetTitle, setWidgetTitle] = useState("")
   const [queryId, setQueryId] = useState<number | null>(null)
 
-  const handleAdd = () => {
+  useEffect(() => {
+    if (!open) return
+    setLoadingDbs(true)
+    api.listDatabases({ per_page: 100 })
+      .then((d) => {
+        const dbs = d.connections || []
+        setDatabases(dbs)
+        if (dbs.length > 0) {
+          setSelectedDbId((prev) => prev || String(dbs[0].id))
+        }
+      })
+      .catch(() => setDatabases([]))
+      .finally(() => setLoadingDbs(false))
+  }, [open])
+
+  const handleAddManual = () => {
     if (!widgetTitle.trim()) return
     onAdd(widgetType, widgetTitle.trim(), queryId ?? undefined)
     setWidgetTitle("")
@@ -781,46 +826,221 @@ function AddWidgetDialog({
     setQueryId(null)
   }
 
+  const handleAddWithAnalytics = async () => {
+    if (!nlQuestion.trim()) {
+      toast({ title: "Question required", description: "Please enter a question to analyze.", variant: "destructive" })
+      return
+    }
+    if (!selectedDbId) {
+      toast({ title: "Database required", description: "Please select a database from the dropdown.", variant: "destructive" })
+      return
+    }
+
+    setIsAnalyzing(true)
+    try {
+      const result = await api.executeQuery({
+        database_id: Number(selectedDbId),
+        natural_language: nlQuestion.trim(),
+      })
+
+      if (result.status === "failed") {
+        toast({
+          title: "Query failed",
+          description: result.error_message || "Could not generate analysis for this question",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Determine appropriate widget type
+      let resolvedType = aiWidgetType
+      if (resolvedType === "auto" || resolvedType === "analytics") {
+        const suggested = result.suggested_visualizations?.[0]?.type
+        if (suggested && ["kpi", "bar_chart", "pie_chart", "line_chart", "area_chart", "table"].includes(suggested)) {
+          resolvedType = suggested
+        } else if (result.results && result.results.row_count === 1 && result.results.columns.length <= 2) {
+          resolvedType = "kpi"
+        } else if (result.results && result.results.row_count > 0 && result.results.columns.length > 2) {
+          resolvedType = "table"
+        } else {
+          resolvedType = "bar_chart"
+        }
+      }
+
+      const finalTitle =
+        aiTitle.trim() ||
+        result.suggested_visualizations?.[0]?.title ||
+        nlQuestion.trim()
+
+      const config = result.suggested_visualizations?.[0]?.config || {}
+
+      onAdd(resolvedType, finalTitle, result.id, config)
+      setNlQuestion("")
+      setAiTitle("")
+      setAiWidgetType("auto")
+    } catch (err: unknown) {
+      const error = err as { detail?: string }
+      toast({
+        title: "Analytics execution failed",
+        description: error.detail || "An error occurred while executing the analytics query.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  const handleReset = () => {
+    setQueryId(null)
+    setWidgetTitle("")
+    setWidgetType("kpi")
+    setNlQuestion("")
+    setAiTitle("")
+    setAiWidgetType("auto")
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) { setQueryId(null); setWidgetTitle(""); setWidgetType("kpi") }; onOpenChange(o) }}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleReset(); onOpenChange(o) }}>
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>Add Widget</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Widget Type</Label>
-            <Select value={widgetType} onValueChange={setWidgetType}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {WIDGET_TYPES.map((t) => (
-                  <SelectItem key={t.value} value={t.value}>
-                    <div className="flex items-center gap-2">
-                      <t.icon className="h-4 w-4" />
-                      {t.label}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="widget-title">Title</Label>
-            <Input
-              id="widget-title"
-              value={widgetTitle}
-              onChange={(e) => setWidgetTitle(e.target.value)}
-              placeholder="Widget title"
-            />
-          </div>
-          <QueryPicker value={queryId} onChange={setQueryId} />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleAdd} disabled={!widgetTitle.trim()}>Add</Button>
-        </DialogFooter>
+
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "analytics" | "manual")} className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="analytics" className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span>AI Analytics</span>
+            </TabsTrigger>
+            <TabsTrigger value="manual" className="flex items-center gap-2">
+              <LayoutDashboard className="h-4 w-4" />
+              <span>Existing Query / Manual</span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="analytics" className="space-y-4 pt-2">
+            <div className="space-y-2">
+              <Label>Database</Label>
+              <Select value={selectedDbId} onValueChange={setSelectedDbId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={loadingDbs ? "Loading databases..." : "Select a database"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {databases.map((db) => (
+                    <SelectItem key={db.id} value={String(db.id)}>
+                      <div className="flex items-center gap-2">
+                        <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span>{db.name}</span>
+                        {db.connection_type && (
+                          <Badge variant="outline" className="text-[10px] uppercase py-0 px-1">
+                            {db.connection_type}
+                          </Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-question">What would you like to know?</Label>
+              <Textarea
+                id="ai-question"
+                value={nlQuestion}
+                onChange={(e) => setNlQuestion(e.target.value)}
+                placeholder="Ask in natural language, e.g.: Total revenue by quarter, or top 5 employees by salary"
+                rows={3}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="ai-widget-title">Title (Optional)</Label>
+                <Input
+                  id="ai-widget-title"
+                  value={aiTitle}
+                  onChange={(e) => setAiTitle(e.target.value)}
+                  placeholder="Auto-generated if empty"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Chart Type</Label>
+                <Select value={aiWidgetType} onValueChange={setAiWidgetType}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">✨ Auto (AI Recommended)</SelectItem>
+                    <SelectItem value="kpi">KPI Metric</SelectItem>
+                    <SelectItem value="bar_chart">Bar Chart</SelectItem>
+                    <SelectItem value="pie_chart">Pie Chart</SelectItem>
+                    <SelectItem value="line_chart">Line Chart</SelectItem>
+                    <SelectItem value="area_chart">Area Chart</SelectItem>
+                    <SelectItem value="table">Data Table</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isAnalyzing}>
+                Cancel
+              </Button>
+              <Button onClick={handleAddWithAnalytics} disabled={isAnalyzing || !nlQuestion.trim() || !selectedDbId}>
+                {isAnalyzing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Analyzing Data...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Ask AI & Add Widget
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </TabsContent>
+
+          <TabsContent value="manual" className="space-y-4 pt-2">
+            <div className="space-y-2">
+              <Label>Widget Type</Label>
+              <Select value={widgetType} onValueChange={setWidgetType}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WIDGET_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      <div className="flex items-center gap-2">
+                        <t.icon className="h-4 w-4" />
+                        {t.label}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="widget-title">Title</Label>
+              <Input
+                id="widget-title"
+                value={widgetTitle}
+                onChange={(e) => setWidgetTitle(e.target.value)}
+                placeholder="Widget title"
+              />
+            </div>
+
+            <QueryPicker value={queryId} onChange={setQueryId} />
+
+            <DialogFooter className="pt-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button onClick={handleAddManual} disabled={!widgetTitle.trim()}>Add</Button>
+            </DialogFooter>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   )
