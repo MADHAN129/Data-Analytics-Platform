@@ -19,7 +19,6 @@ import {
   MessageSquare,
   Sparkles,
   ChevronLeft,
-  BookOpen,
 } from "lucide-react"
 import { useState } from "react"
 
@@ -34,7 +33,6 @@ const navItems: NavItem[] = [
   { label: "Home", icon: <Home className="h-4 w-4" />, href: "/dashboard" },
   { label: "Analytics", icon: <Sparkles className="h-4 w-4" />, href: "/dashboard/analytics" },
   { label: "Conversations", icon: <MessageSquare className="h-4 w-4" />, href: "/dashboard/conversations" },
-  { label: "Templates", icon: <BookOpen className="h-4 w-4" />, href: "/dashboard/templates" },
   { label: "Dashboards", icon: <LayoutDashboard className="h-4 w-4" />, href: "/dashboard/dashboards" },
   { label: "Databases", icon: <Database className="h-4 w-4" />, href: "/dashboard/databases" },
   { label: "Reports", icon: <FileBarChart className="h-4 w-4" />, href: "/dashboard/reports" },

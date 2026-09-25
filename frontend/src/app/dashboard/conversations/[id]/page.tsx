@@ -1,22 +1,17 @@
 "use client"
 
 import { Suspense, useEffect, useState, useRef, useCallback } from "react"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { api } from "@/lib/api-client"
 import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { formatDate } from "@/lib/utils"
 import { VisualizationRenderer } from "@/components/visualization/visualization-renderer"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog"
 import type { ConversationMessageResponse, DatabaseConnectionResponse } from "@/types/api"
 import {
   MessageSquare,
@@ -26,26 +21,15 @@ import {
   Sparkles,
   Trash2,
   ArrowLeft,
-  Clock,
   Database,
   AlertCircle,
-  BarChart3,
-  BookOpen,
-  Save,
 } from "lucide-react"
-
-function extractSql(content: string): string | null {
-  const m = content.match(/```sql\n([\s\S]*?)```/)
-  return m ? m[1].trim() : null
-}
 
 export function ConversationDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const searchParams = useSearchParams()
   const { toast } = useToast()
   const conversationId = Number(params.id)
-  const templateQuestion = searchParams.get("question")
 
   const [messages, setMessages] = useState<ConversationMessageResponse[]>([])
   const [title, setTitle] = useState("Conversation")
@@ -60,10 +44,6 @@ export function ConversationDetailPage() {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [selectedSuggestion, setSelectedSuggestion] = useState(-1)
-  const [savingMsg, setSavingMsg] = useState<ConversationMessageResponse | null>(null)
-  const [templateTitle, setTemplateTitle] = useState("")
-  const [templateDesc, setTemplateDesc] = useState("")
-  const [saving, setSaving] = useState(false)
   const suggestRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const suggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -104,12 +84,6 @@ export function ConversationDetailPage() {
   }, [conversationId, router, toast])
 
   useEffect(() => { fetchData() }, [fetchData])
-
-  useEffect(() => {
-    if (templateQuestion && !isLoading && messages.length === 0) {
-      setInput(templateQuestion)
-    }
-  }, [templateQuestion, isLoading, messages.length])
 
   const fetchSuggestions = useCallback(async (q: string) => {
     if (q.length < 2) { setShowSuggestions(false); return }
@@ -226,29 +200,6 @@ export function ConversationDetailPage() {
     }
   }
 
-  const handleSaveTemplate = async () => {
-    if (!savingMsg || !templateTitle.trim()) return
-    setSaving(true)
-    try {
-      const sql = extractSql(savingMsg.content) || undefined
-      await api.createTemplate({
-        title: templateTitle.trim(),
-        description: templateDesc.trim() || undefined,
-        natural_language: savingMsg.content.slice(0, 500),
-        generated_sql: sql,
-        database_id: databaseId ?? undefined,
-      })
-      toast({ title: "Template saved", variant: "success" })
-      setSavingMsg(null)
-      setTemplateTitle("")
-      setTemplateDesc("")
-    } catch {
-      toast({ title: "Error", description: "Failed to save template", variant: "destructive" })
-    } finally {
-      setSaving(false)
-    }
-  }
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -265,25 +216,25 @@ export function ConversationDetailPage() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-              {editingTitle ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    className="rounded-md border bg-background px-2 py-1 text-lg font-semibold"
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    onBlur={handleTitleSave}
-                    onKeyDown={(e) => { if (e.key === "Enter") { handleTitleSave() } }}
-                    autoFocus
-                  />
-                </div>
-              ) : (
-                <h1
-                  className="text-lg font-semibold cursor-pointer hover:text-primary"
-                  onClick={() => { setNewTitle(title); setEditingTitle(true) }}
-                >
-                  {title}
-                </h1>
-              )}
+            {editingTitle ? (
+              <div className="flex items-center gap-2">
+                <input
+                  className="rounded-md border bg-background px-2 py-1 text-lg font-semibold"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  onBlur={handleTitleSave}
+                  onKeyDown={(e) => { if (e.key === "Enter") { handleTitleSave() } }}
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <h1
+                className="text-lg font-semibold cursor-pointer hover:text-primary"
+                onClick={() => { setNewTitle(title); setEditingTitle(true) }}
+              >
+                {title}
+              </h1>
+            )}
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <MessageSquare className="h-3 w-3" />
               {messages.length} messages
@@ -366,19 +317,6 @@ export function ConversationDetailPage() {
                         <span>{msg.error_message}</span>
                       </div>
                     )}
-                    {msg.role === "assistant" && extractSql(msg.content) && (
-                      <div className="mt-2 flex justify-end">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs text-muted-foreground hover:text-primary"
-                          onClick={() => { setSavingMsg(msg); setTemplateTitle(""); setTemplateDesc("") }}
-                        >
-                          <BookOpen className="mr-1 h-3 w-3" />
-                          Save as template
-                        </Button>
-                      </div>
-                    )}
                   </div>
                   <div className={`flex items-center gap-2 px-1 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     <span className="text-xs text-muted-foreground">{formatDate(msg.created_at)}</span>
@@ -447,45 +385,6 @@ export function ConversationDetailPage() {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">Press Ctrl+Enter to send</p>
       </div>
-
-      <Dialog open={savingMsg !== null} onOpenChange={(o) => { if (!o) setSavingMsg(null) }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Save as Template</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="tmpl-title">Title</Label>
-              <Input
-                id="tmpl-title"
-                value={templateTitle}
-                onChange={(e) => setTemplateTitle(e.target.value)}
-                placeholder="Give your template a name..."
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="tmpl-desc">Description (optional)</Label>
-              <Input
-                id="tmpl-desc"
-                value={templateDesc}
-                onChange={(e) => setTemplateDesc(e.target.value)}
-                placeholder="What does this query do?"
-              />
-            </div>
-            {savingMsg && extractSql(savingMsg.content) && (
-              <div className="rounded bg-muted p-2">
-                <code className="text-xs line-clamp-3">{extractSql(savingMsg.content)}</code>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSavingMsg(null)}>Cancel</Button>
-            <Button onClick={handleSaveTemplate} disabled={saving || !templateTitle.trim()}>
-              {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Template"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
