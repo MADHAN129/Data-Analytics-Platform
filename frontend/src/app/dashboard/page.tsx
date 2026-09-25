@@ -261,11 +261,31 @@ export default function DashboardPage() {
               <span className="text-sm text-muted-foreground">Email</span>
               <span className="text-sm font-medium">{user?.email}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">Roles</span>
-              <span className="text-sm font-medium">
-                {user?.roles?.map((r) => r.name).join(", ") || "N/A"}
-              </span>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-muted-foreground">Role</span>
+              <div className="flex flex-wrap gap-1.5 justify-end">
+                {user?.roles && user.roles.length > 0 ? (
+                  user.roles.map((r) => (
+                    <Badge
+                      key={r.id}
+                      variant="secondary"
+                      className={`text-xs font-semibold ${
+                        r.name === "SuperAdmin"
+                          ? "bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-200"
+                          : r.name === "Admin"
+                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-200"
+                          : r.name === "Analyst"
+                          ? "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-200"
+                          : "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-200"
+                      }`}
+                    >
+                      {r.name === "SuperAdmin" ? "★ SuperAdmin" : r.name}
+                    </Badge>
+                  ))
+                ) : (
+                  <span className="text-sm font-medium">N/A</span>
+                )}
+              </div>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-muted-foreground">Provider</span>
