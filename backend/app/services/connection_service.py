@@ -40,11 +40,31 @@ def _scoped_query(
     return query
 
 
+def _resolve_host(host: str) -> str:
+    if not host:
+        return host
+    h = host.strip()
+    if ":" in h and not h.startswith("["):
+        parts = h.split(":")
+        if len(parts) == 2 and parts[1].isdigit():
+            h = parts[0]
+
+    if h.lower() in ("localhost", "127.0.0.1", "0.0.0.0"):
+        import socket
+        try:
+            socket.gethostbyname("host.docker.internal")
+            return "host.docker.internal"
+        except Exception:
+            return h
+    return h
+
+
 def get_connector(db_conn: DatabaseConnection):
     password = decrypt_secret(db_conn.password)
+    host = _resolve_host(db_conn.host)
     if db_conn.connection_type == "mysql" or db_conn.connection_type == "mariadb":
         return MySQLConnector(
-            host=db_conn.host,
+            host=host,
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
@@ -54,7 +74,7 @@ def get_connector(db_conn: DatabaseConnection):
         )
     elif db_conn.connection_type == "sqlserver":
         return SQLServerConnector(
-            host=db_conn.host,
+            host=host,
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
@@ -64,7 +84,7 @@ def get_connector(db_conn: DatabaseConnection):
         )
     elif db_conn.connection_type == "mongodb":
         return MongoDBConnector(
-            host=db_conn.host,
+            host=host,
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
@@ -73,7 +93,7 @@ def get_connector(db_conn: DatabaseConnection):
         )
     elif db_conn.connection_type == "oracle":
         return OracleConnector(
-            host=db_conn.host,
+            host=host,
             port=db_conn.port,
             database=db_conn.database_name,
             user=db_conn.username,
@@ -82,7 +102,7 @@ def get_connector(db_conn: DatabaseConnection):
             ssl=db_conn.ssl,
         )
     return PostgreSQLConnector(
-        host=db_conn.host,
+        host=host,
         port=db_conn.port,
         database=db_conn.database_name,
         user=db_conn.username,
