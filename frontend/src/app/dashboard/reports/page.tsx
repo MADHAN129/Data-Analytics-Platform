@@ -46,7 +46,6 @@ import {
   Loader2,
   Trash2,
   Eye,
-  RefreshCw,
   Printer,
   BarChart3,
   Database,
@@ -99,7 +98,6 @@ export default function ReportsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [previewReport, setPreviewReport] = useState<GeneratedReport | null>(null)
-  const [isRegeneratingId, setIsRegeneratingId] = useState<number | null>(null)
 
   const getStorageKey = useCallback(() => {
     if (user?.company_id) return `generated_reports_company_${user.company_id}`
@@ -260,30 +258,6 @@ export default function ReportsPage() {
     }
 
     return report
-  }
-
-  // Regenerate an existing report
-  const handleRegenerate = async (report: GeneratedReport) => {
-    setIsRegeneratingId(report.id)
-    try {
-      const refreshed = await generateReportData(
-        report.dashboard_id,
-        report.title,
-        report.description,
-        report.format
-      )
-      refreshed.id = report.id // preserve ID
-      const updatedList = reports.map((r) => (r.id === report.id ? refreshed : r))
-      saveReports(updatedList)
-      if (previewReport?.id === report.id) {
-        setPreviewReport(refreshed)
-      }
-      toast({ title: "Report updated", description: "Report data refreshed with live database results", variant: "success" })
-    } catch {
-      toast({ title: "Regeneration failed", description: "Could not refresh dashboard report data", variant: "destructive" })
-    } finally {
-      setIsRegeneratingId(null)
-    }
   }
 
   // Export handlers
@@ -741,18 +715,7 @@ export default function ReportsPage() {
                     <Eye className="h-3.5 w-3.5 text-muted-foreground" /> View Report
                   </Button>
 
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                      title="Refresh live data"
-                      onClick={() => handleRegenerate(report)}
-                      disabled={isRegeneratingId === report.id}
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${isRegeneratingId === report.id ? "animate-spin text-primary" : ""}`} />
-                    </Button>
-
+                  <div className="flex items-center gap-1.5">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button size="sm" className="h-8 text-xs gap-1">
@@ -816,8 +779,6 @@ export default function ReportsPage() {
           open={!!previewReport}
           onOpenChange={(open) => !open && setPreviewReport(null)}
           onDownload={handleDownload}
-          onRegenerate={handleRegenerate}
-          isRegenerating={isRegeneratingId === previewReport.id}
         />
       )}
 
@@ -980,15 +941,11 @@ function ReportPreviewModal({
   open,
   onOpenChange,
   onDownload,
-  onRegenerate,
-  isRegenerating,
 }: {
   report: GeneratedReport
   open: boolean
   onOpenChange: (o: boolean) => void
   onDownload: (report: GeneratedReport, format: "pdf" | "csv" | "json") => void
-  onRegenerate: (report: GeneratedReport) => void
-  isRegenerating: boolean
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1012,17 +969,6 @@ function ReportPreviewModal({
             </div>
 
             <div className="flex items-center gap-2 shrink-0 pr-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => onRegenerate(report)}
-                disabled={isRegenerating}
-              >
-                <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${isRegenerating ? "animate-spin text-primary" : ""}`} />
-                {isRegenerating ? "Refreshing..." : "Refresh Data"}
-              </Button>
-
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" className="h-8 text-xs gap-1.5 bg-primary shadow-xs">
