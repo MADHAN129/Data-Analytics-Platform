@@ -334,135 +334,212 @@ export default function ReportsPage() {
   <meta charset="utf-8">
   <title>${report.title}</title>
   <style>
+    * {
+      box-sizing: border-box;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 12mm 14mm 12mm 14mm;
+    }
     @media print {
-      @page { margin: 1.5cm; }
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .no-print { display: none !important; }
-      .page-break { page-break-before: always; }
+      html, body {
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        color: #0f172a !important;
+        font-size: 11.5px;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .page-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
+      }
+      .widget-box {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        margin-bottom: 14px !important;
+      }
+      .header, .kpi-grid, .footer {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      table {
+        page-break-inside: auto;
+      }
+      tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+      }
+      thead {
+        display: table-header-group;
+      }
+    }
+    @media screen {
+      html, body {
+        background: #f8fafc;
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      .page-container {
+        max-width: 1080px;
+        width: 95%;
+        margin: 20px auto 40px auto;
+        background: #ffffff;
+        padding: 36px 40px;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        border: 1px solid #e2e8f0;
+      }
     }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       color: #1e293b;
-      background: #ffffff;
-      padding: 24px;
-      margin: 0;
       line-height: 1.5;
     }
     .header {
-      border-bottom: 2px solid #3b82f6;
-      padding-bottom: 16px;
-      margin-bottom: 24px;
+      border-bottom: 2px solid #2563eb;
+      padding-bottom: 14px;
+      margin-bottom: 20px;
       display: flex;
       justify-content: space-between;
-      align-items: flex-end;
+      align-items: flex-start;
+      gap: 16px;
     }
     .header h1 {
-      margin: 0 0 6px 0;
+      margin: 0 0 4px 0;
       color: #0f172a;
-      font-size: 26px;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
     }
     .header p {
       margin: 0;
       color: #64748b;
-      font-size: 14px;
+      font-size: 12.5px;
     }
     .badge {
       display: inline-block;
-      padding: 4px 10px;
+      padding: 3px 10px;
       border-radius: 9999px;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
       background: #eff6ff;
       color: #2563eb;
       border: 1px solid #bfdbfe;
+      white-space: nowrap;
     }
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px;
-      margin-bottom: 28px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+      width: 100%;
     }
     .kpi-card {
       background: #f8fafc;
       border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 16px;
+      border-radius: 6px;
+      padding: 10px 12px;
     }
     .kpi-label {
-      font-size: 12px;
+      font-size: 10.5px;
       font-weight: 600;
       color: #64748b;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 4px;
+      letter-spacing: 0.04em;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .kpi-value {
-      font-size: 24px;
+      font-size: 18px;
       font-weight: 700;
       color: #0f172a;
     }
     .section-title {
-      font-size: 18px;
+      font-size: 14px;
       font-weight: 700;
       color: #1e293b;
-      margin: 28px 0 12px 0;
-      border-left: 4px solid #3b82f6;
-      padding-left: 10px;
+      margin: 20px 0 10px 0;
+      border-left: 3.5px solid #2563eb;
+      padding-left: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
     }
     .widget-box {
       background: #ffffff;
       border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 20px;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      width: 100%;
     }
     .widget-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #f1f5f9;
     }
     .widget-title {
-      font-size: 15px;
+      font-size: 13.5px;
       font-weight: 600;
       color: #0f172a;
       margin: 0;
     }
     .widget-type {
-      font-size: 11px;
+      font-size: 10px;
       text-transform: uppercase;
+      font-weight: 600;
       color: #64748b;
       background: #f1f5f9;
-      padding: 2px 8px;
+      padding: 2px 6px;
       border-radius: 4px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 12px;
-      margin-top: 8px;
+      font-size: 11px;
+      margin-top: 6px;
+      table-layout: auto;
     }
     th {
-      background: #f1f5f9;
-      color: #334155;
+      background: #f8fafc;
+      color: #1e293b;
       text-align: left;
-      padding: 8px 10px;
+      padding: 6px 8px;
       font-weight: 600;
-      border-bottom: 1px solid #cbd5e1;
+      border-bottom: 1.5px solid #cbd5e1;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
     }
     td {
-      padding: 8px 10px;
+      padding: 5px 8px;
       border-bottom: 1px solid #f1f5f9;
       color: #334155;
+      font-size: 11px;
     }
     tr:nth-child(even) td {
       background: #fafafa;
     }
     .footer {
-      margin-top: 40px;
-      padding-top: 16px;
+      margin-top: 24px;
+      padding-top: 10px;
       border-top: 1px solid #e2e8f0;
-      font-size: 12px;
+      font-size: 10.5px;
       color: #94a3b8;
       display: flex;
       justify-content: space-between;
@@ -470,107 +547,119 @@ export default function ReportsPage() {
     .print-bar {
       background: #0f172a;
       color: #ffffff;
-      padding: 12px 20px;
+      padding: 12px 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-radius: 8px;
-      margin-bottom: 20px;
+      font-size: 13px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     .btn {
       background: #2563eb;
       color: white;
       border: none;
-      padding: 8px 16px;
+      padding: 7px 16px;
       border-radius: 6px;
       font-weight: 600;
+      font-size: 12px;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover {
+      background: #1d4ed8;
     }
   </style>
 </head>
 <body>
   <div class="print-bar no-print">
-    <div><strong>Ready to Print / Save as PDF</strong></div>
+    <div><strong>Executive Report Preview</strong> &bull; Ready to Print / Save as PDF</div>
     <button class="btn" onclick="window.print()">Print / Save PDF</button>
   </div>
 
-  <div class="header">
-    <div>
-      <h1>${report.title}</h1>
-      <p>Source Dashboard: <strong>${report.dashboard_title}</strong> • Generated on ${new Date(report.created_at).toLocaleString()}</p>
+  <div class="page-container">
+    <div class="header">
+      <div>
+        <h1>${report.title}</h1>
+        <p>Source Dashboard: <strong>${report.dashboard_title}</strong> &bull; Generated on ${new Date(report.created_at).toLocaleString()}</p>
+      </div>
+      <div>
+        <span class="badge">Executive Report</span>
+      </div>
     </div>
-    <div>
-      <span class="badge">Executive Report</span>
-    </div>
-  </div>
 
-  ${
-    report.summary.kpis.length > 0
-      ? `
-    <div class="kpi-grid">
-      ${report.summary.kpis
-        .map(
-          (kpi) => `
+    ${
+      report.summary.kpis.length > 0
+        ? `
+      <div class="kpi-grid">
+        ${report.summary.kpis
+          .map(
+            (kpi) => `
+          <div class="kpi-card">
+            <div class="kpi-label">${kpi.label}</div>
+            <div class="kpi-value">${kpi.value}</div>
+          </div>
+        `
+          )
+          .join("")}
         <div class="kpi-card">
-          <div class="kpi-label">${kpi.label}</div>
-          <div class="kpi-value">${kpi.value}</div>
+          <div class="kpi-label">Total Widgets</div>
+          <div class="kpi-value">${report.summary.total_widgets}</div>
         </div>
-      `
-        )
-        .join("")}
-      <div class="kpi-card">
-        <div class="kpi-label">Total Widgets</div>
-        <div class="kpi-value">${report.summary.total_widgets}</div>
+        <div class="kpi-card">
+          <div class="kpi-label">Total Records</div>
+          <div class="kpi-value">${report.summary.total_records.toLocaleString()}</div>
+        </div>
       </div>
-      <div class="kpi-card">
-        <div class="kpi-label">Total Records</div>
-        <div class="kpi-value">${report.summary.total_records.toLocaleString()}</div>
-      </div>
-    </div>
-  `
-      : ""
-  }
+    `
+        : ""
+    }
 
-  <div class="section-title">Dashboard Widgets & Data Breakdown</div>
-  ${report.widgets_data
-    .map(
-      (w, i) => `
-    <div class="widget-box">
-      <div class="widget-header">
-        <h3 class="widget-title">${i + 1}. ${w.title}</h3>
-        <span class="widget-type">${w.widget_type} (${w.row_count} rows)</span>
+    <div class="section-title">Dashboard Widgets & Data Breakdown</div>
+    ${report.widgets_data
+      .map(
+        (w, i) => `
+      <div class="widget-box">
+        <div class="widget-header">
+          <h3 class="widget-title">${i + 1}. ${w.title}</h3>
+          <span class="widget-type">${w.widget_type} (${w.row_count} rows)</span>
+        </div>
+        ${w.natural_query ? `<p style="font-size:11.5px;color:#64748b;margin:0 0 6px 0;"><strong>Query:</strong> ${w.natural_query}</p>` : ""}
+        ${
+          w.columns.length > 0
+            ? `
+          <table>
+            <thead>
+              <tr>${w.columns.map((c) => `<th>${c}</th>`).join("")}</tr>
+            </thead>
+            <tbody>
+              ${w.rows
+                .slice(0, 100)
+                .map(
+                  (row) => `
+                <tr>${row.map((val) => `<td>${val === null || val === undefined ? "-" : String(val)}</td>`).join("")}</tr>
+              `
+                )
+                .join("")}
+            </tbody>
+          </table>
+          ${w.rows.length > 100 ? `<p style="font-size:10.5px;color:#94a3b8;margin-top:4px;">Showing first 100 of ${w.rows.length} rows</p>` : ""}
+        `
+            : `<p style="font-size:11.5px;color:#94a3b8;margin:0;">No tabular data returned.</p>`
+        }
       </div>
-      ${w.natural_query ? `<p style="font-size:12px;color:#64748b;margin:0 0 8px 0;"><strong>Query:</strong> ${w.natural_query}</p>` : ""}
-      ${
-        w.columns.length > 0
-          ? `
-        <table>
-          <thead>
-            <tr>${w.columns.map((c) => `<th>${c}</th>`).join("")}</tr>
-          </thead>
-          <tbody>
-            ${w.rows
-              .slice(0, 100)
-              .map(
-                (row) => `
-              <tr>${row.map((val) => `<td>${val === null || val === undefined ? "-" : String(val)}</td>`).join("")}</tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-        ${w.rows.length > 100 ? `<p style="font-size:11px;color:#94a3b8;margin-top:4px;">Showing first 100 of ${w.rows.length} rows</p>` : ""}
-      `
-          : `<p style="font-size:12px;color:#94a3b8;margin:0;">No tabular data returned.</p>`
-      }
-    </div>
-  `
-    )
-    .join("")}
+    `
+      )
+      .join("")}
 
-  <div class="footer">
-    <span>Data Analytics Platform • Executive Intelligence</span>
-    <span>Generated: ${new Date(report.created_at).toISOString()}</span>
+    <div class="footer">
+      <span>Data Analytics Platform &bull; Executive Intelligence</span>
+      <span>Generated: ${new Date(report.created_at).toISOString()}</span>
+    </div>
   </div>
 </body>
 </html>
