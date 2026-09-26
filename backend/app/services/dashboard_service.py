@@ -219,18 +219,19 @@ def auto_generate_from_query(
 
     # 2) Derive a readable dashboard title from the request.
     if query_text and query_text.strip():
-        title = query_text.strip()[:60].capitalize()
+        clean_q = query_text.strip()
+        title = clean_q[:60].capitalize()
         if not title.endswith(("?", ".", "!")):
-            title += "…" if len(query_text.strip()) > 60 else ""
+            title += " Analytics" if not title.lower().endswith("analytics") else ""
+        desc = f"AI-generated analytics dashboard focused on '{clean_q}' from {db_conn.name} with pie charts, bar charts, and data tables."
     else:
         title = f"{db_conn.name} Analytics Dashboard" if db_conn else "Auto-generated Dashboard"
+        desc = f"AI-generated analytics dashboard analyzing {db_conn.name} database with pie charts, bar charts, and data tables."
 
     dash = Dashboard(
         user_id=user_id or 0,
         title=title,
-        description="Automatically generated dashboard based on your request."
-        if (query_text and query_text.strip())
-        else f"AI-generated analytics dashboard analyzing {db_conn.name} database with pie charts, bar charts, and data tables.",
+        description=desc,
         auto_generated=True,
     )
     db.add(dash)
@@ -326,8 +327,8 @@ def auto_generate_from_query(
 def _plan_widgets(query_text: str | None, schema_context: str, db_name: str = "") -> list[dict]:
     """Turn a request or automatic schema analysis into a rich list of widget specs.
 
-    If query_text is empty, analyzes schema_context to automatically produce a 
-    comprehensive executive dashboard containing Pie Charts, Bar Charts, and Data Tables.
+    If query_text is given (e.g. 'salary', 'revenue', 'sales'), plans 4 widgets strictly
+    relevant to that topic. If empty, analyzes the whole schema for an executive dashboard.
     """
     import json
     import re
@@ -352,14 +353,21 @@ def _plan_widgets(query_text: str | None, schema_context: str, db_name: str = ""
             f"Database Schema:\n{schema_context[:3000]}"
         )
     else:
+        clean_topic = query_text.strip()
         prompt = (
-            "You are a BI dashboard assistant. Given a user's request and database schema, break it into "
-            "a set of 3 to 5 separate visualization widgets. Ensure a rich mix of widget types ('bar_chart', 'pie_chart', 'table', 'line_chart'). "
-            "For each widget return a JSON object with: title (short), question (a single natural-language query), "
-            "and chart_type (one of: bar_chart, line_chart, pie_chart, area_chart, kpi, table).\n"
-            "Respond with a JSON array ONLY, no markdown.\n\n"
-            f"User request: {query_text}\n"
-            f"Database schema:\n{schema_context[:2500]}"
+            f"You are an expert BI data architect. The user wants a focused dashboard strictly analyzing: '{clean_topic}'.\n"
+            "Analyze the provided database schema and design 4 distinct visualization widgets strictly relevant to this topic/metric.\n"
+            "You MUST include a balanced suite:\n"
+            f"1. At least one 'pie_chart' showing distributions/proportions relevant to '{clean_topic}' (e.g. breakdown by category, status, department, or role).\n"
+            f"2. At least one 'bar_chart' comparing metrics or rankings relevant to '{clean_topic}'.\n"
+            f"3. At least one 'table' showing detailed top records or rows relevant to '{clean_topic}'.\n"
+            f"4. An additional relevant chart ('bar_chart', 'pie_chart', or 'table') focused on '{clean_topic}'.\n\n"
+            "For each widget return a JSON object with:\n"
+            f"- title: Short descriptive title strictly related to '{clean_topic}' (e.g. 'Salary by Department', 'Average Salary Ranking', 'Top 10 Salaries')\n"
+            "- question: Clear natural language question referencing actual tables/columns from schema\n"
+            "- chart_type: exactly one of 'pie_chart', 'bar_chart', 'line_chart', 'table', 'kpi'\n\n"
+            "Respond with a valid JSON array of objects ONLY, no markdown, no explanation.\n\n"
+            f"Database Schema:\n{schema_context[:3000]}"
         )
 
     raw = None
@@ -395,14 +403,13 @@ def _plan_widgets(query_text: str | None, schema_context: str, db_name: str = ""
                         "chart_type": _normalize_chart_type(item.get("chart_type")),
                     })
                 if len(specs) >= 2:
-                    if is_auto_analysis:
-                        types = {s["chart_type"] for s in specs}
-                        if "pie_chart" not in types and len(specs) > 0:
-                            specs[0]["chart_type"] = "pie_chart"
-                        if "bar_chart" not in types and len(specs) > 1:
-                            specs[1]["chart_type"] = "bar_chart"
-                        if "table" not in types and len(specs) > 2:
-                            specs[2]["chart_type"] = "table"
+                    types = {s["chart_type"] for s in specs}
+                    if "pie_chart" not in types and len(specs) > 0:
+                        specs[0]["chart_type"] = "pie_chart"
+                    if "bar_chart" not in types and len(specs) > 1:
+                        specs[1]["chart_type"] = "bar_chart"
+                    if "table" not in types and len(specs) > 2:
+                        specs[2]["chart_type"] = "table"
                     return specs
         except (json.JSONDecodeError, TypeError):
             pass
@@ -412,7 +419,12 @@ def _plan_widgets(query_text: str | None, schema_context: str, db_name: str = ""
 
 
 def _heuristic_schema_plan(schema_context: str, query_text: str | None = None) -> list[dict]:
-    """Dynamically parse schema_context to build Pie Chart, Bar Chart, and Data Table widgets."""
+    """Dynamically parse schema_context to build Pie Chart, Bar Chart, and Data Table widgets.
+    
+    If query_text is given (e.g. 'salary', 'revenue', 'sales'), prioritizes tables and columns
+    matching the query keywords so the generated widgets strictly focus on that topic.
+    If query_text is empty, analyzes the whole database schema for a comprehensive executive view.
+    """
     import re
 
     table_matches = re.findall(r"Table:\s*(\w+)\s*\[([^\]]*)\]", schema_context)
@@ -434,44 +446,89 @@ def _heuristic_schema_plan(schema_context: str, query_text: str | None = None) -
             {"title": "Overview", "question": query_text or "Show overview data", "chart_type": "table"}
         ]
 
-    # Pick the primary / most interesting table
+    q_clean = (query_text or "").strip().lower()
+    keywords = [w for w in re.findall(r"\w+", q_clean) if len(w) > 2] if q_clean else []
+
+    # Pick the best table matching query_text or default to primary table
     primary_table, primary_cols = tables_info[0]
+    best_score = -1
+
     for t_name, cols in tables_info:
         t_low = t_name.lower()
-        if any(k in t_low for k in ("employee", "sale", "order", "product", "user", "customer", "transaction", "item")):
+        col_names_low = [c[0].lower() for c in cols]
+        score = 0
+
+        if keywords:
+            for kw in keywords:
+                if kw in t_low:
+                    score += 10
+                for c_low in col_names_low:
+                    if kw in c_low:
+                        score += 5
+        else:
+            if any(k in t_low for k in ("employee", "sale", "order", "product", "user", "customer", "transaction", "item")):
+                score += 5
+
+        if score > best_score:
+            best_score = score
             primary_table, primary_cols = t_name, cols
-            break
 
     col_names = [c[0] for c in primary_cols]
 
-    # 1. Numeric / Metric columns
-    num_col = next((c for c in col_names if any(k in c.lower() for k in ("salary", "amount", "price", "total", "revenue", "sales", "qty", "quantity", "cost", "balance", "rate", "score"))), None)
+    # 1. Find numeric / metric column (prioritize keyword matches if query_text was provided)
+    num_col = None
+    if keywords:
+        for kw in keywords:
+            matched = next((c for c in col_names if kw in c.lower()), None)
+            if matched:
+                num_col = matched
+                break
+
+    if not num_col:
+        num_col = next((c for c in col_names if any(k in c.lower() for k in ("salary", "amount", "price", "total", "revenue", "sales", "qty", "quantity", "cost", "balance", "rate", "score", "val"))), None)
     if not num_col:
         num_col = next((c for c in col_names if any(k in c.lower() for k in ("id", "count", "num")) and not c.lower().endswith("_id")), None)
 
-    # 2. Category columns for Pie Chart & Bar Chart
-    cat_col = next((c for c in col_names if any(k in c.lower() for k in ("department", "dept", "category", "status", "role", "type", "gender", "country", "city", "brand", "state"))), None)
+    # 2. Find categorical column for Pie Chart & Bar Chart (prioritize keyword matches if not already used)
+    cat_col = None
+    if keywords:
+        for kw in keywords:
+            matched = next((c for c in col_names if kw in c.lower() and c != num_col), None)
+            if matched:
+                cat_col = matched
+                break
+
     if not cat_col:
-        cat_col = next((c for c in col_names if c.lower().endswith("_id") or "name" in c.lower()), col_names[0] if col_names else "CATEGORY")
+        cat_col = next((c for c in col_names if c != num_col and any(k in c.lower() for k in ("department", "dept", "category", "status", "role", "type", "gender", "country", "city", "brand", "state", "team", "division"))), None)
+    if not cat_col:
+        cat_col = next((c for c in col_names if c != num_col and (c.lower().endswith("_id") or "name" in c.lower())), col_names[0] if col_names else "CATEGORY")
 
-    # 3. Secondary category or status column
-    secondary_cat = next((c for c in col_names if c != cat_col and any(k in c.lower() for k in ("status", "type", "role", "department", "city", "country", "name"))), None)
+    # 3. Find secondary categorical column
+    secondary_cat = next((c for c in col_names if c != cat_col and c != num_col and any(k in c.lower() for k in ("status", "type", "role", "department", "city", "country", "name", "category"))), None)
 
+    topic_label = num_col or (keywords[0].title() if keywords else primary_table)
     specs = []
 
-    # 1. PIE CHART - Category / Status Distribution
+    # 1. PIE CHART - Distribution / Breakdown
     pie_cat = secondary_cat or cat_col
-    specs.append({
-        "title": f"{primary_table} by {pie_cat}".replace("_", " ").title(),
-        "question": f"Show the distribution and breakdown of {primary_table} by {pie_cat} as a pie chart",
-        "chart_type": "pie_chart",
-    })
+    if num_col:
+        specs.append({
+            "title": f"{topic_label} Distribution by {pie_cat}".replace("_", " ").title(),
+            "question": f"Show {topic_label} distribution grouped by {pie_cat} in {primary_table} as a pie chart",
+            "chart_type": "pie_chart",
+        })
+    else:
+        specs.append({
+            "title": f"{primary_table} by {pie_cat}".replace("_", " ").title(),
+            "question": f"Show the distribution and breakdown of {primary_table} by {pie_cat} as a pie chart",
+            "chart_type": "pie_chart",
+        })
 
     # 2. BAR CHART - Metric comparison by Category
     if num_col and cat_col:
         specs.append({
-            "title": f"{num_col} by {cat_col}".replace("_", " ").title(),
-            "question": f"Show {num_col} by {cat_col} in {primary_table} as a bar chart",
+            "title": f"Average {topic_label} by {cat_col}".replace("_", " ").title(),
+            "question": f"Show average {num_col} by {cat_col} in {primary_table} as a bar chart",
             "chart_type": "bar_chart",
         })
     else:
@@ -481,8 +538,14 @@ def _heuristic_schema_plan(schema_context: str, query_text: str | None = None) -
             "chart_type": "bar_chart",
         })
 
-    # 3. SECOND BAR / DISTRIBUTION CHART
-    if len(tables_info) > 1 and tables_info[1][0] != primary_table:
+    # 3. BAR CHART - Ranking or Multi-table
+    if num_col:
+        specs.append({
+            "title": f"Top {topic_label} Ranking".replace("_", " ").title(),
+            "question": f"Show highest {num_col} records in {primary_table} as a bar chart",
+            "chart_type": "bar_chart",
+        })
+    elif len(tables_info) > 1 and tables_info[1][0] != primary_table:
         sec_table, sec_cols = tables_info[1]
         sec_col_names = [c[0] for c in sec_cols]
         sec_cat = next((c for c in sec_col_names if any(k in c.lower() for k in ("name", "status", "category", "type"))), sec_col_names[0] if sec_col_names else "ID")
@@ -491,17 +554,17 @@ def _heuristic_schema_plan(schema_context: str, query_text: str | None = None) -
             "question": f"Show count of records in {sec_table} grouped by {sec_cat} as a bar chart",
             "chart_type": "bar_chart",
         })
-    elif num_col:
+    else:
         specs.append({
-            "title": f"Top {num_col} Ranking".replace("_", " ").title(),
-            "question": f"Show highest {num_col} values in {primary_table} as a bar chart",
+            "title": f"{primary_table} Summary".replace("_", " ").title(),
+            "question": f"Show count of records in {primary_table} as a bar chart",
             "chart_type": "bar_chart",
         })
 
-    # 4. DATA TABLE - Detailed top records
+    # 4. DATA TABLE - Detailed top records / Overview
     if num_col:
         specs.append({
-            "title": f"Top 10 {primary_table} by {num_col}".replace("_", " ").title(),
+            "title": f"Top 10 {primary_table} by {topic_label}".replace("_", " ").title(),
             "question": f"Show top 10 rows from {primary_table} ordered by {num_col} descending",
             "chart_type": "table",
         })
